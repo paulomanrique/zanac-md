@@ -1,0 +1,17 @@
+﻿# SGDK build intermediates (keep out/rom.bin)
+out/**/*.o
+out/**/*.out
+out/**/*.d
+out/rom.out
+out/rom_head.bin
+out/symbol.txt
+out/*.log
+*.o
+*.d
+# backups / cache
+*.bak_*
+*.bak
+**/__pycache__/
+*.pyc
+.DS_Store
+Thumbs.db

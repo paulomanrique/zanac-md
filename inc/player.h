@@ -1,0 +1,52 @@
+#ifndef PLAYER_H
+#define PLAYER_H
+
+#include <genesis.h>
+
+#define SHIP_W              16
+#define SHIP_H              16
+#define PLAYER_LIVES_INIT   3     /* title_screen_init: (IX+0x0A)=3 at E10A */
+#define PLAYER_IFRAMES      64    /* ship spawn blink IX+0x1B = 0x40 */
+#define PLAYER_DEATH_WAIT   64    /* main-loop respawn wait */
+#define PLAYER_OVER_WAIT    180   /* shorter than MSX 800-frame jingle wait */
+
+void player_init(void);
+void player_update(void);
+void player_release(void);
+void player_draw_hud(void);
+void player_draw_over(void);
+
+s16  player_x(void);
+s16  player_y(void);
+u8   player_lives(void);
+u8   player_shot_level(void);
+u8   player_fire_num(void);
+u8   player_invincible(void);
+u8   player_dead(void);
+u8   player_is_over(void);
+u8   player_over_ready(void);
+
+void player_hit(void);
+void player_add_shot_level(void);
+/* Type62 clear 875a: INC E10A + ev8 + status (no E102 mute). */
+void player_grant_life(void);
+/* E103 BCD score_lo for type61 gate (alc_shots&0x3F). */
+u8   player_score_lo(void);
+/* E148 chip-overflow counter (type61 -> fire83 if >=5). */
+u8   player_e148(void);
+void player_e148_sub5(void);
+void player_fire_select(u8 n);
+void player_fire_dec_ammo(void);
+u8   player_fire_ammo(void);
+void player_skip_over(void);
+void player_add_score(u8 award_idx);
+/* E106-E108 top score. Persists across title_screen_init. */
+u32  player_hiscore(void);
+/* compare_save_hiscore 0x4ACE: copy score if >= top. Game-over / credits. */
+void player_save_hiscore(void);
+/* E102: bit2 mutes ev8/ev9; bit7 skips fade/4163 (attract). */
+void player_e102_set(u8 bits);
+void player_e102_res(u8 bits);
+u8   player_e102(void);
+
+#endif

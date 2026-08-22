@@ -1,0 +1,176 @@
+section,id,name,msx,md_suggested,w_tiles,h_tiles,palette,max_colors,anim_frames,file,notes
+A,playfield,Playfield pixels,256×192 (SCREEN2),Original 256×224; Zanac MD 320×224,,,—,MSX 16 TMS; MD 64 from 512,,,mode.c ModeAssets.playfield_w/h. VDP_setScreenWidth256 / 320. NTSC height always 224 (SGDK).
+A,nametable,Visible tile cells,32×24 = 768,H32 32×28; H40 40×28,,,PAL3 BG,,,,MSX name table VRAM 0x3800. MD planes A/B. Port paints BG_B.
+A,tile_format,Tile format,"8×8, 1bpp + separate color byte/row (2 colors/row)","8×8, 4bpp, 32 B/tile (TILE_SIZE=32)",,,1 of 4 CRAM pals,16 per tile,,,MSX SCREEN2 3 pattern banks; Zanac loads the same 256 tiles into all 3.
+A,tile_count,Unique BG tiles,256 charset (confirmed decompress),MAY 512-1024 user tiles (safe). Hardware ~TILE_SPACE/32 ≈ 1536 before maps (SGDK maps_addr).,,,2-3 pals,16 each,,res/charset_tiles.bin,"charset_tiles.bin 8192 B = 256×32. TILE_USER_INDEX=16, FONT_LEN=96, BG_TILE_BASE=TILE_USER_INDEX+32. Sprite engine eats tiles from the top."
+A,cram,On-screen colors,16 fixed TMS9918,4 palettes × 16 = 64; each color 9-bit (512),,,PAL0-3,64,,,"Port now: PAL0 text, PAL1 highlight/objs, PAL2 ship, PAL3 TMS charset (map_script.c s_tms_pal)."
+A,sprite_hw,Sprite hardware,"32 sprites, 4/line, 16×16 1-bit + 1 color, optional complement","80 sprites (SAT_MAX_SIZE), 16/line H32 / 20/line H40, 8×8-32×32 (1-4 tiles), 4bpp",1-4,1-4,1 of 4,15+transparent,,,SGDK SPRITE w h in tiles. Sprite color 0 = transparent. Fold MSX complements into one sprite.
+A,sprite_patterns,Unique sprite patterns,"64 (pats 0-63), 32 B each, VRAM 0x1800-0x1FFF = 2048 B",As many frames as VRAM sprite tiles allow (budget ~200-400 sprite tiles),2,2,,,64 unique MSX,res/sprites/ship.png + objs.png,ship.png 16×16 (pat 14). objs.png 208×16 = 13 frames pats 10/22/24/30/53/1/7/28/11/12/3/9/2.
+A,sprite_line,Per-scanline budget,4 sprites (5th dropped),H32: 16 sprites / 256 px; H40: 20 / 320 px,,,,,,,MSX complement sprites burn the 4/line cap. MD folding frees line budget.
+A,entity_slots,Simultaneous objects,26 entity slots × 32 B; 32 SAT entries,Port: 4 shot + 24 enemy + 1 ship sprites (software). HW max 80.,,,,,,,Slots 0-4 player/shots/fire; 5-25 enemies. Type 39 complement/col-marker included.
+A,audio,Audio,"AY-3-8910: 3 square + noise, 27 events / 51 voices",YM2612 6 FM (ch6=DAC) + SN76489 3 square + noise. Original = PSG interpreter of the 27 MSX events (Z80_DRIVER_NULL).,,,,,27 events,res/sound_blob.bin 2013 B,Zanac MD MAY use SGDK XGM (4 PCM @14 kHz) or XGM2 (3 PCM @13.3/6.65 kHz) or WAV PCM. Cannot mix XGM driver with the current NULL+PSG interpreter on the same Z80.
+A,safe_budget,Safe Zanac MD art budget,256 tiles + 64 sprites + 1 pal effectively,"BG 512-1024 tiles, 2-3 palettes; sprites 2x2 default (3x3/4x4 for large); 1 pal player, 1 pal enemies, 1 pal BG, PAL0 font",,,"PAL0 font, PAL1 player/items, PAL2 enemies, PAL3 BG",,,,"Stay under ~1500 total VRAM tiles including font+sprites. 1024 BG + 300 sprite + 96 font is the ceiling to test, not the opening bid. Start at 512 BG."
+B_pattern,0,empty,pat 0 16x16 1-bit,skip,,,—,,1,,All-zero pattern. SAT terminator / invisible slots. Do not draw.
+B_pattern,1,power_chip,pat 1 16x16 1-bit,"2x2 tiles (16x16 px), 4bpp",2,2,PAL1,15+trans,1,res/md/sprites/item.png,Weapon-upgrade pickup. Type 83 also uses SAT 0x04 = pat 1 (black/EC). Type 63 handler does not LD a SAT name (likely inherits pat 1; not confirmed in handler).
+B_pattern,2,comet,pat 2 16x16 1-bit,"2x2 tiles (16x16 px), 4bpp",2,2,PAL2,15+trans,1,res/md/sprites/fx.png,Named in sprite-names. No entity type in entity-sprite-mapping uses this pattern. Port extracts it as objs.png frame 12. Entity use: unknown.
+B_pattern,3,target,pat 3 16x16 1-bit,"2x2 tiles (16x16 px), 4bpp",2,2,PAL1,15+trans,1,res/md/sprites/fire.png,"Fire weapon 0 All-Range Cannon. Type 3, +0x0C=0x03. Color cycles 0x80-0x8F (all 16 TMS colors)."
+B_pattern,4,snowflake,pat 4 16x16 1-bit,"2x2 tiles (16x16 px), 4bpp",2,2,PAL1,15+trans,1,res/md/sprites/fire.png,Fire 3 Circular and fire 4 Vibrator. Type 3.
+B_pattern,5,small_star,pat 5 16x16 1-bit,"1x1 tiles (8x8 px), 4bpp",1,1,PAL1,15+trans,1,res/md/sprites/fx.png,Named in sprite-names. No confirmed entity type. Entity use: unknown.
+B_pattern,6,light_bar,pat 6 16x16 1-bit,"2x1 tiles (16x8 px), 4bpp",2,1,PAL2,15+trans,1,res/md/sprites/projectile.png,Types 21 (color 0x84/0x85) and 45 (white 0x8F). Ground-guns 48/49/52-55 spawn type 21.
+B_pattern,7,lead,pat 7 16x16 1-bit,"1x1 tiles (8x8 px), 4bpp",1,1,PAL2,15+trans,1,res/md/sprites/projectile.png,"Small bullet. Types 20, 37, 38, 41, 42/43 (init), 69, 75. Death/orb anims also use it as frame 0 of a pulse."
+B_pattern,8,medium_circle,pat 8 16x16 1-bit,"2x2 tiles (16x16 px), 4bpp",2,2,PAL2,15+trans,1,res/md/sprites/projectile.png,Type 67. Type 35/60/72 anim mid-frame. Type 73 probe uses pat 8 transparent.
+B_pattern,9,large_circle,pat 9 16x16 1-bit,"2x2 tiles (16x16 px), 4bpp",2,2,PAL1,15+trans,1,res/md/sprites/projectile.png,Fire expire / type 19 first frame. Type 72 orb. Types 82/87 likely. Peak of pulse anims.
+B_pattern,10,shot_single,pat 10 16x16 1-bit,"2x2 tiles (16x16 px), 4bpp",2,2,PAL1,15+trans,1,res/md/sprites/shot.png,Player shot levels 0-1. SAT_NAME 0x28 from shot_power_table. Type 2. Type 11 init also writes 0x28.
+B_pattern,11,shot_double,pat 11 16x16 1-bit,"2x2 tiles (16x16 px), 4bpp",2,2,PAL1,15+trans,1,res/md/sprites/shot.png,Player shot levels 2-3. SAT_NAME 0x2C.
+B_pattern,12,shot_triple,pat 12 16x16 1-bit,"2x2 tiles (16x16 px), 4bpp",2,2,PAL1,15+trans,1,res/md/sprites/shot.png,Player shot levels 4-5. SAT_NAME 0x30.
+B_pattern,13,super_hard_bolt,pat 13 16x16 1-bit,"2x2 tiles (16x16 px), 4bpp",2,2,PAL2,15+trans,1,res/md/sprites/enemy.png,"Type 36 flashing: SAT 0x34, color XOR 0x0E each frame, slow descent."
+B_pattern,14,player_ship,pat 14 16x16 1-bit,"2x2 tiles (16x16 px), 4bpp",2,2,PAL2,15+trans,1,res/md/sprites/player.png,"Type 1, SAT 0x38, color 0x8F normal / 0x81 invincible flash (~64 frames). Port: res/sprites/ship.png 16x16. Zanac MD MAY use 3x3 or 4x4."
+B_pattern,15,player_ship_compl,pat 15 16x16 1-bit,fold into primary (no file),,,—,,1,,Complement of pat 14. Extract script: unused. Fold into player_ship on MD (4bpp). Do not ship a second sprite.
+B_pattern,16,plane,pat 16 16x16 1-bit,"2x2 tiles (16x16 px), 4bpp",2,2,PAL2,15+trans,1,res/md/sprites/enemy.png,Type 44 ground structure sprite + type 64 proto. Type 35 pool can pick pat 16.
+B_pattern,17,plane_compl,pat 17 16x16 1-bit,fold into primary (no file),,,—,,1,,Complement of plane. Type 39 col-marker. Fold into plane.
+B_pattern,18,loga_A,pat 18 16x16 1-bit,"2x2 tiles (16x16 px), 4bpp",2,2,PAL2,15+trans,2,res/md/sprites/loga.png,"Opener enemy, 2-frame set in pattern table (18/20). Types 46-55 ground-guns use SAT 0x48 = pat 18. Runtime animation: unknown (handler does not document bit2 anim)."
+B_pattern,19,loga_A_compl,pat 19 16x16 1-bit,fold into primary (no file),,,—,,2,,Complement of loga_A. Fold into loga.
+B_pattern,20,loga_B,pat 20 16x16 1-bit,"2x2 tiles (16x16 px), 4bpp",2,2,PAL2,15+trans,2,res/md/sprites/loga.png,Second loga frame in pattern table. Runtime use: unknown.
+B_pattern,21,loga_B_compl,pat 21 16x16 1-bit,fold into primary (no file),,,—,,2,,Complement of loga_B. Fold into loga.
+B_pattern,22,duster,pat 22 16x16 1-bit,"2x2 tiles (16x16 px), 4bpp",2,2,PAL2,15+trans,1,res/md/sprites/duster.png,"Type 10. SAT 0x58, color 0x89. Meteor-like."
+B_pattern,23,duster_compl,pat 23 16x16 1-bit,fold into primary (no file),,,—,,1,,Complement. Type 39. Fold into duster.
+B_pattern,24,teruzo,pat 24 16x16 1-bit,"2x2 tiles (16x16 px), 4bpp",2,2,PAL2,15+trans,1,res/md/sprites/teruzo.png,Types 12-15. SAT 0x60 hardcoded. Colors 0x8A (lower) / 0x89 (upper). Type 35 pool can pick pat 24.
+B_pattern,25,teruzo_compl,pat 25 16x16 1-bit,fold into primary (no file),,,—,,1,,Complement SAT 0x64. Fold into teruzo.
+B_pattern,26,sig_triple,pat 26 16x16 1-bit,"2x2 tiles (16x16 px), 4bpp",2,2,PAL2,15+trans,1,res/md/sprites/sig.png,Sprite-names: sig triple. Type 58 paired descender B uses SAT 0x68 = pat 26.
+B_pattern,27,sig_double,pat 27 16x16 1-bit,"2x2 tiles (16x16 px), 4bpp",2,2,PAL2,15+trans,1,res/md/sprites/sig.png,Sprite-names: sig double. Type 57 paired descender A uses SAT 0x6C = pat 27.
+B_pattern,28,sig_single,pat 28 16x16 1-bit,"2x2 tiles (16x16 px), 4bpp",2,2,PAL1,15+trans,1,res/md/sprites/sig.png,"Type 56 falling pickup/missile, color XOR 0x09 (0x86↔0x8F). Type 59 sideways also SAT 0x70 = pat 28."
+B_pattern,29,luster_A,pat 29 16x16 1-bit,"2x2 tiles (16x16 px), 4bpp",2,2,PAL2,15+trans,2,res/md/sprites/luster.png,"Type 18. SAT 0x74, color 0x8B. 2-frame set exists (29/30); types pick one variant, bit2 anim not documented."
+B_pattern,30,luster_B,pat 30 16x16 1-bit,"2x2 tiles (16x16 px), 4bpp",2,2,PAL2,15+trans,2,res/md/sprites/luster.png,"Types 16/17. SAT 0x78, color 0x8E. Tank-like."
+B_pattern,31,luster_A_compl,pat 31 16x16 1-bit,fold into primary (no file),,,—,,2,,Complement of luster_A. Fold into luster.
+B_pattern,32,luster_B_compl,pat 32 16x16 1-bit,fold into primary (no file),,,—,,2,,Complement of luster_B. Fold into luster.
+B_pattern,33,veybar_0,pat 33 16x16 1-bit,"3x3 tiles (24x24 px), 4bpp",3,3,PAL2,15+trans,5,res/md/sprites/veybar.png,Glider. Types 22-25 use SAT 0x84 = pat 33 only. 5 primary frames exist (33-37); runtime cycle: unknown.
+B_pattern,34,veybar_1,pat 34 16x16 1-bit,"3x3 tiles (24x24 px), 4bpp",3,3,PAL2,15+trans,5,res/md/sprites/veybar.png,Frame 1 of 5 in pattern table. Handler use: unknown.
+B_pattern,35,veybar_2,pat 35 16x16 1-bit,"3x3 tiles (24x24 px), 4bpp",3,3,PAL2,15+trans,5,res/md/sprites/veybar.png,Frame 2 of 5. Handler use: unknown.
+B_pattern,36,veybar_3,pat 36 16x16 1-bit,"3x3 tiles (24x24 px), 4bpp",3,3,PAL2,15+trans,5,res/md/sprites/veybar.png,Frame 3 of 5. Handler use: unknown.
+B_pattern,37,veybar_4,pat 37 16x16 1-bit,"3x3 tiles (24x24 px), 4bpp",3,3,PAL2,15+trans,5,res/md/sprites/veybar.png,Frame 4 of 5. Handler use: unknown.
+B_pattern,38,veybar_0_compl,pat 38 16x16 1-bit,fold into primary (no file),,,—,,5,,Complement of veybar_0 (SAT 0x98). Fold into veybar.
+B_pattern,39,veybar_1_compl,pat 39 16x16 1-bit,fold into primary (no file),,,—,,5,,Fold into veybar.
+B_pattern,40,veybar_2_compl,pat 40 16x16 1-bit,fold into primary (no file),,,—,,5,,Fold into veybar.
+B_pattern,41,veybar_3_compl,pat 41 16x16 1-bit,fold into primary (no file),,,—,,5,,Fold into veybar.
+B_pattern,42,veybar_4_compl,pat 42 16x16 1-bit,fold into primary (no file),,,—,,5,,Fold into veybar.
+B_pattern,43,spinner_0,pat 43 16x16 1-bit,"2x2 tiles (16x16 px), 4bpp",2,2,PAL2,15+trans,4,res/md/sprites/spinner.png,"Edge-swooper / spinner. Types 26-29. Anim table CONFIRMED 4 frames pats 43,44,45,46 (edge_swooper_a_anim 0x7E68 / b 0x7E70). Color 0x8E (A) or 0x87 (B)."
+B_pattern,44,spinner_1,pat 44 16x16 1-bit,"2x2 tiles (16x16 px), 4bpp",2,2,PAL2,15+trans,4,res/md/sprites/spinner.png,Frame 1. Confirmed in anim tables.
+B_pattern,45,spinner_2,pat 45 16x16 1-bit,"2x2 tiles (16x16 px), 4bpp",2,2,PAL2,15+trans,4,res/md/sprites/spinner.png,"Frame 2. Confirmed in anim tables (entity-sprite-mapping once listed 46 as frame 2 — tables are 43,44,45,46)."
+B_pattern,46,spinner_3,pat 46 16x16 1-bit,"2x2 tiles (16x16 px), 4bpp",2,2,PAL2,15+trans,4,res/md/sprites/spinner.png,Frame 3. Confirmed.
+B_pattern,47,spinner_0_compl,pat 47 16x16 1-bit,fold into primary (no file),,,—,,4,,Complement = sat_name+0x10 (pat 47). Fold into spinner.
+B_pattern,48,spinner_1_compl,pat 48 16x16 1-bit,fold into primary (no file),,,—,,4,,Fold into spinner.
+B_pattern,49,spinner_2_compl,pat 49 16x16 1-bit,fold into primary (no file),,,—,,4,,Fold into spinner.
+B_pattern,50,spinner_3_compl,pat 50 16x16 1-bit,fold into primary (no file),,,—,,4,,Fold into spinner.
+B_pattern,51,stealth,pat 51 16x16 1-bit,"2x2 tiles (16x16 px), 4bpp",2,2,PAL2,15+trans,1,res/md/sprites/stealth.png,"Types 31/33 tracker and 34/65/66 stationary. SAT 0xCC, color 0x88 (type 65 override 0x85)."
+B_pattern,52,stealth_compl,pat 52 16x16 1-bit,fold into primary (no file),,,—,,1,,Complement SAT 0xD0. Fold into stealth. Also appears as skipped frame 0 of type-35 anim table (never shown).
+B_pattern,53,box,pat 53 16x16 1-bit,"2x2 tiles (16x16 px), 4bpp",2,2,PAL1,15+trans,1,res/md/sprites/box.png,Types 4-6. SAT 0xD4 after countdown. Type 4 drops 3× type-38; 5 drops nothing; 6 drops type 63.
+B_pattern,54,box_compl,pat 54 16x16 1-bit,fold into primary (no file),,,—,,1,,Complement SAT 0xD8. Fold into box.
+B_pattern,55,umber_A,pat 55 16x16 1-bit,"3x3 tiles (24x24 px), 4bpp",3,3,PAL2,15+trans,2,res/md/sprites/umber.png,"Types 7/8. SAT 0xDC. Type 7 white 0x8F bursts 7× type-38; type 8 light-red 0x8B bursts 2× type-41. Squid-like. 2-frame set exists; handler uses A or B as variants, not a confirmed cycle."
+B_pattern,56,umber_B,pat 56 16x16 1-bit,"3x3 tiles (24x24 px), 4bpp",3,3,PAL2,15+trans,2,res/md/sprites/umber.png,"Type 9. SAT 0xE0, cyan 0x83. Timer spawns type 20."
+B_pattern,57,umber_A_compl,pat 57 16x16 1-bit,fold into primary (no file),,,—,,2,,Complement SAT 0xE4. Fold into umber.
+B_pattern,58,umber_B_compl,pat 58 16x16 1-bit,fold into primary (no file),,,—,,2,,Complement SAT 0xE8. Fold into umber.
+B_pattern,59,degid_left,pat 59 16x16 1-bit,"2x2 tiles (16x16 px), 4bpp",2,2,PAL2,15+trans,1,res/md/sprites/degid.png,Sprite-names: degid left. Types 30/32 ground swooper SAT 0xEC = pat 59.
+B_pattern,60,degid_right,pat 60 16x16 1-bit,"2x2 tiles (16x16 px), 4bpp",2,2,PAL2,15+trans,1,res/md/sprites/degid.png,Sprite-names: degid right. Entity type that uses pat 60: unknown.
+B_pattern,61,degid_complete,pat 61 16x16 1-bit,"2x2 tiles (16x16 px), 4bpp",2,2,PAL2,15+trans,1,res/md/sprites/degid.png,Sprite-names: degid complete. Entity type that uses pat 61: unknown.
+B_pattern,62,sart,pat 62 16x16 1-bit,"4x4 tiles (32x32 px), 4bpp",4,4,PAL2,15+trans,1,res/md/sprites/sart.png,"Type 61 large descender. SAT 0xF8, color from large_descender_color_table (8 TMS colors cycling). Largest named pattern index."
+B_pattern,63,sart_compl,pat 63 16x16 1-bit,fold into primary (no file),,,—,,1,,Complement of sart. Fold into sart.
+B_entity,1,player_ship,pat 14,2x2 (MD MAY 3x3/4x4),,,PAL2,15+trans,1 + i-frame color flash,,Slot 0. SAT 0x38. Color 0x8F / 0x81 invuln 64 frames. Complement pat 15 unused. Port: spr_ship PAL2.
+B_entity,2,shot,pat 10/11/12,2x2,,,PAL1,15+trans,3 power looks (not frames),,SAT from E10F via shot_power_table: 0x28/0x2C/0x30. Cap 2 or 3 on screen. SFX event = 3+(E10F>>2) → 13/14/15.
+B_entity,3,fire_weapon,pat 3 / 4 / 9 / varies,2x2,,,PAL1,15+trans,see fire 0-7,,All 8 fire types in slot 4. Fire 0: pat 3 color-cycle. Fire 3/4: pat 4. Fire 6: no persistent entity. Fire 1/5/7 exact pattern: unknown (KB: color cycle / varies).
+B_entity,4-6,box,pat 53,2x2,,,PAL1,15+trans,countdown then reveal,,"SAT_NAME countdown then 0xD4. Complement 54. Drop by type: 4→3× type38, 5→none, 6→type63."
+B_entity,7-8,umber_A,pat 55,3x3,,,PAL2,15+trans,2 variants in set; not confirmed cycle,,SAT 0xDC. Type 7 color 0x8F burst 7×38; type 8 color 0x8B burst 2×41. Complement 57.
+B_entity,9,umber_B,pat 56,3x3,,,PAL2,15+trans,variant B,,SAT 0xE0 color 0x83. Spawns type 20 on timer. Complement 58.
+B_entity,10,duster,pat 22,2x2,,,PAL2,15+trans,1,,SAT 0x58 color 0x89. Complement 23.
+B_entity,11,base_spawner,pat 10 then type→69,—,,,—,—,transient,,Init writes shot_single then becomes type 69. No unique art.
+B_entity,12-15,teruzo,pat 24,2x2,,,PAL2,15+trans,1,,SAT 0x60 hardcoded. 12/13 lower Y=112 color 0x8A; 14/15 upper Y=32 color 0x89. Complement 25.
+B_entity,16-17,luster_B,pat 30,2x2,,,PAL2,15+trans,variant B,,SAT 0x78 color 0x8E. 16 = Y-fall; 17 = homing.
+B_entity,18,luster_A,pat 29,2x2,,,PAL2,15+trans,variant A,,SAT 0x74 color 0x8B.
+B_entity,19,fire_expire,pat 9 then type→3,2x2,,,PAL1,15+trans,transient,,"First frame pat 9 color 0x80, then type 0x83 (dispatches as type 3). Not an enemy."
+B_entity,20,lead_homing,pat 7,1x1 or 2x2,,,PAL2,15+trans,1,,SAT 0x1C. Spawned by type 9.
+B_entity,21,light_bar,pat 6,2x1 or 2x2,,,PAL2,15+trans,1,,SAT 0x18 color 0x84/0x85.
+B_entity,22-23,veybar,pat 33,3x3,,,PAL2,15+trans,5 exist; handler uses 33 only,,SAT 0x84 color 0x83. Complement 38. Y-homing.
+B_entity,24-25,veybar_fast,pat 33,3x3,,,PAL2,15+trans,same as 22-23,,SAT 0x84 color 0x89. Full homing.
+B_entity,26-27,edge_swooper_A,pat 43-46,2x2,,,PAL2,15+trans,4 CONFIRMED,,Table 0x7E68 color 0x8E. Complement sat_name+0x10.
+B_entity,28-29,edge_swooper_B,pat 43-46,2x2,,,PAL2,15+trans,4 CONFIRMED,,Table 0x7E70 color 0x87.
+B_entity,30/32,ground_swooper,pat 59,2x2,,,PAL2,15+trans,1,,SAT 0xEC = degid_left. Sprite-names degid right/complete (60/61) unused by this handler.
+B_entity,31/33,stealth_tracker,pat 51,2x2,,,PAL2,15+trans,1,,SAT 0xCC color 0x88. Complement 52. Tracks player Y then X.
+B_entity,34/65/66,stealth_stationary,pat 51,2x2,,,PAL2,15+trans,1,,Same sprite; 3-shot bursts. Type 65 color override 0x85.
+B_entity,35,enemy_projectile,pat 7/8/9/16/24,2x2,,,PAL2,15+trans,6-frame pulse CONFIRMED,,Init pattern from E141. Then table 0x84D1 tick_rate=4: (skip) lead→med→lg→med→lead. NOT a base-eye.
+B_entity,36,flashing_bolt,pat 13,2x2,,,PAL2,15+trans,color XOR flicker,,SAT 0x34. Color XOR 0x0E/frame. 16 hp in port.
+B_entity,37,lead_bullet,pat 7,1x1 or 2x2,,,PAL2,15+trans,1,,SAT 0x1C color 0x8F. Upward. Type 42 converts into this.
+B_entity,38,burst_fragment,pat 7,1x1 or 2x2,,,PAL2,15+trans,1,,SAT 0x1C. Umber-7 burst; box-4 drop. Type 43 converts into this.
+B_entity,39,col_marker_or_compl,pat 17/23/25 / parent+offset,—,,,—,—,follows parent,,Type 39 is the complement/column-marker slot. On MD fold into parent sprite; no extra hardware sprite required.
+B_entity,40,instant_despawn,pat —,—,,,—,—,none,,Handler = entity_clear. No art.
+B_entity,41,pair_fragment,pat 7,1x1 or 2x2,,,PAL2,15+trans,1,,SAT 0x1C. Spawned by type 8.
+B_entity,42,proto_bullet,pat 7 then type→37,—,,,—,—,transient,,No unique art.
+B_entity,43,proto_fragment,pat 7 then type→38,—,,,—,—,transient,,No unique art.
+B_entity,44,ground_structure,pat 16 + nametable tiles,2x2 overlay + BG tiles,,,PAL2/PAL3,15+trans / 16,1,,Sprite plane + complement 17. Also stamps tiles (place_tile_group). Draw both a sprite and BG greeble.
+B_entity,45,light_bar_var,pat 6,2x1 or 2x2,,,PAL2,15+trans,1,,SAT 0x18 color 0x8F.
+B_entity,46-55,ground_gun,pat 18,2x2,,,PAL2,15+trans,loga 2-frame set exists; handler uses 18,,SAT 0x48 = loga_A. 5 pair behaviours spawn type 38 or 21. Nametable-locked fallers.
+B_entity,56,sig_single,pat 28,2x2,,,PAL1,15+trans,color flash XOR 0x09,,SAT 0x70. Falling pickup/missile.
+B_entity,57,paired_descender_A,pat 27,2x2,,,PAL2,15+trans,1,,"SAT 0x6C. Sprite-names call pat 27 sig_double — same pixels, different role."
+B_entity,58,paired_descender_B,pat 26,2x2,,,PAL2,15+trans,1,,SAT 0x68. Sprite-names: sig_triple.
+B_entity,59,sideways,pat 28,2x2,,,PAL2,15+trans,1,,SAT 0x70 same as sig_single. Moves right.
+B_entity,60,player_death_fx,pat 7/8/9,2x2 or 3x3,,,PAL1,15+trans,11 CONFIRMED,,Table 0x86F3 tick_rate=4. Invisible→lead→med→lg→med→lead. Slot 0. No motion.
+B_entity,61,large_descender,pat 62,4x4,,,PAL2,15+trans,1 + 8-color cycle,,SAT 0xF8. Colors from 0x8EAF table (0x81/83/84/86/87/89/8A/8D). Sprite-names: sart.
+B_entity,62,invisible_riser,pat 0,—,,,—,—,none,,No sprite. Trigger/effect entity.
+B_entity,63,power_chip,pat 1 (likely),2x2,,,PAL1,15+trans,1,,Handler 0x78AF does not LD SAT name. Sprite-names + port objs frame 5 use pat 1. Pickup SFX event 0x17 = 23.
+B_entity,64,proto_structure,pat 16 then type→44,—,,,—,—,transient,,"Cyan plane, becomes type 44."
+B_entity,67,med_circle,pat 8,2x2,,,PAL2,15+trans,1,,SAT 0x20 color 0x86. 5 hp in port.
+B_entity,68,proto_box,pat 53 then type→4,—,,,—,—,transient,,Spawns 3-box cluster via proto_box_type_table.
+B_entity,69,base_projectile,pat 7,1x1 or 2x2,,,PAL2,15+trans,1,,"SAT 0x1E (pat 7, lower bits ignored). Initially transparent. From type 11."
+B_entity,70-71,idol_totem,pat nametable (sprite unknown),BG 4x4 to 8x8 tiles,,,PAL3,16,—,,Nametable-locked. Destroy → type 72 orb. Type 71 smiling totem / type 70 plain. Port currently uses lg_circle as placeholder sprite.
+B_entity,72,orb_core,pat 9 (anim 7/8/9),2x2,,,PAL1,15+trans,4+4 CONFIRMED,,"base_core_anim 0x8A16 phase1 (colors 0x8F/83/8A/8B) then 0x8A1E all 0x81 black. Yellow touch=kill-all, black=warp."
+B_entity,73-79,base_segment,"pat 8 (probe, sat_col=0x00) + nametable",BG tiles; optional overlay,,,PAL3,16,unknown overlay,,"Nametable-locked base. HP from base_segment_table. Type 75 fires type-38 pairs. Probe: pat 8 transparent — visual is tiles, not the SAT."
+B_entity,80,base_damage,pat unknown,—,,,—,—,unknown,,Handler calls base-encounter decrement. No SAT write documented.
+B_entity,81/87-89,wide_structure,pat 9 likely / nametable,BG tiles + optional 2x2,,,PAL3,16,unknown,,Same handler group as 70/82. Type 82 is the fire-box (confirmed). Others are wide totems/structures.
+B_entity,82,fire_box,pat nametable 4x4 + digit,BG 4x4 tiles,,,PAL3,16,1,,"Blue 4×4, digit = fire#. 4 hp → type 83. Not a warp totem."
+B_entity,83,fire_upgrade,pat 1,2x2,,,PAL1,15+trans,1,,"SAT 0x04 color 0x81 black. Touch → fire_select(+0x1c). Same pattern as power chip, different color/role."
+B_entity,84-86,wide_variant,pat unknown (joins 0x87AB),BG tiles,,,PAL3,16,unknown,,wide_struct_init then same as 70-group. Distinct pixels: unknown.
+C,charset,charset,gfx_charset_bitmap 0x5EFC-0x64D2 | 256 tiles × 8 bytes = 2048 B bitmap + 256 × 8 color,256 MD 4bpp tiles (charset_tiles.bin = 8192 B = 256×32),,,PAL3 (2nd pal allowed),16,512-768,res/md/bg/,"Alphabet, digits, HUD labels, main terrain. Loaded into all 3 SCREEN2 banks identically. Port: VDP_loadTileData 256 tiles at TILE_USER_INDEX+32."
+C,logo,logo,"gfx_logo_bitmap 0x5D2C-0x5EEF | 61 tiles (indices 176-236). 5 nametable rows, stride 25, up to 18 names/row. Color block decompresses to 29 entries.",Replace with a title tileset or a sprite logo,,,PAL0 or PAL3,16,64-128,res/md/bg/,Overwrites charset tiles 176-236 on MSX title. MD can keep logo in its own VRAM range. Title currently SGDK font only.
+C,late_bg_a,late_bg_a,gfx_bg_late_bitmap_a 0x666F-0x6704 | 20 tiles into indices 23-42,"Dedicated late-stage tileset, do not overwrite font",,,PAL3,16,32-64,res/md/bg/,MSX overwrites charset slots 23-42 for last stages.
+C,late_bg_b,late_bg_b,gfx_bg_late_bitmap_b 0x6705-0x68A8 | 67 tiles into indices 90-156,Dedicated late-stage tileset,,,PAL3,16,64-128,res/md/bg/,MSX overwrites charset slots 90-156. Color block B decompresses to 69 tiles.
+C,tile_tables,tile_tables,0xA444-0xA653 | 22 columns × 24 rows of charset IDs (4+8+8+1+1),Reuse new BG tiles; columns still 24 tiles tall (plus 4 extra rows on 224px),,,PAL3,16,included in charset budget,res/md/bg/,"Primary 4 entries (stage&3), variant A/B 8 each (stage&7), two fixed columns. Fill IDs cluster 0x28/0x29 and 0x17-0x19 / 0x24-0x27."
+C,column_greeble,column_greeble,"tile_column_data_region1/2 in map_blob 0x9B64-0xBE26 | variable-length columns of charset IDs, max 24 tiles","Same IDs into the new tileset, or a 2nd tileset if you exceed 256",,,PAL3 (or PAL0 for a 2nd pal),16,256-512 extra if split,res/md/bg/,Cmd 2/4/5/B streams. place_tile_group stamps idols/fire-boxes onto the nametable.
+C,hud_font,hud_font,"charset digits 0x30+n, space 0x20 | No separate HUD glyph table. Labels: ALC TOP SCORE ZANAC LEVEL ROUND FIRE. PAUSE 5 bytes @0x4E40.",SGDK FONT_LEN=96 now; MAY replace with a 1bpp/4bpp HUD font (~64-96 tiles),,,PAL0,16,96,res/md/bg/,MSX HUD is in the nametable (right-panel border 14 rows from VRAM 0x3958). H40 has 8 extra tile-columns (64px) for a side HUD.
+C,credits,credits,"credits_control_table 0x4775-0x4826 + strings 0x47AA | Length-prefixed ASCII: GAME DESIGN, PROGRAM, GRAPHICS, SOUND, DIRECTOR, JANUS, JEMINI, COMPILE, WAO, MOO, MIYAMOTO, YORIKI, THANKS, PAL, MUSIC, LUNARIAN",Same font as HUD or a credits tileset,,,PAL0,16,0 extra if font reused,res/md/bg/,"Centered pages, fire-to-cycle, ESC-to-title. Continues over scrolling BG."
+C,title_text,title_text,draw_title_text strings | GAME DESIGNED BY COMPILE / PRODUCED BY AII / PRESENTED BY PONY INC. / COPYRIGHT 1986 PONY INC. + A.I. row,Font or title tiles,,,PAL0,16,0-32,res/md/bg/,Currently replaced by the Original / Zanac MD menu (SGDK font).
+D,1,main_stage_theme,BGM,XGM loop (or XGM2),,,,,,res/md/vgm/ev01_main_stage_theme,"After ev7 chain (0x87 01). Longest, 3 voices ch 0/2/1."
+D,2,round_mod8_theme,BGM,XGM loop,,,,,,res/md/vgm/ev02_round_mod8_theme,Round start when round≡0 mod 8 (0x4065 else-path). 2 voices.
+D,3,title_music,BGM,XGM loop,,,,,,res/md/vgm/ev03_title_music,"Title intro (0x5A16, live-confirmed). 3 voices. Port: sound_play_title()."
+D,4,game_over,BGM,XGM one-shot (no loop) or short XGM,,,,,,res/md/vgm/ev04_game_over,Game-over / attract (0x467B). 3 voices. Port: sound_play_gameover().
+D,5,jingle_from_ev12,jingle,XGM one-shot,,,,,,res/md/vgm/ev05_jingle_from_ev12,Chained from event 12 (0x87 05 @0x5804). 2 voices.
+D,6,weapon_fire_sfx,SFX,one-shot PCM (XGM PCM ch) or PSG,,,,,,res/md/vgm/ev06_weapon_fire_sfx,Weapon/fire (0x7260). 1 voice ch 1.
+D,7,stage_intro,BGM,XGM intro then loop ev1 (or one XGM with intro),,,,,,res/md/vgm/ev07_stage_intro,Round-start when round&7≠0 (0x4065). 3 voices. Chains → ev1. Port: sound_play_round().
+D,8,state_jingle_a,jingle,XGM one-shot,,,,,,res/md/vgm/ev08_state_jingle_a,E102 bit2 clear (0x4A61); also enemy (0x8763). 2 voices.
+D,9,state_jingle_b,jingle,XGM one-shot,,,,,,res/md/vgm/ev09_state_jingle_b,E102 bit2 clear (0x4A20). 2 voices.
+D,10,round_variant_bgm,BGM,XGM loop,,,,,,res/md/vgm/ev10_round_variant_bgm,Round-variant BGM (0x4133 init). 3 voices.
+D,11,init_jingle,jingle,XGM one-shot,,,,,,res/md/vgm/ev11_init_jingle,"Init jingle (0x40EA). 3 voices, 2 share stream 0x57B5 (chorus)."
+D,12,round_boss_jingle,jingle,XGM one-shot then ev5,,,,,,res/md/vgm/ev12_round_boss_jingle,Round/boss (0x924B). 3 voices. Chains → ev5.
+D,13,shot_sfx_lv0,SFX,one-shot PCM,,,,,,res/md/vgm/ev13_shot_sfx_lv0,Shot fire. 0x7234 plays event=3+(E10F>>2). Levels 0-1 E10F=0x28 → ev13. Live-confirmed. 1 voice ch 2.
+D,14,shot_sfx_lv2,SFX,one-shot PCM (higher pitch/layer),,,,,,res/md/vgm/ev14_shot_sfx_lv2,Same formula: E10F=0x2C (shot levels 2-3) → ev14. Catalogue lists 'SFX ch C' with no extra call site.
+D,15,shot_sfx_lv4,SFX,one-shot PCM,,,,,,res/md/vgm/ev15_shot_sfx_lv4,Same formula: E10F=0x30 (shot levels 4-5) → ev15. Catalogue lists 'SFX ch C' with no extra call site.
+D,16,sfx_enemy_16,SFX,one-shot PCM (noise),,,,,,res/md/vgm/ev16_sfx_enemy_16,ch C noise — enemy (0x86C0). 1 voice. Exact gameplay beat beyond 'enemy': unknown.
+D,17,sfx_enemy_hit,SFX,one-shot PCM,,,,,,res/md/vgm/ev17_sfx_enemy_hit,"ch C noise — enemy hit (0x8495, 0x8B87)."
+D,18,explosion,SFX,one-shot PCM,,,,,,res/md/vgm/ev18_explosion,"ch C noise — explosion (base damage/death 0x8879, 0x8E1F). Port: sound_play_explode()."
+D,19,sfx_fire_or_enemy,SFX,one-shot PCM,,,,,,res/md/vgm/ev19_sfx_fire_or_enemy,ch C — fire (0x7516) / enemy (0x89FF).
+D,20,sfx_player_or_base,SFX,one-shot PCM,,,,,,res/md/vgm/ev20_sfx_player_or_base,ch C — player (0x7911) / base (0x8438).
+D,21,sfx_enemy_hit_21,SFX,one-shot PCM,,,,,,res/md/vgm/ev21_sfx_enemy_hit_21,"ch C — enemy hit (0x8025, 0x8209)."
+D,22,sfx_noise_22,SFX,one-shot PCM (noise) or keep PSG,,,,,,res/md/vgm/ev22_sfx_noise_22,ch C noise. Call site not listed in the 0057 catalogue. Purpose: unknown.
+D,23,sfx_pickup,SFX,one-shot PCM,,,,,,res/md/vgm/ev23_sfx_pickup,"ch C — player (0x78C1). Power-chip handler 0x78BF is LD A,0x17 / CALL play_sound_event — 0x17=23."
+D,24,sfx_weapon_expire,SFX,one-shot PCM or PSG,,,,,,res/md/vgm/ev24_sfx_weapon_expire,"ch B — weapon (0x74C1, 0x74E2). Those addresses are fire 2 / fire 4 expire handlers."
+D,25,round_fanfare,jingle,XGM one-shot,,,,,,res/md/vgm/ev25_round_fanfare,"Round fanfare, conditional (0x9044). 3 voices."
+D,26,round_clear_a,jingle,XGM one-shot,,,,,,res/md/vgm/ev26_round_clear_a,Round-clear fanfare C=0x1A (0x917A). 3 voices.
+D,27,round_clear_b,jingle,XGM one-shot,,,,,,res/md/vgm/ev27_round_clear_b,Round-clear variant C=0x1B (0x917A). 3 voices.
+E,res/md/sprites/,res/md/sprites/,,"SPRITE name ""md/sprites/foo.png"" W H NONE 0",,,,,,res/md/sprites/,"PNG (indexed or 4bpp-friendly), one file per visual or a strip — W,H are tiles 1-4. Color 0 = transparent. 16 colors from one CRAM pal. Frame strips are horizontal (see current objs.png 208x16 = 13×16px)."
+E,res/md/sprites/ship.png,res/md/sprites/ship.png,,SPRITE spr_md_ship ... 2 2 (or 3 3 / 4 4),,,,,,res/md/sprites/ship.png,Player ship (replace 16x16 MSX) — Point ModeAssets.ship here in Zanac MD. Original keeps res/sprites/ship.png.
+E,res/md/sprites/enemies.png or per-enemy,res/md/sprites/enemies.png or per-enemy,,SPRITE spr_md_* W H,,,,,,res/md/sprites/enemies.png or per-enemy,"Folded complement, anim frames as strip — Suggested groups: player, shots, fire, items, duster, teruzo, luster, veybar, spinner, stealth, box, umber, degid, sart, projectiles."
+E,res/md/bg/,res/md/bg/,,TILESET / MAP in resources.res,,,,,,res/md/bg/,8x8 4bpp tilesets + optional maps — Keep Original charset_tiles.bin. Zanac MD can load a 512-1024 tile set split across 2 palettes.
+E,res/md/bg/terrain.png,res/md/bg/terrain.png,,TILESET md_terrain,,,,,,res/md/bg/terrain.png,Main scrolling greeble / starfield — Covers charset + tile_tables + column streams. 2nd palette OK.
+E,res/md/bg/logo.png,res/md/bg/logo.png,,TILESET or SPRITE,,,,,,res/md/bg/logo.png,Title logo (was 61 MSX tiles) — Do not overwrite HUD font. Title currently has no logo art.
+E,res/md/bg/hud.png,res/md/bg/hud.png,,TILESET md_hud,,,,,,res/md/bg/hud.png,Optional HUD panel / digits — H40 extra 64px is a natural right-side HUD like MSX ALC/TOP/SCORE/LEVEL/ROUND/FIRE.
+E,res/md/bg/credits.png,res/md/bg/credits.png,,TILESET or font,,,,,,res/md/bg/credits.png,Optional credits decorations — Strings can stay as text; this is ornament.
+E,res/md/vgm/,res/md/vgm/,,XGM / WAV in resources.res,,,,,,res/md/vgm/,XGM / XGM2 / VGM / WAV — SGDK 2.11: XGM = 4 PCM @14 kHz; XGM2 = 3 PCM @13.3/6.65 kHz; WAV = PCM sample. Original mode keeps sound_blob.bin + PSG interpreter. Zanac MD: Z80_loadDriver(XGM or XGM2) and map events 1-27 to tracks/SFX ids.
+E,res/md/vgm/bgm_*.xgm,res/md/vgm/bgm_*.xgm,,"XGM bgm_title, bgm_stage, ...",,,,,,res/md/vgm/bgm_*.xgm,"Looping stage / title / game-over — Events 1,2,3,4,7,10. Ev7 may be the intro of the ev1 file."
+E,res/md/vgm/sfx_*.wav,res/md/vgm/sfx_*.wav,,"WAV sfx_shot, sfx_explode, ...",,,,,,res/md/vgm/sfx_*.wav,"One-shot PCM — Events 6,13-24. Keep filenames = event id so ModeAssets can be a table of pointers."
