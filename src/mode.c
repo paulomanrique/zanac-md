@@ -131,4 +131,8 @@ void mode_draw_letterbox(void)
      * transparent WINDOW cells in cols 24-31 cannot show BG_B wrap. */
     VDP_fillTileMapRect(BG_A, attr, 0, 0, MODE_H32_COLS, 2);
     VDP_fillTileMapRect(BG_A, attr, 0, 26, MODE_H32_COLS, 2);
+    /* WINDOW overlays cols 24-31. SGDK tile 0 leftover there reads as a
+     * white stripe in the letterbox next to the right HUD. */
+    VDP_fillTileMapRect(WINDOW, attr, MODE_BAR_COL, 0, MODE_BAR_W, 2);
+    VDP_fillTileMapRect(WINDOW, attr, MODE_BAR_COL, 26, MODE_BAR_W, 2);
 }
