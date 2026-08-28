@@ -1,5 +1,7 @@
 # Zanac MD
 
+This Mega Drive port is based on the MSX reverse-engineering in [zanac-re](https://github.com/mgmalheiros/zanac-re) by Marcelo Malheiros. The original project is not ours; this repository is a derivative port.
+
 Mega Drive port of Zanac (MSX). Simulation stays in MSX space; render is a
 skin with two modes:
 
@@ -27,6 +29,7 @@ Re-extract scripts (needs the RE tree's `source/zanac.asm`):
 
 ```powershell
 python tools\extract_map_scripts.py
+python tools\extract_logo.py
 ```
 
 Then, from this directory:
@@ -42,7 +45,8 @@ Output: `out/rom.bin`.
 | Screen | Input | Action |
 |--------|--------|--------|
 | Title  | D-Pad up/down | Select Original / Zanac MD |
-| Title  | START | Start game in that mode (round 1, as MSX title_screen_init with ESC not held) |
+| Title  | START | Start game in that mode (round 1) |
+| Title  | C + START | Continue from last round reached |
 | Game   | D-Pad | Fly the ship (8-dir) |
 | Game   | A (or C) | SPACE: shot (20-frame period) + fire-weapon type 3 |
 | Game   | START | Pause toggle (MSX STOP). Mutes via E200; PAUSE at nametable 0x396A |

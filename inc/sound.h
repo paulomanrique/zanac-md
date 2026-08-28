@@ -25,6 +25,7 @@
 #define SND_EV_PLASMA     19  /* fire 6 expire 0x7516 */
 #define SND_EV_BASEHIT    20  /* base hit 0x8438 */
 #define SND_EV_EHIT2      21  /* type 66 volley 0x8025 (bit0 path) */
+#define SND_EV_LIGHTBAR   22  /* light-bar spawn 0x8654 (LD A,0x16) */
 #define SND_EV_PICKUP     23  /* power-chip 0x78C1 */
 #define SND_EV_FIRE_EXPIRE 24
 #define SND_EV_FANFARE    25  /* round banner / 0x9044 */
@@ -45,6 +46,8 @@ void sound_fade(void);
 
 void sound_play_title(void);
 void sound_play_round(u8 round);
+/* Any stage-BGM event (1/2/7/10) still running on slots 0-2. */
+u8   sound_bgm_active(void);
 void sound_play_shot(void);
 void sound_play_explode(void);
 void sound_play_gameover(void);

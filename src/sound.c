@@ -159,7 +159,6 @@ static void fetch_stream(Slot *s)
 {
     u16 ptr = s->stream;
     u8 guard;
-    u8 old_event = s->event;
 
     for (guard = 0; guard < 48; guard++)
     {
@@ -250,12 +249,18 @@ static void fetch_stream(Slot *s)
         {
             u8 ev = rd(ptr);
             ptr++;
+            /* ev5 is the ev12 boss tail; shared stream templates also embed
+             * 0x87 05 but it must not run during ev1/ev7 gameplay BGM. */
+            if (ev == SND_EV_CHAIN5 && s->event != SND_EV_BOSS)
+            {
+                s->stream = ptr;
+                break;
+            }
             s->stream = ptr;
             sound_play_event(ev);
-            if (!s->cfg || s->event != old_event)
-                return;
-            ptr = s->stream;
-            break;
+            /* Intro/theme streams always END immediately after the chain byte. */
+            s->cfg = 0;
+            return;
         }
         case 0x88:
             s->loopcnt = rd(ptr);
@@ -600,11 +605,24 @@ void sound_play_title(void)
 
 void sound_play_round(u8 round)
 {
+    /* MSX 0x4065: ev7 intro (round&7!=0) chains to ev1 inside the track.
+     * Do not play ev12/ev5 here — that is ending_setup @0x924B only. */
     sound_stop_all();
     if ((round & 7) == 0)
         sound_play_event(SND_EV_ROUND8);
     else
         sound_play_event(SND_EV_INTRO);
+}
+
+u8 sound_bgm_active(void)
+{
+    u8 i;
+    for (i = 0; i < 3; i++)
+    {
+        if (s_slot[i].cfg && s_slot[i].event <= 10)
+            return 1;
+    }
+    return 0;
 }
 
 void sound_play_shot(void)
@@ -684,7 +702,7 @@ void sound_init(void)
     u8 oct;
     u16 per;
 
-    Z80_loadDriver(Z80_DRIVER_NULL, TRUE);
+    SND_NULL_loadDriver();
     PSG_reset();
 
     for (note = 0; note < 12; note++)

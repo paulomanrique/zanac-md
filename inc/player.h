@@ -45,6 +45,11 @@ void player_skip_over(void);
 void player_add_score(u8 award_idx);
 /* E106-E108 top score. Persists across title_screen_init. */
 u32  player_hiscore(void);
+u32  player_score(void);
+u32  player_top_display(void);
+u8   player_top_flash_blank(void);
+u8   player_top_flash_active(void);
+void player_top_flash_tick(void);
 /* compare_save_hiscore 0x4ACE: copy score if >= top. Game-over / credits. */
 void player_save_hiscore(void);
 /* E102: bit2 mutes ev8/ev9; bit7 skips fade/4163 (attract). */

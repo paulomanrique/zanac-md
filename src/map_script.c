@@ -5,6 +5,7 @@
 #include "player.h"
 #include "resources.h"
 #include "sound.h"
+#include "hud.h"
 
 /*
  * 13-command jump table, matching MSX 0x94EB.
@@ -142,6 +143,10 @@ static u16 s_cred_wait;
 static u8  s_cred_settle;
 static u16 s_cred_age;
 static u8  s_cred_dirty;
+
+/* MSX E701 continue: last round reached this power cycle (title + C). */
+static u8  s_continue_round = 1;
+static u8  s_banner_bgm_arm;
 
 static const char *const s_cmd_name[13] = {
     "spawn_ctrl", "place_tiles", "col_groups", "tile_copy",
@@ -1324,7 +1329,8 @@ static void cmd_idol_banner(u8 cmd, const u8 *ops)
     s_ms.banner[5] = ' ';
     s_ms.banner[6] = (char)('0' + (round % 10));
     s_ms.banner[7] = 0;
-    sound_play_event(SND_EV_FANFARE);
+    /* MSX 0x9044 plays ev25 but stop_all kills the ev7->ev1 chain; keep BGM. */
+    s_banner_bgm_arm = 1;
 }
 
 static void load_trigger_from_pc(void);
@@ -1350,6 +1356,8 @@ static void cmd_script_jump(u8 cmd, const u8 *ops)
         return;
     }
     s_ms.round = resolve_round_from_ptr(dest);
+    if (s_ms.round >= 1 && s_ms.round <= 8)
+        s_continue_round = s_ms.round;
     s_ms.pc = dest;
     s_ms.row = 0;
     s_scroll_px = 0;
@@ -2021,6 +2029,8 @@ static void script_boot(u8 round, u16 pc)
     s_ms.round = round;
     s_ms.pc = pc;
     s_ms.running = TRUE;
+    if (round >= 1 && round <= 8)
+        s_continue_round = round;
     /* MSX 0x4225: E12D := 3 (bit0 sticky + bit1 stream). alc_recompute
      * already ran; keep bit1 so cmd-B hold SET3 (8fd4) cannot wipe the
      * R1 stream — R1 never sends cmd 0 to re-arm bit1. */
@@ -2054,8 +2064,12 @@ void map_script_init_round(u8 round)
 
 void map_script_init(void)
 {
-    /* Title START: same as MSX title_screen_init — E701 = 1 if ESC not held. */
     map_script_init_round(MAP_DEFAULT_ROUND);
+}
+
+u8 map_script_continue_round(void)
+{
+    return s_continue_round;
 }
 
 void map_script_update(void)
@@ -2063,7 +2077,22 @@ void map_script_update(void)
     u16 prev_px;
 
     if (s_ms.banner_timer)
+    {
         s_ms.banner_timer--;
+        if (!s_ms.banner_timer && s_banner_bgm_arm)
+        {
+            s_banner_bgm_arm = 0;
+            /* SUB_ram_4163 after round banner: restore main theme if fanfare
+             * or other SFX cleared the ev7->ev1 chain. */
+            if (s_ms.running && !s_cred_on && !sound_bgm_active())
+            {
+                if ((s_ms.round & 7) == 0)
+                    sound_play_event(SND_EV_ROUND8);
+                else
+                    sound_play_event(SND_EV_THEME);
+            }
+        }
+    }
 
     s_scroll_delta = 0;
     if (s_ms.running)
@@ -2122,11 +2151,6 @@ void map_script_draw_hud(void)
     const ModeAssets *a = mode_assets();
     u16 cols = a->screen_width / 8;
     u16 vis = cols;
-    char buf[20];
-    char cmd8[9];
-    u16 n;
-    u16 i;
-    static const char HEX[] = "0123456789ABCDEF";
 
     mode_draw_letterbox();
 
@@ -2147,110 +2171,15 @@ void map_script_draw_hud(void)
         VDP_clearText(0, mode_text_row(4), vis);
     }
 
-    n = s_ms.row;
-    i = 0;
-    buf[i++] = 'R';
-    buf[i++] = 'O';
-    buf[i++] = 'W';
-    buf[i++] = ' ';
-    if (n >= 1000) buf[i++] = (char)('0' + (n / 1000) % 10);
-    if (n >= 100)  buf[i++] = (char)('0' + (n / 100) % 10);
-    if (n >= 10)   buf[i++] = (char)('0' + (n / 10) % 10);
-    buf[i++] = (char)('0' + (n % 10));
-    buf[i++] = ' ';
-    buf[i++] = 'R';
-    buf[i++] = (char)('0' + (s_ms.round % 10));
-    buf[i++] = ' ';
-    buf[i++] = 'P';
-    buf[i++] = 'C';
-    buf[i++] = ' ';
-    buf[i++] = HEX[(s_ms.pc >> 12) & 0xF];
-    buf[i++] = HEX[(s_ms.pc >> 8) & 0xF];
-    buf[i++] = HEX[(s_ms.pc >> 4) & 0xF];
-    buf[i++] = HEX[s_ms.pc & 0xF];
-    buf[i] = 0;
-
-    VDP_setTextPalette(PAL0);
     if (mode_get() == MODE_ORIGINAL)
     {
-        /* Debug HUD in the right bar / letterbox, not the 192 playfield. */
-        VDP_clearTextBG(WINDOW, MODE_BAR_COL, 0, MODE_BAR_W);
-        VDP_drawTextBG(WINDOW, a->name, MODE_BAR_COL, 0);
-        /* 0xBFD6: ACE labels @0x3839 row1 col25; hex E12E/E132/E130 @0x3859. */
-        {
-            char ace[8];
-            u8 va = entity_e12e();
-            u8 vc = entity_e132();
-            u8 ve = entity_e130();
-            VDP_clearTextBG(WINDOW, MODE_BAR_COL, 1, MODE_BAR_W);
-            VDP_drawTextBG(WINDOW, "ACE", MODE_BAR_COL, 1);
-            ace[0] = HEX[(va >> 4) & 0xF];
-            ace[1] = HEX[va & 0xF];
-            ace[2] = HEX[(vc >> 4) & 0xF];
-            ace[3] = HEX[vc & 0xF];
-            ace[4] = HEX[(ve >> 4) & 0xF];
-            ace[5] = HEX[ve & 0xF];
-            ace[6] = 0;
-            VDP_clearTextBG(WINDOW, MODE_BAR_COL, 2, MODE_BAR_W);
-            VDP_drawTextBG(WINDOW, ace, MODE_BAR_COL, 2);
-        }
-        /* MSX round digit @0x3A1B row 16 col 27 */
-        {
-            char rb[4];
-            rb[0] = 'R';
-            rb[1] = (char)('0' + (s_ms.round % 10));
-            rb[2] = 0;
-            VDP_clearTextBG(WINDOW, MODE_BAR_COL, 18, MODE_BAR_W);
-            VDP_drawTextBG(WINDOW, rb, MODE_BAR_COL, 18);
-        }
-        VDP_clearTextBG(WINDOW, MODE_BAR_COL, 25, MODE_BAR_W);
-        VDP_drawTextBG(WINDOW, "ROW", MODE_BAR_COL, 25);
-        {
-            char rb[9];
-            u8 k = 0;
-            u16 rn = s_ms.row;
-            if (rn >= 1000) rb[k++] = (char)('0' + (rn / 1000) % 10);
-            if (rn >= 100)  rb[k++] = (char)('0' + (rn / 100) % 10);
-            if (rn >= 10)   rb[k++] = (char)('0' + (rn / 10) % 10);
-            rb[k++] = (char)('0' + (rn % 10));
-            rb[k] = 0;
-            VDP_clearTextBG(WINDOW, MODE_BAR_COL, 26, MODE_BAR_W);
-            VDP_drawTextBG(WINDOW, rb, MODE_BAR_COL, 26);
-        }
-        VDP_clearTextBG(WINDOW, MODE_BAR_COL, 27, MODE_BAR_W);
-        if (s_ms.last_cmd)
-        {
-            u8 k;
-            for (k = 0; k < 8 && s_ms.last_cmd[k]; k++)
-                cmd8[k] = s_ms.last_cmd[k];
-            cmd8[k] = 0;
-            VDP_drawTextBG(WINDOW, cmd8, MODE_BAR_COL, 27);
-        }
-        /* 0x3AB9 TIME + 0x3ABD render_hex_byte(E155). MSX row 21 col 25. */
-        {
-            u16 tr = mode_text_row(21);
-            VDP_clearTextBG(WINDOW, MODE_BAR_COL, tr, MODE_BAR_W);
-            if (s_time_on)
-            {
-                char tb[8];
-                tb[0] = 'T';
-                tb[1] = 'I';
-                tb[2] = 'M';
-                tb[3] = 'E';
-                tb[4] = HEX[(s_e155 >> 4) & 0xF];
-                tb[5] = HEX[s_e155 & 0xF];
-                tb[6] = 0;
-                VDP_drawTextBG(WINDOW, tb, MODE_BAR_COL, tr);
-            }
-        }
+        hud_draw_alc();
+        hud_draw_round(s_ms.round);
+        hud_draw_time(s_time_on, s_e155);
         return;
     }
 
     VDP_drawText(a->name, 1, 1);
-    VDP_clearText(1, 24, cols > 1 ? (u16)(cols - 1) : cols);
-    if (s_ms.last_cmd)
-        VDP_drawText(s_ms.last_cmd, 1, 24);
-    VDP_drawText(buf, 1, 26);
 }
 
 const MapScript *map_script_state(void)
