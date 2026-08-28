@@ -55,6 +55,8 @@ typedef struct {
 
 void map_script_init(void);
 void map_script_init_round(u8 round);
+/* Last round reached (MSX E701 continue). Title START+C uses this. */
+u8   map_script_continue_round(void);
 void map_script_update(void);
 void map_script_draw_hud(void);
 void map_script_reset_scroll(void);

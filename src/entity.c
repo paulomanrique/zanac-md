@@ -892,6 +892,12 @@ static int enemy_takes_shots(const Slot *e)
     u8 et = slot_msx_type(e);
     u8 pf = post_flags(et);
 
+    /* Ground / base structures are always shootable (MSX 44CA leg). */
+    if (e->kind == KIND_GROUND || e->kind == KIND_GUN
+        || e->kind == KIND_WIDE || e->kind == KIND_FIREBOX
+        || e->kind == KIND_BASE || e->kind == KIND_HUSK)
+        return 1;
+
     if (pf & POST_PICK)
         return 0;
     if (!pf)
@@ -1277,7 +1283,7 @@ static void spawn_ground_fall(Slot *e, u8 type, s16 x, s16 y, u16 dest)
     e->kind = KIND_GROUND;
     e->variant = type;
     e->hp = 3;
-    e->ground = 0;
+    e->ground = 1;
     e->dest = dest;
     e->x = x;
     e->y = y;
@@ -1665,7 +1671,7 @@ static void spawn_gun(Slot *e, u8 type)
     e->kind = KIND_GUN;
     e->variant = type;
     e->hp = 1;
-    e->ground = 0;
+    e->ground = 1;
     e->x = right ? 0xC0 : 0x30;
     e->y = -12;
     e->vx = 0;
@@ -2299,7 +2305,7 @@ static void spawn_frag(s16 x, s16 y, u8 dir, u8 variant)
         /* handler_type21_light_bar 0x8635/0x863b:
          * +0x17=4; dir=+0x1a&0x0F; set_velocity_from_dir (8.8); SFX #0x16. */
         apply_dir_88(e, dir, 4);
-        sound_play_event(SND_EV_DEATH); /* ev 0x16 */
+        sound_play_event(SND_EV_LIGHTBAR);
     }
     else if (variant == 45)
     {
@@ -4237,18 +4243,22 @@ static void box_death_drop(u8 variant, s16 sx, s16 sy)
 static void collide_bolt_enemies(Slot *bolt, u8 persist)
 {
     u8 j;
+    u8 bolt_sat = bolt->sat ? bolt->sat : (u8)0x28;
+
     for (j = 0; j < ENEMY_SLOTS; j++)
     {
         Slot *e = &s_en[j];
         s16 sx, sy;
         u8 drop;
         u8 kind;
+        u8 esat;
         if (!e->alive)
             continue;
         /* 0x716B/entity_post: shots leg (44BA/44CA); 44A6 bullets excluded. */
         if (!enemy_takes_shots(e))
             continue;
-        if (!hit_overlap(bolt->x, bolt->y, bolt->sat, e->x, e->y, e->sat))
+        esat = e->sat ? e->sat : (u8)0x40;
+        if (!hit_overlap(bolt->x, bolt->y, bolt_sat, e->x, e->y, esat))
             continue;
 
         if (!persist)
@@ -4506,9 +4516,11 @@ static void collide_player(void)
         pf = post_flags(et);
         if (!(pf & POST_SHIP))
             continue;
-        /* ship SAT 0x38 half 4,4 => 8x8; enemy from e->sat */
-        if (!hit_overlap(px, py, SAT_PLAYER, e->x, e->y, e->sat))
-            continue;
+        {
+            u8 esat = e->sat ? e->sat : (u8)0x40;
+            if (!hit_overlap(px, py, SAT_PLAYER, e->x, e->y, esat))
+                continue;
+        }
         if (pf & POST_PICK)
         {
             /* 44B0 + 453E remaps both; pickup handler restores player (0x81). */

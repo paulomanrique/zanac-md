@@ -4,6 +4,7 @@
 #include "map_script.h"
 #include "title.h"
 #include "sound.h"
+#include "hud.h"
 
 AppState app_state = APP_TITLE;
 
@@ -118,6 +119,7 @@ static void game_boot(GameMode mode)
     s_prev_joy = JOY_readJoypad(JOY_1);
     player_init();
     entity_init();
+    hud_init();
     app_state = APP_GAME;
 }
 

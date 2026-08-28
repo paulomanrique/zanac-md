@@ -3,8 +3,8 @@
 #include "entity.h"
 #include "resources.h"
 #include "sound.h"
-
-#define SPEED       2
+#include "hud.h"
+#include "vel_dir.h"
 
 /* fire_init_table 0x751F: E14D ammo/time, E14E mode. Indexed by fire_num 0-7. */
 static const u8 k_fire_init[8][2] = {
@@ -21,6 +21,10 @@ static const u8 k_fire_init[8][2] = {
 static Sprite *s_spr;
 static s16 s_x;
 static s16 s_y;
+/* Sub-pixel halves of the position: MSX keeps X as (IX+0x02, IX+0x07) and Y as
+ * (IX+0x01, IX+0x06), integer byte first, so the ship moves in 8.8 steps. */
+static u8  s_xfrac;
+static u8  s_yfrac;
 static u8  s_shot_cd;
 static u8  s_alc_cadence;
 static u8  s_lives;
@@ -63,6 +67,31 @@ static void place_start(void)
 
     s_x = (s16)((a->playfield_w - SHIP_W) / 2);
     s_y = (s16)(a->playfield_h - SHIP_H - 16);
+    s_xfrac = 0;
+    s_yfrac = 0;
+}
+
+/* player_ship_update 0x7634 / 0x765A: add the 8.8 velocity to the position,
+ * then clamp the integer part and zero the fraction (0x763C / 0x7662). */
+static s16 step_axis(s16 pos, u8 *frac, s16 vel, s16 lo, s16 hi)
+{
+    s32 acc = ((s32)pos << 8) | *frac;
+
+    acc += vel;
+    pos = (s16)(acc >> 8);
+    if (pos < lo)
+    {
+        pos = lo;
+        *frac = 0;
+    }
+    else if (pos > hi)
+    {
+        pos = hi;
+        *frac = 0;
+    }
+    else
+        *frac = (u8)acc;
+    return pos;
 }
 
 static void show_ship(int vis)
@@ -376,6 +405,32 @@ u32 player_hiscore(void)
     return s_hiscore;
 }
 
+u32 player_score(void)
+{
+    return s_score;
+}
+
+u32 player_top_display(void)
+{
+    return (s_score >= s_hiscore) ? s_score : s_hiscore;
+}
+
+u8 player_top_flash_blank(void)
+{
+    return (u8)((s_e114 & 0x40) && ((s_e114 & 0x04) == 0));
+}
+
+u8 player_top_flash_active(void)
+{
+    return (u8)(s_e114 & 0x40);
+}
+
+void player_top_flash_tick(void)
+{
+    if (s_e114 & 0x40)
+        s_e114++;
+}
+
 void player_save_hiscore(void)
 {
     /* compare_save_hiscore 0x4ACE: score >= top -> copy. */
@@ -398,8 +453,10 @@ void player_update(void)
 {
     const ModeAssets *a = mode_assets();
     u16 joy;
-    s16 dx;
-    s16 dy;
+    s16 vx;
+    s16 vy;
+    s16 min_x;
+    s16 min_y;
     s16 max_x;
     s16 max_y;
     u8 sel;
@@ -445,35 +502,6 @@ void player_update(void)
     }
 
     joy = JOY_readJoypad(JOY_1);
-    dx = 0;
-    dy = 0;
-
-    if (joy & BUTTON_LEFT)  dx -= SPEED;
-    if (joy & BUTTON_RIGHT) dx += SPEED;
-    if (joy & BUTTON_UP)    dy -= SPEED;
-    if (joy & BUTTON_DOWN)  dy += SPEED;
-
-    s_x += dx;
-    s_y += dy;
-
-    /* MSX player_ship_update 0x7612: X clamp 0x28..0xC8, Y 0x1E..0xB8.
-     * Keeps the 16px ship out of HUD cols 24-31 (and matches RE). */
-    if (mode_get() == MODE_ORIGINAL)
-    {
-        max_x = 0xC8;
-        max_y = 0xB8;
-        if (s_x < 0x28) s_x = 0x28;
-        if (s_y < 0x1E) s_y = 0x1E;
-    }
-    else
-    {
-        max_x = (s16)(a->playfield_w - SHIP_W);
-        max_y = (s16)(a->playfield_h - SHIP_H);
-        if (s_x < 0) s_x = 0;
-        if (s_y < 0) s_y = 0;
-    }
-    if (s_x > max_x) s_x = max_x;
-    if (s_y > max_y) s_y = max_y;
 
     /* E10C from joystick bits (keyboard-input.md): base 4,
      * UP +1, DOWN -1, LEFT -3, RIGHT +3. xvel_table[4/5] = dir 12 = forward. */
@@ -488,6 +516,42 @@ void player_update(void)
         sel = (u8)s;
     }
     s_xvel_sel = sel;
+
+    /* MSX player_ship_update 0x7612: X clamp 0x28..0xC8, Y 0x1E..0xB8.
+     * Original mode caps X early so the ship stays out of HUD cols 24-31. */
+    if (mode_get() == MODE_ORIGINAL)
+    {
+        min_x = MODE_SHIP_MIN_X;
+        min_y = 0x1E;
+        max_x = MODE_SHIP_MAX_X;
+        max_y = 0xB8;
+    }
+    else
+    {
+        min_x = 0;
+        min_y = 0;
+        max_x = (s16)(a->playfield_w - SHIP_W);
+        max_y = (s16)(a->playfield_h - SHIP_H);
+    }
+
+    /* 0x7618: E10C == 4 is "nothing held", which skips the move entirely.
+     * Otherwise xvel_table picks a 16-dir unit vector and set_velocity_from_dir
+     * scales it by the ship speed byte, so diagonals are not faster. */
+    if (sel != 4)
+    {
+        u8 dir = vel_sel_dir[sel];
+
+        vy = (s16)(vel_dir_y[dir] * SHIP_SPEED_BYTE);
+        vx = (s16)(vel_dir_x[dir] * SHIP_SPEED_BYTE);
+    }
+    else
+    {
+        vy = 0;
+        vx = 0;
+    }
+
+    s_y = step_axis(s_y, &s_yfrac, vy, min_y, max_y);
+    s_x = step_axis(s_x, &s_xfrac, vx, min_x, max_x);
 
     /* E13F ++ every frame, reset on shot. Fire rate is E110 = 20 frames. */
     if (s_alc_cadence < 255)
@@ -506,7 +570,7 @@ void player_update(void)
             entity_on_shot_fired(s_alc_cadence);
             s_shot_cd = SHOT_PERIOD;
             s_alc_cadence = 0;
-            if (entity_spawn_shot((s16)(s_x + 4), (s16)(s_y - 8)))
+            if (entity_spawn_shot(s_x, s_y))
                 sound_play_shot();
         }
     }
@@ -547,80 +611,41 @@ void player_update(void)
 
 void player_draw_hud(void)
 {
-    char buf[24];
-    char sc[8];
-    u8 i = 0;
-    u32 n;
-    u8 d;
-    u8 si;
-
-    buf[i++] = 'L';
-    buf[i++] = (char)('0' + (s_lives % 10));
-    buf[i++] = ' ';
-    buf[i++] = 'S';
-    buf[i++] = (char)('0' + (s_shot_level % 10));
-    buf[i++] = ' ';
-    buf[i++] = 'F';
-    buf[i++] = (char)('0' + (s_fire_num % 10));
-    buf[i++] = ' ';
-    n = s_score;
-    for (d = 0; d < 6; d++)
-    {
-        u32 div = 1;
-        u8 k;
-        for (k = 0; k < (u8)(5 - d); k++)
-            div *= 10;
-        buf[i++] = (char)('0' + (u8)((n / div) % 10));
-    }
-    buf[i] = 0;
-
-    VDP_setTextPalette(PAL0);
     if (mode_get() == MODE_ORIGINAL)
     {
-        /* Right bar: MSX lives @0x397A row11, level @0x39BB row13, SCORE @0x38F9. */
-        buf[2] = 0;
-        VDP_clearTextBG(WINDOW, MODE_BAR_COL, 13, MODE_BAR_W);
-        VDP_drawTextBG(WINDOW, buf, MODE_BAR_COL, 13);
-        buf[3] = 'S';
-        buf[4] = (char)('0' + (s_shot_level % 10));
-        buf[5] = 0;
-        VDP_clearTextBG(WINDOW, MODE_BAR_COL, 15, MODE_BAR_W);
-        VDP_drawTextBG(WINDOW, buf + 3, MODE_BAR_COL, 15);
-        buf[6] = 'F';
-        buf[7] = (char)('0' + (s_fire_num % 10));
-        buf[8] = 0;
-        VDP_clearTextBG(WINDOW, MODE_BAR_COL, 20, MODE_BAR_W);
-        VDP_drawTextBG(WINDOW, buf + 6, MODE_BAR_COL, 20);
-        for (si = 0; si < 6; si++)
-            sc[si] = buf[9 + si];
-        sc[6] = 0;
-        VDP_drawTextBG(WINDOW, "SCORE", MODE_BAR_COL + 1, 9);
-        VDP_clearTextBG(WINDOW, MODE_BAR_COL, 10, MODE_BAR_W);
-        VDP_drawTextBG(WINDOW, sc, MODE_BAR_COL + 1, 10);
-        /* TOP @ MSX 0x3899 row4 / digits 0x38B8 row5. +2 for Y+16. */
-        VDP_drawTextBG(WINDOW, "TOP", MODE_BAR_COL + 1, 6);
-        VDP_clearTextBG(WINDOW, MODE_BAR_COL, 7, MODE_BAR_W);
-        /* score_display_update 0x4AA5: bit6 flash, bit2 show vs blank. */
-        if (!((s_e114 & 0x40) && ((s_e114 & 0x04) == 0)))
-        {
-            u32 top = (s_score >= s_hiscore) ? s_score : s_hiscore;
-            u32 tn = top;
-            for (si = 0; si < 6; si++)
-            {
-                u32 div = 1;
-                u8 k;
-                for (k = 0; k < (u8)(5 - si); k++)
-                    div *= 10;
-                sc[si] = (char)('0' + (u8)((tn / div) % 10));
-            }
-            sc[6] = 0;
-            VDP_drawTextBG(WINDOW, sc, MODE_BAR_COL + 1, 7);
-        }
-        if (s_e114 & 0x40)
-            s_e114++;
+        hud_draw_player();
         return;
     }
-    VDP_drawText(buf, 1, 25);
+
+    {
+        char buf[24];
+        u8 i = 0;
+        u32 n;
+        u8 d;
+
+        buf[i++] = 'L';
+        buf[i++] = (char)('0' + (s_lives % 10));
+        buf[i++] = ' ';
+        buf[i++] = 'S';
+        buf[i++] = (char)('0' + (s_shot_level % 10));
+        buf[i++] = ' ';
+        buf[i++] = 'F';
+        buf[i++] = (char)('0' + (s_fire_num % 10));
+        buf[i++] = ' ';
+        n = s_score;
+        for (d = 0; d < 6; d++)
+        {
+            u32 div = 1;
+            u8 k;
+            for (k = 0; k < (u8)(5 - d); k++)
+                div *= 10;
+            buf[i++] = (char)('0' + (u8)((n / div) % 10));
+        }
+        buf[i] = 0;
+
+        VDP_setTextPalette(PAL0);
+        VDP_drawText(buf, 1, 25);
+    }
 }
 
 void player_draw_over(void)

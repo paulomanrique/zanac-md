@@ -29,6 +29,9 @@ typedef struct {
 #define MODE_BAR_COL    24
 #define MODE_BAR_W      8
 #define MODE_SCREEN_H   224
+/* MSX clamps X to 0x28..0xC8, but cols 24-31 are HUD — keep the ship in 0-191. */
+#define MODE_SHIP_MIN_X 0x28
+#define MODE_SHIP_MAX_X ((MODE_BAR_COL * 8) - 16)
 
 void mode_init(void);
 void mode_set(GameMode mode);

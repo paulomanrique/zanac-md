@@ -1,4 +1,0 @@
-Zanac MD — este folder
-- rom.bin       ROM Mega Drive
-- ASSETS-MD.md  specs MSX para o que voce pode por no MD
-Copia igual em ..\docs\ASSETS-MD.md
