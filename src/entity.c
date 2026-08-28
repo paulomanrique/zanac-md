@@ -317,7 +317,7 @@ typedef struct {
     u16 dest;       /* idol warp ptr or fire# */
     u16 bind;       /* 8948 nametable VRAM, SET 7 */
     Sprite *spr;
-    u8  marker;     /* 1 = type39 sibling for check_col_clear; no MD sprite (folded) */
+    u8  marker;     /* type39 sibling count (71da); occupancy only, no 2nd MD spr */
 } Slot;
 
 static Slot s_shot[SHOT_SLOTS];
@@ -485,10 +485,30 @@ static void spr_sync(Slot *s)
     spr_vis_playfield(s->spr, dx, dy, 1);
 }
 
-/* MSX spawn_col_marker (0x71da): type39 slot, color 0x81 black complement via
- * 71f6. Primaries are folded (rebuild_sprites.py); ASSETS-MD forbids a second
- * MD sprite. Track occupancy only so check_col_clear still sees virtual 0x27.
- * frame arg kept for call-site morph symmetry (veybar/spinner SAT+offset). */
+/* MSX spawn_col_marker (0x71da): type 0x27 slot, +04=0x81, HL left at +03.
+ * 71f6 writes SAT Y=parentY-0x11 (same SUB as sprite_sat_write 0x48C0),
+ * X=parent X, then copies marker +03/+04. Second SAT names are immediates:
+ *   4 box     LD (HL),0xD8   pat 54 FRAME_BOX_C
+ *   7 umber   LD (HL),0xE4   pat 57 FRAME_UMBER_C  (morph IY+03=0xE8)
+ *  10 duster  LD (HL),0x5C   pat 23 FRAME_DUSTER_C
+ *  12-15      LD (HL),0x64   pat 25 FRAME_TERUZO_C
+ *  16-18      LD (HL),0x7C   pat 31 FRAME_LUSTER_A_C
+ *  22-25      LD (HL),0x98   pat 38 FRAME_VEYBAR_C0 (morph +0x14)
+ *  26-29      7e5f SAT=parent+0x10  pats 47-50 FRAME_SPINNER_C0..3
+ *  34/65/66   LD (HL),0xD0   pat 52 FRAME_STEALTH_C
+ *  44 plane   LD (HL),0x44   pat 17 FRAME_PLANE_C
+ *  46-55 gun  LD (HL),0x50   pat 20 (loga_B) -- no objs.png frame
+ *             fire 0x8162/817a 0x50/0x54 pats 20/21 -- no frame
+ *  61 sart    LD (HL),0xFC   pat 63 FRAME_SART_C
+ *  57         71da, no LD (HL) -- leftover name 0, occupancy only
+ *  58         two 71da; first sibling ptr, second unnamed; occupancy x2
+ *  30         71da then LDIR sibling as type 31 -- not a marker
+ * MD cannot add a second hardware sprite: rebuild_sprites.py fold_frame
+ * already composites complement bits into the primary 4bpp cell. Overlaying
+ * FRAME_*_C at the same SAT X/Y would paint black on bits the fold kept as
+ * body color. Unfolding objs.png needs the Zanac ROM (not in this tree).
+ * Guns 0x50/0x54 have no extracted frame at all. Occupancy still counts
+ * each marker as virtual 0x27. frame arg is call-site morph symmetry. */
 static void marker_place(Slot *s, u16 frame)
 {
     (void)frame;
@@ -779,14 +799,27 @@ static void spawn_expl(s16 x, s16 y)
     spr_place(e, FRAME_LEAD);
 }
 
+/* 0x8BCA: first R -> Y (C), second R -> X (B). 8bc1 BC=0x1F1F; 9251 BC=0x7F07. */
+void entity_scatter_8bca(s16 x, s16 y, u8 xmask, u8 ymask, u8 n)
+{
+    u8 i;
+    u8 half_y = (u8)(ymask >> 1);
+    u8 half_x = (u8)(xmask >> 1);
+
+    for (i = 0; i < n; i++)
+    {
+        u8 ry = rnd();
+        u8 rx = rnd();
+
+        spawn_expl((s16)(x + (s16)(u8)(rx & xmask) - (s16)half_x),
+                   (s16)(y + (s16)(u8)(ry & ymask) - (s16)half_y));
+    }
+}
+
 /* LAB_ram_8bc1 / SUB_ram_8bca: type 0x23 at (X,Y) +/- (R&0x1F)-0x0F. */
 static void scatter_expl(s16 x, s16 y)
 {
-    u8 ry = rnd();
-    u8 rx = rnd();
-
-    spawn_expl((s16)(x + (s16)((ry & 0x1F) - 0x0F)),
-               (s16)(y + (s16)((rx & 0x1F) - 0x0F)));
+    entity_scatter_8bca(x, y, 0x1F, 0x1F, 1);
 }
 
 /* 0x84D1 type35 anim: (sat_name,sat_color) pairs; init +0F=1 skips frame 0. */
@@ -3269,6 +3302,8 @@ static void spawn_pairdesc(Slot *e, u8 type)
     apply_dir_88(e, 4, 5);      /* E=4; 81ac speed 5; +0c=3 X|Y */
     e->alive = 1;
     e->sat_col = 0x8F;              /* 81c3 XOR shared with 56/59 */
+    /* 81d7 71da, no LD (HL). 8247 two 71da (sibling + unnamed). Occupancy. */
+    e->marker = (type == 58) ? 2 : 1;
     /* MSX: type57 SAT 0x6C pat27 sig_double; type58 SAT 0x68 pat26 sig_triple */
     spr_place(e, (type == 58) ? FRAME_SIG_TRIPLE : FRAME_SIG_DOUBLE);
 }
@@ -5477,8 +5512,8 @@ u8 entity_enemy_count(void)
  * Phase 1: any type==0 -> NC. Phase 2: type in {0x14,0x25,0x26} -> NC
  * (overwrite). Phase 3: type 0x27 or >=0x46 are blocking; any other -> NC;
  * if all blocking -> SCF.
- * MD: no type-39 sprite slots (complements folded); count each marker flag as
- * a virtual 0x27 so dual-SAT rows pressure the 21-entry window like MSX. */
+ * MD: complements folded into primary 4bpp (see marker_place); count each
+ * marker as virtual 0x27 so dual-SAT rows pressure the 21-entry window. */
 u8 entity_check_col_clear(void)
 {
     u8 occ[ENEMY_SLOTS * 2];
@@ -5495,8 +5530,12 @@ u8 entity_check_col_clear(void)
         if (n < (u8)sizeof(occ))
             occ[n++] = t;
         /* type39 col-marker sibling (71f6) occupies a real MSX slot. */
-        if (e->marker && n < (u8)sizeof(occ))
-            occ[n++] = 0x27;
+        {
+            u8 m;
+
+            for (m = 0; m < e->marker && n < (u8)sizeof(occ); m++)
+                occ[n++] = 0x27;
+        }
     }
 
     /* Phase 1: empty slot in the 21-wide window. */

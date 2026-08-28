@@ -29,6 +29,8 @@ void entity_try_spawn_fire(s16 x, s16 y, u8 xvel_sel);
 void entity_kill_fire(void);
 /* Type60 player death FX at (x,y); SRL E132/E12E; clear -> E102 bit0. */
 void entity_spawn_pdeath(s16 x, s16 y);
+/* SUB_ram_8bca: n type-23 at (x,y). B=xmask C=ymask; offset (R&mask)-(mask>>1). */
+void entity_scatter_8bca(s16 x, s16 y, u8 xmask, u8 ymask, u8 n);
 
 u8   entity_shot_count(void);
 u8   entity_enemy_count(void);
