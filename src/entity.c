@@ -11,12 +11,15 @@
  *
  * Shots: type 2, Y-only. vy/cap from shot_power_table[shot_level].
  * Fire:  type 3, E380.
- *   0 All-Range  - xvel_table[E10C] dir, vel word0->Y word1->X, speed 0xC2 (~12px)
+ *   0 All-Range  - xvel_table[E10C] dir, 4cf7 speed 0xC2 8.8
+ *           (bit6*3 * bit7*4 * count2 = *24 -> 12 px cardinal),
+ *           +0c=3 then 72de + 4898. Port: apply_dir_4cf7(..., 0xC2).
  *   1 Straight   - Y-only vy=-2, fire_dec_ammo per spawn, die+E14D==0 -> reset
  *   2 Field      - auto (fire_select writes E380=3), Y=player_Y-8, persist hits
  *   3 Circular   - snowflake/orb, 16-dir orbit around clamped ship, fire_life_timer
  *   4 Vibrator   - lg_circle, rise + X bang-bang around anchor, persist hit->ev24
- *   5 Rewinder   - target, X follows ship, vy=-2 then +4/256 rewind, ammo shots
+ *   5 Rewinder   - SAT 0x0C, Yvel 8.8 0xFE00 then +4/frame, X=player_X,
+ *           Y>=0x10, die if Y > player_Y+0x10, 4898 Y-only. Ammo shots.
  *   6 Plasma     - no persistent entity (explode_enemies + ev19)
  *   7 High Speed - comet, fire0_dir_table, 0xC3 8.8 (x4*3 = 6px), fire_life_timer
  * Enemies: G group-1 airborne + round-1 pickups that the spawn_table emits
@@ -249,7 +252,8 @@
 #define FRAME_UMBER_B_C  56 /* pat 58 umber_B_compl SAT 0xE8 */
 #define FRAME_LOGA_B    57  /* pat 20 loga_B SAT 0x50 type39 */
 #define FRAME_LOGA_D    58  /* pat 21 loga_B fire SAT 0x54 */
-#define FRAME_N         59
+#define FRAME_SNOW      59  /* pat 4 SAT 0x10 fire 3 (7331) */
+#define FRAME_N         60
 
 #define KIND_SHOT       2
 #define KIND_FIRE       3
@@ -466,7 +470,9 @@ static u8 hw_sprite_count(void);
 static int band_overlap(s16 a, s16 b);
 static int line_budget_full(s16 dy);
 static int step_88_4898(Slot *e);
+static int step_88_y_4898(Slot *e);
 static void apply_dir_88(Slot *e, u8 dir, u8 speed);
+static void apply_dir_4cf7(Slot *e, u8 dir, u8 speed);
 
 static void spr_vis_playfield(Sprite *sp, s16 dx, s16 dy, int want_vis)
 {
@@ -742,7 +748,8 @@ static const u8 k_frame_sat[FRAME_N] = {
     0xE0, /* 55 FRAME_UMBER_B */
     0xE8, /* 56 FRAME_UMBER_B_C */
     0x50, /* 57 FRAME_LOGA_B  pat20 SAT 0x50 */
-    0x54  /* 58 FRAME_LOGA_D  pat21 SAT 0x54 */
+    0x54, /* 58 FRAME_LOGA_D  pat21 SAT 0x54 */
+    0x10  /* 59 FRAME_SNOW    pat 4 SAT 0x10 */
 };
 
 
@@ -757,7 +764,8 @@ static const u8 k_frame_color[FRAME_N] = {
     14, 14, 14, 14, 1, 1, 1, 1,
     7, 1, 15, 1, 7, 1, 15, 4, 15, 15, 6,
     11, 1, 7, 1,
-    1, 1
+    1, 1,
+    15
 };
 
 static void remap_tiles(u8 *dst, const u8 *src, u16 nbytes, u8 from, u8 to)
@@ -1253,14 +1261,6 @@ static void apply_dir(Slot *e, u8 dir)
 {
     e->vx = k_dir_vx[dir & 15];
     e->vy = k_dir_vy[dir & 15];
-}
-
-static void apply_dir_fast(Slot *e, u8 dir)
-{
-    /* set_velocity_from_dir: vel_dir word0 -> IX+8/9 (Y), word1 -> IX+0a/0b (X).
-     * Fire 0 speed 0xC2 = x3 x4 x2 on unit 128 -> 12 px/frame cardinal. */
-    e->vx = (s8)(k_dir_vy[dir & 15] * 6);
-    e->vy = (s8)(k_dir_vx[dir & 15] * 6);
 }
 
 static s16 clamp16(s16 v, s16 lo, s16 hi)
@@ -2719,6 +2719,20 @@ static void apply_dir_88(Slot *e, u8 dir, u8 speed)
     e->timer = 0;
     e->vx = 0;
     e->vy = 0;
+}
+
+/* 4cf7 speed byte: BIT 6 => *3, BIT 7 => *4, then DJNZ *(A&0x3F).
+ * 0xC2 = *24 (12 px/frame cardinal). Do not drop bit6 (that is 4 px). */
+static void apply_dir_4cf7(Slot *e, u8 dir, u8 speed)
+{
+    u8 mul = 1;
+
+    if (speed & 0x40)
+        mul = (u8)(mul * 3);
+    if (speed & 0x80)
+        mul = (u8)(mul * 4);
+    mul = (u8)(mul * (u8)(speed & 0x3F));
+    apply_dir_88(e, dir, mul);
 }
 
 /* type 42/43: speed 3 then 85dd XOR R into X/Y vel low bytes. */
@@ -4297,15 +4311,23 @@ static void update_fire(void)
             fire_offscreen_reset(5);
             return;
         }
+        /* 7484: Yvel += 4 (8.8), then 4898 Y_motion only (+0c=1).
+         * Do not drop IX+06 leftover (y += s_fvy>>8 was integer-only). */
         s_fvy = (s16)(s_fvy + 4);
-        f->y = (s16)(f->y + (s_fvy >> 8));
+        f->bind = (u16)s_fvy;
+        if (step_88_y_4898(f))
+        {
+            fire_offscreen_reset(5);
+            return;
+        }
     }
-    else if (fn == 7)
+    else if (fn == 0 || fn == 7)
     {
-        /* 7306 -> 72de -> 4898: +0c=3 X|Y 8.8, unsigned Y>=0xD0 / X>=0xD1. */
+        /* 72de -> 4898: +0c=3 X|Y 8.8, unsigned Y>=0xD0 / X>=0xD1.
+         * Fire 0 speed 0xC2; fire 7 speed 0xC3. */
         if (step_88_4898(f))
         {
-            fire_offscreen_reset(7);
+            fire_offscreen_reset(fn);
             return;
         }
     }
@@ -4315,9 +4337,9 @@ static void update_fire(void)
         f->y += f->vy;
     }
 
-    /* Fire 7 script is 4898 X frac (apply_dir_88); do not use it as a
+    /* Fire 0/7 script is 4898 X frac (apply_dir_88); do not use it as a
      * blink tick. 72de is color INC only; SAT write every frame. */
-    if (fn != 7)
+    if (fn != 0 && fn != 7)
         f->script++;
     /* fire 0/1/2/7 run: INC sat_color, keep TMS EC bit7 so SAT overlap
      * stays graphic overlap. 3/4/5 stay 0x8F. */
@@ -4335,12 +4357,12 @@ static void update_fire(void)
             SPR_setVisibility(f->spr, HIDDEN);
         else if (cycle)
             spr_vis_playfield(f->spr, fdx, mode_draw_y(f->y),
-                              (fn == 7) ? 1 : (f->script & 1));
+                              (fn == 0 || fn == 7) ? 1 : (f->script & 1));
         else
             spr_vis_playfield(f->spr, fdx, mode_draw_y(f->y), 1);
     }
 
-    if (fn != 2 && fn != 3 && fn != 7)
+    if (fn != 0 && fn != 2 && fn != 3 && fn != 7)
     {
         if (f->x < -16 || f->x > (s16)(a->playfield_w + 8)
             || f->y < -24 || f->y > (s16)(a->playfield_h + 8))
@@ -4368,6 +4390,23 @@ static int step_88_4898(Slot *e)
     e->vx = 0;
     e->vy = 0;
     if ((u8)e->y >= 0xD0 || (u8)e->x >= 0xD1)
+    {
+        spr_kill(e);
+        return 1;
+    }
+    return 0;
+}
+
+/* 4898 Y_motion_sub only. Fire 5 +0c=1 (X is overwritten from the ship). */
+static int step_88_y_4898(Slot *e)
+{
+    u16 ypos = (u16)(((u16)((u8)e->y) << 8) | (u8)e->timer);
+
+    ypos = (u16)(ypos + e->bind);
+    e->timer = (u8)ypos;
+    e->y = (s16)(u8)(ypos >> 8);
+    e->vy = 0;
+    if ((u8)e->y >= 0xD0)
     {
         spr_kill(e);
         return 1;
@@ -5662,7 +5701,7 @@ void entity_try_spawn_fire(s16 x, s16 y, u8 xvel_sel)
         s_fdir = 0xFF;
         s_fire.vx = 0;
         s_fire.vy = 0;
-        frame = FRAME_CIRCLE;
+        frame = FRAME_SNOW;
     }
     else if (fn == 4)
     {
@@ -5706,9 +5745,11 @@ void entity_try_spawn_fire(s16 x, s16 y, u8 xvel_sel)
     }
     else
     {
-        /* Fire 0 All-Range 0x72B3: xvel_table[E10C] (copied to IX+0x1A). */
+        /* Fire 0 All-Range 0x72B3: xvel_table[E10C] (copied to IX+0x1A).
+         * +17=0xC2. 4cf7: bit6*3, bit7*4, count 2, unit 128 -> 12 px
+         * cardinal 8.8 (same cardinal as the old integer *6). */
         dir = k_xvel_dir[xvel_sel];
-        apply_dir_fast(&s_fire, dir);
+        apply_dir_4cf7(&s_fire, dir, 0xC2);
         frame = FRAME_FIRE;
     }
 
@@ -5720,7 +5761,7 @@ void entity_try_spawn_fire(s16 x, s16 y, u8 xvel_sel)
         s_fire.alive = 0;
         return;
     }
-    /* 7331 SAT 0x10. FRAME_CIRCLE is pat 9 (no pat 4 in objs); 4560 uses +03. */
+    /* 7331 SAT 0x10. FRAME_SNOW is pat 4; 4560 uses +03. */
     if (fn == 3)
         s_fire.sat = 0x10;
     sound_play_event(SND_EV_FIRE);
