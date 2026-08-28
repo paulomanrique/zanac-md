@@ -490,7 +490,9 @@ static void spr_vis_playfield(Sprite *sp, s16 dx, s16 dy, int want_vis)
  * sprites track the sliding tiles. Collision / SAT stay on the 8px grid.
  * Do not add scroll_delta to SAT Y (rejected vs 8f45).
  * Flyers (ground==0) stay at screen SAT Y -- TMS flyers do not ride a
- * subpixel nametable. MD tiles slide 0-7px under them (VDP != TMS).
+ * subpixel nametable (sprite_sat_write 0x48C0 is SAT Y-0x11, no E711).
+ * Adding frac to flyers would drift idle SAT with VSCROLL; TMS does not.
+ * MD tiles slide 0-7px under them (VDP != TMS). Leave that.
  */
 static s16 slot_draw_y(const Slot *s)
 {
@@ -1631,6 +1633,8 @@ static void spawn_ground_fall(Slot *e, u8 type, s16 x, s16 y, u16 dest)
 }
 
 /* Type 80: handler_type80 8e14. dest = +0x18 subtype for 849c (0 after 90dc). */
+static void spawn_d1_child(Slot *e, s16 x, s16 y);
+
 static void spawn_husk_at(Slot *e, s16 x, s16 y)
 {
     e->kind = KIND_HUSK;
@@ -1647,6 +1651,35 @@ static void spawn_husk_at(Slot *e, s16 x, s16 y)
     e->vy = 0;
     e->alive = 1;
     spr_place(e, FRAME_BOX);
+}
+
+/* 8833: child 0xD1 = type 81 | bit7, HP 0, SAT name 0x24, parent XY.
+ * No 88ed (8824/88c2 is type-81 death, not this spawn). 8f45 scroll-off.
+ * 7904 BIT 7 skips the 880d dispatch; a 453e hit DECs 0->255 and restores. */
+static void spawn_d1_child(Slot *e, s16 x, s16 y)
+{
+    e->kind = KIND_WIDE;
+    e->variant = 81;
+    e->hp = 0;
+    e->timer = 0;
+    e->script = 0;
+    e->ground = 1;
+    e->armed = 1;
+    e->dest = 0;
+    e->bind = 0;
+    e->aux = 0;
+    e->clock = 0;
+    e->x = x;
+    e->y = y;
+    e->vx = 0;
+    e->vy = 0;
+    e->alive = 1;
+    e->sat = 0x24;
+    e->sat_col = 0;
+    e->spr = NULL;
+    e->mspr = NULL;
+    e->marker = 0;
+    e->mframe = 0;
 }
 
 /* structure_award_index_table 0x4B29, types 0-89. 4a6a uses +0x18. */
@@ -4956,6 +4989,15 @@ static void collide_bolt_enemies(Slot *bolt, u8 persist)
             else
                 sound_play_event(SND_EV_FIRE_EXPIRE);
         }
+        /* 8833 child 0xD1: 7904 BIT 7 skips 880d. 453e still remaps the
+         * bolt (shot consumed) then DEC 0->255 and restores type 0xD1.
+         * Do not fall into 8824/88c2; that punch is type-81 death. */
+        if (e->kind == KIND_WIDE && e->variant == 81 && e->hp == 0
+            && !e->spr)
+        {
+            sound_play_event(SND_EV_BASEHIT);
+            return;
+        }
         if (e->hp)
             e->hp--;
         if (e->hp)
@@ -5066,9 +5108,10 @@ static void collide_bolt_enemies(Slot *bolt, u8 persist)
                     map_script_punch_88c2(sx, sy);
                     return;
                 }
-                /* 8833: 70/71. 8810 this slot := type 72; child 0xD1 HP0 -> 8824. */
-                award_for(kind);
-                sound_play_explode();
+                /* 8833: 70/71. 8810 this slot := type 72; bfc8; 4a6a;
+                 * child 0xD1 HP 0 SAT 0x24. No 88ed (bytes do not JP 8824). */
+                entity_inc_encounter_b();
+                award_subtype(drop);
                 e->kind = KIND_ORB;
                 e->variant = drop;  /* +0x1f = +0x18 (70/71) */
                 e->hp = 1;
@@ -5086,15 +5129,10 @@ static void collide_bolt_enemies(Slot *bolt, u8 persist)
                     SPR_setAnimAndFrame(e->spr, 0, FRAME_CIRCLE);
                 else
                     spr_place(e, FRAME_CIRCLE);
-                if (drop == 70 || drop == 71)
-                    entity_inc_encounter_b();
                 {
                     Slot *c = free_enemy();
                     if (c)
-                    {
-                        spawn_husk_at(c, sx, sy);
-                        map_script_punch_88c2(sx, sy);
-                    }
+                        spawn_d1_child(c, sx, sy);
                 }
                 return;
             }
