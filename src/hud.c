@@ -10,6 +10,23 @@ static u8 s_hud_ready;
 static u8 s_labels_ok;
 static u8 s_time_lbl;
 
+/* Wipe leftover WINDOW VRAM, then an opaque black HUD backing.
+ * SGDK tile 0 (VDP_clearPlane) is not guaranteed blank; charset 0x00 is
+ * all color 0 (MD transparent). Fill cols 0-23 with that so a WHP seam
+ * at x=192 cannot show a white leftover column on the left of the bar.
+ * Do not paint an opaque left bar -- playfield must stay visible. */
+static void hud_wipe_window(void)
+{
+    u16 blank;
+    u16 trans;
+
+    blank = mode_letter_attr();
+    trans = TILE_ATTR_FULL(PAL3, TRUE, FALSE, FALSE, HUD_TILE_BASE);
+    VDP_fillTileMapRect(WINDOW, trans, 0, 0, MODE_H32_COLS, 28);
+    VDP_fillTileMapRect(WINDOW, blank, HUD_COL, 0, MODE_BAR_W, 28);
+    VDP_fillTileMapRect(BG_A, blank, HUD_COL, 0, MODE_BAR_W, 28);
+}
+
 static u16 hud_y(u16 msx_row)
 {
     return mode_text_row(msx_row);
@@ -167,17 +184,14 @@ static void hud_draw_border(void)
 static void hud_draw_static_labels(void)
 {
     u16 y;
-    u8 r;
-    u8 c;
 
     /*
      * Opaque black behind WINDOW charset (color 0 is transparent on MD).
      * MSX SCREEN2 backdrop is black (R7 BD=1), so punch-through is black.
+     * Also replace leftover WINDOW tile 0 so the left HUD edge is not a
+     * white stripe (Filipe playtest: listra at the WINDOW/playfield seam).
      */
-    for (r = 0; r < 28; r++)
-        for (c = 0; c < MODE_BAR_W; c++)
-            VDP_setTileMapXY(BG_A, mode_letter_attr(),
-                             (u16)(HUD_COL + c), r);
+    hud_wipe_window();
 
     hud_draw_border();
 
@@ -217,6 +231,8 @@ void hud_init(void)
     if (mode_get() != MODE_ORIGINAL)
         return;
     s_hud_ready = 1;
+    /* Display is still off; wipe WINDOW leftover before bg_init shows. */
+    hud_wipe_window();
 }
 
 void hud_draw_alc(void)

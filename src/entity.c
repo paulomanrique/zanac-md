@@ -5385,6 +5385,12 @@ static void collide_player(void)
     }
 }
 
+/* Filipe: flyer SAT greens ~20% darker than TMS 2/3 vs E800 0x28. */
+static const u16 k_flyer_green_dim[2] = {
+    RGB24_TO_VDPCOLOR(0x1AA035),
+    RGB24_TO_VDPCOLOR(0x4BB060)
+};
+
 void entity_init(void)
 {
     memset(s_shot, 0, sizeof(s_shot));
@@ -5417,6 +5423,14 @@ void entity_init(void)
     /* Objs share PAL2 with the ship so index 15 stays TMS white.
      * PAL1 index 15 remains ROUND/HUD gold (set in game/title). */
     PAL_setPalette(PAL2, spr_objs.palette->data, CPU);
+    /* Filipe asked for a darker flyer green vs original for contrast
+     * on E800 empty 0x28 / TMS playfield green. Override only PAL2
+     * indices 2 and 3 (TMS medium/light green * 0.8). PAL3 map greens
+     * stay. Ship/shots stay index 15 (ship.png is 0/1/15; sat_col 0x8F).
+     * Airborne sat_col 0x83 (veybar 22/23, umber 9, type44 plane) is
+     * nibble 3; nibble 2 is the other TMS green (fire INC / 0x82). */
+    PAL_setColor((u16)((PAL2 * 16) + 2), k_flyer_green_dim[0]);
+    PAL_setColor((u16)((PAL2 * 16) + 3), k_flyer_green_dim[1]);
 }
 
 void entity_update(void)
