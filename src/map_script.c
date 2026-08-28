@@ -867,8 +867,13 @@ static void punch_bind(s16 x, s16 y, u8 variant)
         tiles[3] = 0xE6;
     }
     for (r = 0; r < h; r++)
+    {
+        /* 88ed INC C per row; C>=0x18 JP NC 8943 aborts the rest. */
+        if ((u8)(((u8)(ysub & 0xF8) >> 3) + r) >= BOOT_ROWS)
+            break;
         for (c = 0; c < w; c++)
             nt_put((u8)(col + c), (u8)((row + r) & 31), tiles[(u8)(r * w + c)]);
+    }
 }
 
 void map_script_base_seg_down(s16 x, s16 y, u8 variant)
@@ -1023,6 +1028,9 @@ static void punch_88ed(s16 x, s16 y, const u8 *d, s16 xadj, s16 yadj)
     rows = *d++;
     for (r = 0; r < rows; r++)
     {
+        /* 88ed: INC C each row; C>=0x18 JP NC 8943 (rest of desc unused). */
+        if ((u8)(((u8)(ysub & 0xF8) >> 3) + r) >= BOOT_ROWS)
+            break;
         w = *d++;
         for (c = 0; c < w; c++)
             nt_put((u8)(col0 + c), (u8)((row0 + r) & 31), *d++);
@@ -2022,9 +2030,10 @@ static void cred_tick(void)
 
 /* TMS nametable row r is always screen row r (no VSCROLL). MD maps that
  * onto the currently visible 24-row window using scroll_px&~7 (same
- * numeric bind as >>3). The E711>>5 remainder sits the letters 0-7px
- * from a TMS pixel row; tiles cannot land between rows. That leftover
- * is MD VDP != TMS, not a missing 9251 store. */
+ * numeric bind as >>3). 9251 writes via SETWRT to fixed VRAM 0x3924
+ * (row 9 col 4) while gameplay_frame_loop skips 9480, so this bind is
+ * frozen for the letter pass. Tiles cannot land between rows. The
+ * leftover E711>>5 (0-7px) is MD VDP != TMS, not a missing SAT store. */
 static u8 vis_nt_row(u8 tms_row)
 {
     u8 k = (u8)((s_scroll_px & 0xFFF8) >> 3);
@@ -2757,8 +2766,11 @@ void map_script_update(void)
 
         /* scroll_velocity_ctrl 0x9480: ramp E710 toward E712 every 4 frames.
          * E150 bits 0-1 skip the ramp. Clear ceremony freezes E710=0 -- MSX
-         * 90a6 runs inside gameplay_frame_loop which never calls 9480. */
-        if (s_clr_phase)
+         * 90a6 runs inside gameplay_frame_loop which never calls 9480.
+         * 9251 also uses gameplay_frame_loop (9393: wait/pause/score/
+         * entity_dispatch/player_hit only). Do not assemble rows or move
+         * VSCROLL while letters write fixed TMS VRAM 0x3924.. */
+        if (s_clr_phase || s_end_phase)
             s_e710 = 0;
         else if (!(entity_base_flags() & 3) && s_e710 != s_e712)
         {
