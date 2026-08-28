@@ -17,6 +17,9 @@ static u16 hud_y(u16 msx_row)
 
 static u16 hud_attr(u8 tid)
 {
+    /* PAL3 occupancy stand-in. SCREEN2 CT is gfx_charset_colors 0x64D3
+     * (RLE -> VRAM 0x2000, 256*8 bytes, three banks). zanac-re has no
+     * decoded CT data file; do not invent TMS FG/BG nibbles. */
     return TILE_ATTR_FULL(PAL3, TRUE, FALSE, FALSE,
                           (u16)(HUD_TILE_BASE + tid));
 }

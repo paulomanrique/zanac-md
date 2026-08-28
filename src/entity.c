@@ -51,7 +51,7 @@
  *           4898 u8 wrap-cull Y>=0xD0 / X>=0xD1.
  *   63      chip    - pickup, raises shot_level
  *   68      proto_box -> 3 boxes (types 4/5/6)
- *   80      husk    - 8e14: bfb3+ev18+849c first frame, then 8f45 / clear
+ *   80      husk    - 8e14: bfb3+ev18+849c first frame (84d1 anim), then 8f45 / clear
  *   83      fire-up - 8e3a: Yvel FFE0 8.8; SAT 0x24/0x81 blank vs 0x04/8eaf[+1c]; collect fire_select
  *   44      ground  - 82d0: 71c5 (Y=0, X=(H&7F)+(L&1F)+0x28), then
  *           aim_4c91+set_vel 8.8 speed (R&3)+1, +0c=3, 3 hp;
@@ -59,9 +59,12 @@
  *           spr FRAME_PLANE (compl folded; marker occupancy).
  *   64      proto   - table-driven converter (spawn_type_list[E130/2+R&3])
  *   70/71   idol    - nametable totem (no SAT); HP 6; -> type 72 orb + bfc8 + type-81 child
+ *           8f25: unsigned Y+=8 per E700.1 until wrap, SET 7, Y+=0x10; then 8f45
+ *           Y+=8 per E700.1 until Y>=0xD0.
  *   72      orb     - 8983: Yvel 8.8 0xFFF8 (yel) / 0xFFF0 (blk); +0x1e=4;
  *           70 expires; 71 black warp. Port: bind/timer 8.8; clock=+0x1b;
- *           script=+0x1e; aux=anim; yellow 8a26+ev19 / black map_script_warp
+ *           script=+0x1e; aux=anim. 8a16 SAT 1C/20/24/20 colors 8F/83/8A/8B;
+ *           8a1e same names color 81. yellow 8a26+ev19 / black map_script_warp
  *   81      husk-src- nametable (no SAT); HP 4; 880d->8824 type-80 husk + 88c2
  *   82      firebox - nametable digit 0x30+fire# (87e2, no SAT); HP 4; 880d->8874 type 83 + 88d8
  *   84-86   wide_var - nametable (no SAT); 8EB7 wave-spawner; HP 4; death 8854 type-80 husk + 88ab tiles
@@ -91,7 +94,9 @@
  *           idle XOR not vis; clock=+1b; aux=phase|mot|stop; 8.8;
  *           spr FRAME_MED_CIRCLE (pat 8 kept).
  *   73-79   base    - nametable-only (sat_col=0 like MSX); HP from base_segment_table
- *           8c15 paints live tiles from phase. Type 79 last hit: 8ba1 SET +05.1,
+ *           8a5a: until BIT 7, Y+=8 per E700.1, RET until E150.1; then SET 7,
+ *           Y+=0x10, table xo/yo, 8948. 8c15 paints live tiles from phase.
+ *           Timeout 8afa BIT 2 -> 8f45. Type 79 last hit: 8ba1 SET +05.1,
  *           8bb6 255-frame countdown + scatter, then 8baa. HP 0x32/0x14 stamp 8c80.
  *   7-9     umber   - 791d: X=0x78, Y leftover 0 (top); Yvel 8.8 0300,
  *           +0c=0x09 (Y|Y-homing), +15=0x10 iters +17=1, tgt +13 unset (0).
@@ -287,8 +292,8 @@ typedef struct {
     s16 y;
     s8  vx;
     s8  vy;
-    u8  ground;     /* 1 = scroll-locked (Y += scroll_delta / frame) */
-    u8  armed;      /* 8f25 BIT 7: wide/firebox hittable after Y wrap */
+    u8  ground;     /* 1 = 8f25/8a5a/8f45 class (Y += 8 per E700.1, not VSCROLL) */
+    u8  armed;      /* 8f25/8a5a BIT 7: hittable after init */
     u8  aux;        /* type41: (count<<5)|(sense&0x10)|(heading&15)
                      * type45: (speed<<4)|(dir&15); swoop 26-29: child type +0x1d
                      * gswoop 30/32: paired sibling slot index (0xFF=none)
@@ -1010,6 +1015,8 @@ static int enemy_takes_shots(const Slot *e)
         return 0;              /* 782c: no entity_post until SET 7 */
     if ((e->kind == KIND_WIDE || e->kind == KIND_FIREBOX) && !e->armed)
         return 0;              /* 8f25: CF / uninit, skip 44CA */
+    if (e->kind == KIND_BASE && !e->armed)
+        return 0;              /* 8a5a: RET Z until E150.1 SET 7 */
     if (e->kind == KIND_BASE && e->variant == 79 && (e->aux & 0x02))
         return 0;              /* 8bb6 dying: no 44CA */
     if (e->kind == KIND_CIRCLE && !(e->aux & 0x40))
@@ -1486,32 +1493,107 @@ static void become_husk(Slot *e, u8 orig)
  *     (score + anim +0x0d/0e/0f/10 then entity_update)
  *   later: 8f45 scroll-off (Y>=0xD0 -> bfab + clear); +0x0f ? 4898 : 48d0
  */
+static int step_8f45(Slot *e);
+static int step_8f25_unarmed(Slot *e);
+
 static void husk_step(Slot *e)
 {
     if (!e->script)
     {
+        /* 8e14: bfb3, ev18, SET 7, +0c=0, JP 849c (score + 84d1 arm).
+         * 8f45 starts next tick (BIT 7 already set). */
         entity_dec_encounter_a();
         sound_play_event(SND_EV_EXPLODE);
         award_subtype((u8)e->dest);
-        e->script = 1;          /* 8e14 SET 7 after first frame */
-        e->timer = 16;
+        e->script = 1;
         e->ground = 1;
         e->vx = 0;
         e->vy = 0;
-        if (e->spr)
-            SPR_setAnimAndFrame(e->spr, 0, FRAME_CIRCLE);
+        /* 849c: +0D=1, +0E=4, +0F=1, +10=6, table 84d1 (same as type35). */
+        e->clock = 1;
+        e->aux = 1;
+        spr_place(e, k_t35_frame[1]);
+        spr_set_sat_col(e, k_t35_col[1]);
+    }
+    else if (step_8f45(e))
+        return;
+
+    /* 8e30: +0x0f NZ -> 4898 anim_sub; else 48d0. Wrap +0f>=+10 -> 0. */
+    if (!e->aux)
+    {
+        spr_kill(e);
         return;
     }
-    if (e->timer)
-        e->timer--;
-    if (e->spr)
-        SPR_setAnimAndFrame(e->spr, 0,
-            (e->timer & 2) ? FRAME_CIRCLE : FRAME_BOX);
+    if (e->clock)
+        e->clock--;
+    if (!e->clock)
+    {
+        e->clock = 4;
+        e->aux++;
+        if (e->aux >= 6)
+            e->aux = 0;
+    }
+    if (!e->aux)
+    {
+        spr_kill(e);
+        return;
+    }
+    spr_place(e, k_t35_frame[e->aux]);
+    spr_set_sat_col(e, k_t35_col[e->aux]);
 }
 
-/* 8a16 yellow pats 1c/20/24/20; 8a1e black same + color 81. */
-static const u8 k_orb_yel_frame[4] = { FRAME_CIRCLE, FRAME_CHIP, FRAME_BOX, FRAME_CHIP };
-static const u8 k_orb_blk_frame[4] = { FRAME_CIRCLE, FRAME_SHOT, FRAME_COMET, FRAME_SHOT };
+/* LAB_ram_8f45: E700.1 then unsigned Y+=8; CP 0xD0 NC -> bfab + 48d0.
+ * SCF on entry is the 8f25 armed "busy" flag (87ae JR C skips init). */
+static int step_8f45(Slot *e)
+{
+    u8 ny;
+    u8 next;
+
+    if (!map_script_row_carry())
+        return 0;
+    ny = (u8)e->y;
+    next = (u8)(ny + 8);
+    e->y = (s16)next;
+    if (next < 0xD0)
+        return 0;
+    entity_inc_encounter_a();
+    spr_kill(e);
+    return 1;
+}
+
+/* 8f25 unarmed: E700.1, Y+=8, RET NC; wrap -> SET 7, Y+=0x10. Returns 1 if
+ * still unarmed (caller skips the rest of the handler). */
+static int step_8f25_unarmed(Slot *e)
+{
+    u8 ny;
+    u8 next;
+
+    if (!e->armed)
+    {
+        if (map_script_row_carry())
+        {
+            ny = (u8)e->y;
+            next = (u8)(ny + 8);
+            e->y = (s16)next;
+            if (next < ny)
+            {
+                e->armed = 1;
+                e->y = (s16)(u8)(next + 0x10);
+                return 0;
+            }
+        }
+        return 1;
+    }
+    return 0;
+}
+
+/* base_core_anim 0x8a16: (SAT name, color) x4 yellow, then 0x8a1e black.
+ * Names 0x1C/0x20/0x24/0x20 = lead / med_circle / lg_circle / med_circle. */
+static const u8 k_orb_frame[4] = {
+    FRAME_LEAD, FRAME_MED_CIRCLE, FRAME_CIRCLE, FRAME_MED_CIRCLE
+};
+static const u8 k_orb_yel_col[4] = { 0x8F, 0x83, 0x8A, 0x8B };
+static const u8 k_orb_blk_col[4] = { 0x81, 0x81, 0x81, 0x81 };
 
 /*
  * handler_type72_base_core 0x8983:
@@ -1523,8 +1605,8 @@ static const u8 k_orb_blk_frame[4] = { FRAME_CIRCLE, FRAME_SHOT, FRAME_COMET, FR
  *         4898, 44b0
  *   collect (bit7 cleared): player 0x81;
  *           +0x1e ? 8a26+ev19+48d0 : E722=+0x1c/1d, SET 5 E102, 48d0
- * Port: bind/timer = Yvel 8.8; clock=+0x1b; script=+0x1e; aux=anim tick.
- *       dest kept as warp ptr (+0x1c/1d). No every-N frame Y step.
+ * Port: bind/timer = Yvel 8.8; clock=+0x1b; script=+0x1e; aux=anim tick
+ *       (anim_sub +0E=4 via aux>>2). dest = warp ptr (+0x1c/1d).
  */
 static void orb_step(Slot *e)
 {
@@ -1561,16 +1643,11 @@ static void orb_step(Slot *e)
     e->vx = 0;
     e->vy = 0;
 
-    /* 8a16/8a1e: 4 pats, reload 4 (approx via aux>>2). */
-    e->aux++;
+    /* anim_sub 0x4912: +0E=4, table 8a16 then 8a1e. aux>>2 is that reload. */
     idx = (u8)((e->aux >> 2) & 3);
-    if (e->spr)
-    {
-        SPR_setAnimAndFrame(e->spr, 0,
-            e->script ? k_orb_yel_frame[idx] : k_orb_blk_frame[idx]);
-        spr_vis_playfield(e->spr, mode_draw_x(e->x, e->sat_col),
-                          mode_draw_y(e->y), 1);
-    }
+    spr_place(e, k_orb_frame[idx]);
+    spr_set_sat_col(e, e->script ? k_orb_yel_col[idx] : k_orb_blk_col[idx]);
+    e->aux++;
 }
 
 /*
@@ -1836,7 +1913,7 @@ static void spawn_gun(Slot *e, u8 type)
     e->kind = KIND_GUN;
     e->variant = type;
     e->hp = 1;
-    e->ground = 1;
+    e->ground = 0;              /* 8094 +0c=1: 4898 Y 8.8, not 8f25 */
     e->x = right ? 0xC0 : 0x30;
     e->y = 0;               /* 8094 leaves +01; stream Y=0 */
     e->vx = 0;
@@ -1942,6 +2019,9 @@ static void gun_step(Slot *e)
     e->y = (s16)(ypos >> 8);
     e->vx = 0;
     e->vy = 0;
+    /* 4898 Y_motion_sub CP 0xD0 (unsigned). */
+    if ((u8)e->y >= 0xD0)
+        spr_kill(e);
 }
 
 /* LAB_ram_4c91 / dir_remap_table 0x4D45. 16-dir aim; E returned as dir. */
@@ -3478,6 +3558,33 @@ static void base_step(Slot *e)
     const u8 *p;
     u16 sum;
 
+    /* 8a5a: until BIT 7, E700.1 -> Y+=8, then E150.1 else RET.
+     * Hold: SET 7, Y+=0x10, table xo/yo, 8948 bind, fall into 8ae8. */
+    if (!e->armed)
+    {
+        if (map_script_row_carry())
+            e->y = (s16)(u8)((u8)e->y + 8);
+        if (!(entity_base_flags() & 2))
+            return;
+        e->armed = 1;
+        {
+            u8 ypre = (u8)e->y;
+            u16 yaln = (u16)ypre & 0xF8;
+            u8 col;
+
+            /* 8a7d L=Y then Y+=0x10; 8948 uses L (pre-+0x10), H=X-0x20
+             * before table xo/yo at 8ac7. */
+            e->y = (s16)(u8)(ypre + 0x10);
+            if (idx > 6)
+                idx = 0;
+            col = (u8)((u8)((u8)e->x - 0x20) >> 3);
+            e->bind = (u16)(0x3800 + (yaln << 2) + col);
+            e->y = (s16)(u8)((u8)e->y + k_base[idx][2]);
+            e->x = (s16)(u8)((u8)e->x + k_base[idx][3]);
+        }
+        e->script = (u8)(e->script | 0x80);
+    }
+
     /* 8ae8 BIT 1 +05: type 79 last-hit 8ba1 SET +05.1, then 8bb6 countdown.
      * +19 is 0 after 7904 kill; DEC wraps 255 frames, scatter every 4, then 8baa. */
     if (e->variant == 79 && (e->aux & 0x02))
@@ -3493,22 +3600,11 @@ static void base_step(Slot *e)
         return;
     }
 
-    /* Approach (E150 bit0 only): nametable-locked, no pattern/fire.
-     * SET 7 (E150 bit1): +0x10 Y + VRAM bind once (sat_col=0, no overlay), then fire. */
-    if (!(s_e150 & 2))
-        return;
-    if (!(e->script & 0x80))
+    /* 8afa BIT 2,E150: timeout -> 8f45 (Y+=8 per E700.1, Y>=0xD0 clear). */
+    if (entity_base_flags() & 4)
     {
-        s16 y0 = e->y;
-        u16 yaln = (u16)y0 & 0xF8;
-        u8 col = (u8)((u8)((u8)e->x - 0x20) >> 3);
-
-        e->y = (s16)(y0 + 0x10);
-        /* SUB_ram_8948: L=Y_pre, H=X-0x20 -> 0x3800+(Y&F8)*4+col */
-        e->bind = (u16)(0x3800 + (yaln << 2) + col);
-        if (e->spr)
-            spr_sync(e);
-        e->script = (u8)(e->script | 0x80);
+        if (step_8f45(e))
+            return;
     }
 
     if (idx > 6)
@@ -3600,15 +3696,11 @@ static void award_for(u8 kind)
 static void spawn_base_seg(Slot *e, u8 type, s16 x, s16 y)
 {
     u8 idx = (u8)(type - 73);
-    s8 yo;
-    s8 xo;
 
     if (idx > 6)
         idx = 0;
-    yo = (s8)k_base[idx][2];
-    xo = (s8)k_base[idx][3];
-    /* k_base[][0] sat_name is MSX hitbox size only; sat_col=0 (no SAT).
-     * Destroy/hit FX via scatter_expl (places type-35 sprites then). */
+    /* 8a5a: BIT 7 clear until E150.1. Table xo/yo applied at SET 7 (8ac7),
+     * not at place. SAT name is hitbox size; sat_col=0 (no SAT). */
 
     e->kind = KIND_BASE;
     e->variant = type;
@@ -3617,15 +3709,15 @@ static void spawn_base_seg(Slot *e, u8 type, s16 x, s16 y)
     e->timer = 0;
     e->script = 0;
     e->ground = 1;
-    e->armed = 1;
+    e->armed = 0;
     e->aux = 0;
     e->clock = 0;
     e->dest = s_pat_rr;     /* pattern index 0-7; record=0; fire_acc=0 */
     s_pat_rr++;
     if (s_pat_rr >= 8)
         s_pat_rr = 0;
-    e->x = (s16)(x + xo);
-    e->y = (s16)(y + yo);
+    e->x = x;
+    e->y = y;
     e->vx = 0;
     e->vy = 0;
     e->bind = 0;
@@ -4354,7 +4446,11 @@ static void update_enemies(void)
         else if (e->kind == KIND_FIREUP)
             fireup_step(e);
         else if (e->kind == KIND_HUSK)
+        {
             husk_step(e);
+            if (!e->alive)
+                continue;
+        }
         else if (e->kind == KIND_ORB)
         {
             orb_step(e);
@@ -4362,7 +4458,11 @@ static void update_enemies(void)
                 continue;
         }
         else if (e->kind == KIND_GUN)
+        {
             gun_step(e);
+            if (!e->alive)
+                continue;
+        }
         else if (e->kind == KIND_STEALTH)
         {
             /* 7f99/8012: volley then entity_update 4898 +0c=3 X|Y 8.8
@@ -4407,13 +4507,41 @@ static void update_enemies(void)
                 continue;
         }
         else if (e->kind == KIND_BASE)
+        {
             base_step(e);
+            if (!e->alive)
+                continue;
+        }
         else if (e->kind == KIND_WIDE)
-            wide_variant_step(e);
+        {
+            /* 8eb7 CALL 8f25 before the variant fire body. Arming frame
+             * JP (HL) into the body; 8f45 is the next-tick BIT 7 path. */
+            if (!e->armed)
+            {
+                (void)step_8f25_unarmed(e);
+                /* Arming JP (HL): CF clear, 8ebc init (already at spawn).
+                 * 8f45 / DEC +0x1c start next tick. */
+            }
+            else if (step_8f45(e))
+                continue;
+            else
+                wide_variant_step(e);
+        }
         else if (e->kind == KIND_FIREBOX)
         {
-            /* 87e2 runs once on activate (8f25 BIT 7); stamp when armed. */
-            if (e->armed && !e->script && e->y >= 0 && e->y < 184)
+            /* 87ab CALL 8f25; 87e2 digit after BIT 7 / arming JP (HL). */
+            if (!e->armed)
+            {
+                (void)step_8f25_unarmed(e);
+                if (e->armed && !e->script)
+                {
+                    map_script_stamp_82_digit(e->x, e->y, (u8)e->dest);
+                    e->script = 1;
+                }
+            }
+            else if (step_8f45(e))
+                continue;
+            else if (!e->script)
             {
                 map_script_stamp_82_digit(e->x, e->y, (u8)e->dest);
                 e->script = 1;
@@ -4498,59 +4626,19 @@ static void update_enemies(void)
             }
         }
         /* Type 69: X drifts only on successful fire (spawner_step); vx holds
-         * drift delta and must not feed the shared integer pass. */
-        if (e->kind != KIND_SPAWNER)
+         * drift delta and must not feed the shared integer pass.
+         * WIDE/FIREBOX Y is 8f25/8f45 in the handler (CALL before body). */
+        if (e->kind != KIND_SPAWNER
+            && e->kind != KIND_HUSK
+            && e->kind != KIND_BASE
+            && e->kind != KIND_WIDE
+            && e->kind != KIND_FIREBOX
+            && e->kind != KIND_GUN)
         {
-            /* wide_struct_init 0x8f25: until BIT 7, wait E700.1 then Y+=8
-             * unsigned until carry, then SET 7 and Y+=0x10. Collision and
-             * the rest of the handler are skipped until then. */
-            if ((e->kind == KIND_WIDE || e->kind == KIND_FIREBOX) && !e->armed)
-            {
-                if (map_script_row_carry())
-                {
-                    u8 ny = (u8)e->y;
-                    u8 next = (u8)(ny + 8);
-
-                    e->y = (s16)next;
-                    if (next < ny)
-                    {
-                        e->armed = 1;
-                        e->y = (s16)(u8)(next + 0x10);
-                    }
-                }
-            }
-            else if (e->ground)
-            {
-                /* 8bb6 RET skips Y motion; other ground follows pixel VSCROLL. */
-                if (!(e->kind == KIND_BASE && e->variant == 79 && (e->aux & 0x02)))
-                    e->y += (s16)map_script_scroll_delta();
-            }
-            else
-            {
-                e->x += e->vx;
-                e->y += e->vy;
-            }
+            e->x += e->vx;
+            e->y += e->vy;
         }
-        if (e->kind == KIND_HUSK)
-        {
-            /* 8f45 after first frame: Y>=0xD0 -> bfab + clear; +0x0f==0 -> 48d0 */
-            if (e->script)
-            {
-                if (e->y >= 0xD0)
-                {
-                    entity_inc_encounter_a();
-                    spr_kill(e);
-                    continue;
-                }
-                if (!e->timer)
-                {
-                    spr_kill(e);
-                    continue;
-                }
-            }
-            e->script = 1;
-        }
-        else if (e->kind == KIND_FIREUP && e->y < 0)
+        if (e->kind == KIND_FIREUP && e->y < 0)
         {
             /* 4898 Y_motion: unsigned Y>=0xD0 clears; rise underflow dies. */
             spr_kill(e);
@@ -4568,6 +4656,10 @@ static void update_enemies(void)
          * unsigned Y>=0xD0 / X>=0xD1 in MSX coords (letterbox is draw-only). */
         if (e->kind != KIND_SPAWNER
             && e->kind != KIND_HUSK
+            && e->kind != KIND_WIDE
+            && e->kind != KIND_FIREBOX
+            && e->kind != KIND_BASE
+            && e->kind != KIND_GUN
             && e->kind != KIND_LUSTER
             && e->kind != KIND_DUSTER
             && e->kind != KIND_TERUZO
@@ -5449,9 +5541,10 @@ u8 entity_place_ground(u8 type, s16 x, s16 y, u16 dest)
     if (x > (s16)(a->playfield_w - 8))
         x = (s16)(a->playfield_w - 8);
 
-    /* 8f25 types keep unsigned SAT Y (0xE0-0xFF walk +8 until carry).
-     * Other ground uses signed incoming so 0xF0 appears at the top. */
+    /* 8f25 / 8a5a types keep unsigned SAT Y (0xE0-0xFF walk +8 until
+     * wrap or E150.1). Other ground uses signed so 0xF0 appears at the top. */
     if (!(type == 70 || type == 71 || type == 81 || type == 82
+          || (type >= 73 && type <= 79)
           || (type >= 84 && type <= 89)))
     {
         if (y >= 192)

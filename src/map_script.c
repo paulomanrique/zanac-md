@@ -664,12 +664,15 @@ static int sat_to_nt(s16 x, s16 y, u8 *col, u8 *row)
     if (c >= PF_COLS)
         return 0;
     /* 88ed: C = Y/8 on the 192; C>=0x18 -> no punch. Y is the 8948 L
-     * (aligned punch origin), unsigned like MSX SUB on SAT Y. */
+     * (aligned punch origin), unsigned like MSX SUB on SAT Y.
+     * SAT Y walks +8 per E700.1 (8f25/8a5a/8f45). MD VSCROLL also has
+     * E711>>5 subpixels; bind with the 8px row so the stamp hits the
+     * 1-row DMA cell (MSX nametable has no subpixel scroll). */
     if (y < 0)
         return 0;
     if ((u8)((u16)y >> 3) >= BOOT_ROWS)
         return 0;
-    ntpix = (u16)((u16)y - s_scroll_px);
+    ntpix = (u16)((u16)y - (s_scroll_px & 0xFFF8));
     *col = c;
     *row = (u8)((ntpix >> 3) & 31);
     return 1;
@@ -1902,6 +1905,13 @@ static void cred_tick(void)
 
 static void arm_ending_stream(void)
 {
+    /* LAB_92af: HL=0xA6F4 -> E722, SET 5+3 E102, wait 0x3C, E700=0,
+     * E712=0x80, clear_credits_busy. ending_setup 0x91FD (E800 stash to
+     * VRAM 0x3C00, stream 0xBBB4, copy E800->EB00, restore, E157=0xD1,
+     * E156=0x0C, E150=1, E700=0x0C, E710=0x20, ev12) and LAB_9251 letters
+     * (0x3924 / 0xBBFD / 0x92F3 SAT) are not wired: 0x3C00 is TMS scratch,
+     * 0x92F3 SAT names are not in a data file. LAB_980e (E700 bit2 column
+     * reveal from EB00) and scroll_sync 0x9AE4 (LDIRMV 24x24) stay open. */
     s_ms.round = 0;
     s_ms.pc = MAP_ENDING_STREAM;
     s_ms.row = 0;
