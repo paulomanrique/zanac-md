@@ -462,6 +462,9 @@ static const u8 k_box_sat[30] = {
 static s16 slot_draw_y(const Slot *s);
 static void marker_place(Slot *s, u16 frame);
 static void marker_kill(Slot *s);
+static u8 hw_sprite_count(void);
+static int band_overlap(s16 a, s16 b);
+static int line_budget_full(s16 dy);
 
 static void spr_vis_playfield(Sprite *sp, s16 dx, s16 dy, int want_vis)
 {
@@ -486,6 +489,8 @@ static void spr_vis_playfield(Sprite *sp, s16 dx, s16 dy, int want_vis)
  * E711>>5 (s_scroll_px & 7). Draw-only: add the remainder so 8f45-class
  * sprites track the sliding tiles. Collision / SAT stay on the 8px grid.
  * Do not add scroll_delta to SAT Y (rejected vs 8f45).
+ * Flyers (ground==0) stay at screen SAT Y -- TMS flyers do not ride a
+ * subpixel nametable. MD tiles slide 0-7px under them (VDP != TMS).
  */
 static s16 slot_draw_y(const Slot *s)
 {
@@ -496,19 +501,82 @@ static s16 slot_draw_y(const Slot *s)
     return y;
 }
 
+/* Dual type39 SAT doubles MD hardware sprites. Hide extras before the
+ * 80-sprite / 20-per-line drop so HUD flicker does not get worse. */
+static u8 hw_sprite_count(void)
+{
+    u8 n = 1;
+    u8 i;
+
+    for (i = 0; i < SHOT_SLOTS; i++)
+        if (s_shot[i].spr)
+            n++;
+    if (s_fire.spr)
+        n++;
+    for (i = 0; i < ENEMY_SLOTS; i++)
+    {
+        if (s_en[i].spr)
+            n++;
+        if (s_en[i].mspr)
+            n++;
+    }
+    return n;
+}
+
+static int band_overlap(s16 a, s16 b)
+{
+    return (a < (s16)(b + (s16)MODE_SPR_W)) && (b < (s16)(a + (s16)MODE_SPR_W));
+}
+
+static int line_budget_full(s16 dy)
+{
+    u8 n = 0;
+    u8 i;
+    s16 pdy;
+
+    if (mode_get() != MODE_ORIGINAL)
+        return 0;
+    pdy = mode_draw_y(player_y());
+    if (band_overlap(pdy, dy))
+        n++;
+    for (i = 0; i < SHOT_SLOTS; i++)
+        if (s_shot[i].spr && s_shot[i].alive
+            && band_overlap(slot_draw_y(&s_shot[i]), dy))
+            n++;
+    if (s_fire.spr && s_fire.alive && band_overlap(slot_draw_y(&s_fire), dy))
+        n++;
+    for (i = 0; i < ENEMY_SLOTS; i++)
+    {
+        Slot *e = &s_en[i];
+        s16 ey;
+
+        if (!e->alive)
+            continue;
+        ey = slot_draw_y(e);
+        if (e->spr && band_overlap(ey, dy))
+            n++;
+        /* Do not count mspr: complements are what we drop. Counting them
+         * here would hide/show every other frame on a packed line. */
+    }
+    /* MD 20/line. 10 primaries + complements = 20; drop complements first. */
+    return (n >= 10);
+}
+
 static void spr_sync(Slot *s)
 {
     s16 dx;
     s16 dy;
     s16 mdx;
     s16 mdy;
+    int mvis;
 
-    if (!s->spr)
-        return;
     dx = mode_draw_x(s->x, s->sat_col);
     dy = slot_draw_y(s);
-    SPR_setPosition(s->spr, dx, dy);
-    spr_vis_playfield(s->spr, dx, dy, 1);
+    if (s->spr)
+    {
+        SPR_setPosition(s->spr, dx, dy);
+        spr_vis_playfield(s->spr, dx, dy, 1);
+    }
     /* 71f6: SAT Y = parentY-0x11, X = parent X, color 0x81. Same SUB as
      * sprite_sat_write 0x48C0, so MD draw Y matches the primary (both skip
      * the hardware SAT offset). Later SAT index draws behind on TMS. */
@@ -518,8 +586,29 @@ static void spr_sync(Slot *s)
     mdy = dy;
     SPR_setPosition(s->mspr, mdx, mdy);
     SPR_setDepth(s->mspr, (s16)(mdy - 1));
-    SPR_setDepth(s->spr, mdy);
+    if (s->spr)
+        SPR_setDepth(s->spr, mdy);
+    /* Complement uses the same letterbox/HUD clip as the primary, plus
+     * its own draw box (EC 0x81 can sit 32px left of a non-EC body). */
     spr_vis_playfield(s->mspr, mdx, mdy, 1);
+    mvis = 1;
+    if (mode_get() == MODE_ORIGINAL)
+    {
+        s16 y0 = (s16)mode_y_off();
+
+        if (dy < y0 || dy >= (s16)(y0 + 192))
+            mvis = 0;
+        if (mdy < y0 || mdy >= (s16)(y0 + 192))
+            mvis = 0;
+        if (mode_hud_overlap(dx, MODE_SPR_W))
+            mvis = 0;
+        if (mode_hud_overlap(mdx, MODE_SPR_W))
+            mvis = 0;
+        if (line_budget_full(mdy))
+            mvis = 0;
+    }
+    if (!mvis)
+        SPR_setVisibility(s->mspr, HIDDEN);
 }
 
 /* MSX spawn_col_marker (0x71da): type 0x27 slot, +04=0x81, HL left at +03.
@@ -554,10 +643,15 @@ static void marker_place(Slot *s, u16 frame)
     if (frame >= FRAME_N)
         return;
     s->mframe = (u8)frame;
+    /* Occupancy stays even if the hardware complement is withheld. */
+    if (!s->spr)
+        return;
     mdx = mode_draw_x(s->x, 0x81);
     mdy = slot_draw_y(s);
     if (!s->mspr)
     {
+        if (hw_sprite_count() >= 70 || line_budget_full(mdy))
+            return;
         s->mspr = SPR_addSpriteEx(&spr_objs, mdx, mdy,
                                   TILE_ATTR(PAL2, TRUE, FALSE, FALSE),
                                   SPR_FLAG_AUTO_VRAM_ALLOC);
@@ -565,14 +659,12 @@ static void marker_place(Slot *s, u16 frame)
             return;
         SPR_setAnimAndFrame(s->mspr, 0, (s16)frame);
         SPR_setDepth(s->mspr, (s16)(mdy - 1));
-        if (s->spr)
-            SPR_setDepth(s->spr, mdy);
-        spr_vis_playfield(s->mspr, mdx, mdy, 1);
+        SPR_setDepth(s->spr, mdy);
+        spr_sync(s);
         return;
     }
     SPR_setAnimAndFrame(s->mspr, 0, (s16)frame);
-    SPR_setPosition(s->mspr, mdx, mdy);
-    spr_vis_playfield(s->mspr, mdx, mdy, 1);
+    spr_sync(s);
 }
 
 static void marker_kill(Slot *s)
@@ -1020,7 +1112,12 @@ static int hit_overlap(s16 x1, s16 y1, u8 sat1, s16 x2, s16 y2, u8 sat2)
 
 /* collision_routine 0x4560: both boxes are SAT X/Y and sat_name>>1 into
  * 0x45C9. Do not convert to visual X -- ship/shots/EC enemies all store
- * SAT X and draw with TMS EC, so SAT overlap is graphic overlap. */
+ * SAT X and draw with TMS EC, so SAT overlap is graphic overlap.
+ * Do not add map_script_scroll_frac() here. Nametable-only bases/idols
+ * have no sprite; tiles ride MD VSCROLL while SAT stays on the 8px grid
+ * (8f25/8a5a). That 0-7px vs art is MD VDP != TMS, not a missing store.
+ * Wreck stamps bind with scroll_px&~7 and then ride the same VSCROLL as
+ * the live tiles, so the punch is not crooked vs the nametable. */
 static int hit_overlap_slot(s16 x1, s16 y1, u8 sat1, const Slot *e)
 {
     u8 esat = e->sat ? e->sat : (u8)0x40;
@@ -3698,8 +3795,9 @@ static void base_step(Slot *e)
         e->script = (u8)(e->script | 0x80);
     }
 
-    /* 8ae8 BIT 1 +05: type 79 last-hit 8ba1 SET +05.1, then 8bb6 countdown.
-     * +19 is 0 after 7904 kill; DEC wraps 255 frames, scatter every 4, then 8baa. */
+    /* 8ae8 BIT 1 +05: type 79 last-hit 8ba1 SET +05.1 keep 0xCF, then 8bb6.
+     * +19 is 0 after 7904 kill; DEC wraps 255 frames, scatter every 4 (AND 3),
+     * then 8baa -> 8ca2 -> 8c80 (HP==0 -> 8d07). No 44ca/7904 while dying. */
     if (e->variant == 79 && (e->aux & 0x02))
     {
         e->hp--;
@@ -3859,6 +3957,11 @@ static int is_port_type(u8 t)
     if (t >= 73 && t <= 79) return 1;
     if (t == 82) return 1;
     if (t == 83) return 1;
+    /* zanac.asm entity_jump_table 0x70B7: labeled handler_type* for
+     * 1-3 (player/shot/fire), 4-25, 35-89 are all wired in this file
+     * or player.c. Types 26-34 share the 7de2/7e78/7e9c/7f84/7f99
+     * bodies already ported. Child-only 35/37-40/42/43/60/72/80/81/84-89
+     * stay spawn_from_type==0 (is_port_type / stream leftover). */
     return 0;
 }
 
@@ -4790,7 +4893,7 @@ static void update_enemies(void)
             spr_kill(e);
             continue;
         }
-        if (e->spr)
+        if (e->spr || e->mspr)
             spr_sync(e);
     }
 }
@@ -4861,10 +4964,22 @@ static void collide_bolt_enemies(Slot *bolt, u8 persist)
              * 8b82 CP 0xCF: only type 79 then ev17 + 8bc1 scatter.
              * 8b8d: HP 0x32 / 0x14 -> 8c15/8c80 stage stamp. */
             sound_play_event(SND_EV_BASEHIT);
+            if (e->kind == KIND_BOX && e->hp == 1)
+            {
+                /* 7860: last-HP SAT color. type4 0x89, type5 0x8A, else 0x87. */
+                u8 col = 0x87;
+
+                if (e->variant == 4)
+                    col = 0x89;
+                else if (e->variant == 5)
+                    col = 0x8A;
+                spr_set_sat_col(e, col);
+            }
             if (e->kind == KIND_BASE && e->variant == 79)
             {
                 sound_play_event(SND_EV_EHIT);
                 scatter_expl(e->x, e->y);
+                /* 8b97 JP 8c15; type79 dispatch idx6 is 8c80 (not live 8c15). */
                 if (e->hp == 0x32 || e->hp == 0x14)
                     map_script_punch_79_hp(e->x, e->y, e->hp);
             }
@@ -4989,6 +5104,14 @@ static void collide_bolt_enemies(Slot *bolt, u8 persist)
                 award_for(kind);
                 sound_play_explode();
                 become_chip(e);
+                return;
+            }
+            if (kind == KIND_BOX && drop == 5)
+            {
+                /* 787b RET Z: type stays 0x23 from 453E (no drop). */
+                award_for(kind);
+                sound_play_explode();
+                become_expl(e, drop);
                 return;
             }
             if (kind == KIND_DESCEND)
@@ -5662,7 +5785,9 @@ u8 entity_place_ground(u8 type, s16 x, s16 y, u16 dest)
         x = (s16)(a->playfield_w - 8);
 
     /* 8f25 / 8a5a types keep unsigned SAT Y (0xE0-0xFF walk +8 until
-     * wrap or E150.1). Other ground uses signed so 0xF0 appears at the top. */
+     * wrap or E150.1). 88ed punch is (u8)SAT_Y-0x10; C>=0x18 skips.
+     * Type 44 is 82d0 airborne (signed Y ok; death is type35, no 88ed).
+     * Other ground uses signed so 0xF0 appears at the top. */
     if (!(type == 70 || type == 71 || type == 81 || type == 82
           || (type >= 73 && type <= 79)
           || (type >= 84 && type <= 89)))

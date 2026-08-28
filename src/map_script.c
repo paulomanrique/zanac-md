@@ -692,7 +692,9 @@ static int sat_to_nt(s16 x, s16 y, u8 *col, u8 *row)
      * SAT Y walks +8 per E700.1 (8f25/8a5a/8f45). MD VSCROLL also has
      * E711>>5 subpixels; bind with the 8px row so the stamp hits the
      * 1-row DMA cell (MSX nametable has no subpixel scroll). Sprite DRAW
-     * adds (scroll_px & 7) in entity.c; SAT/collision stay on this grid. */
+     * adds (scroll_px & 7) in entity.c; SAT/collision stay on this grid.
+     * The stamp then rides live VSCROLL with the rest of the nametable,
+     * so wreck tiles are not crooked vs neighboring tiles. */
     if (y < 0)
         return 0;
     if ((u8)((u16)y >> 3) >= BOOT_ROWS)
@@ -956,7 +958,9 @@ static const u8 k_88d8[] = {
 };
 
 /* 88ed: desc at (x+xadj, y+yadj). Baseline 8854 is SAT_X-0x20 / Y-0x10.
- * Callers pass live SAT X/Y; nt_from_sat_x does the 8948 nametable bind. */
+ * Callers pass live SAT X/Y; nt_from_sat_x does the 8948 nametable bind.
+ * Y SUB is unsigned (u8) like MSX; 70/71/81/84-89 keep unsigned SAT Y so
+ * Y-0x10 on 0x00..0x0F underflows and CP 0x18 skips (no punch off-screen). */
 static void punch_88ed(s16 x, s16 y, const u8 *d, s16 xadj, s16 yadj)
 {
     u8 col0;
@@ -1218,8 +1222,10 @@ static void place_tile_group(StreamSlot *st, u16 *pptr)
     {
         s_e152 = nbase;
         entity_base_open(nbase);
-        /* Leftover E156==0 after a previous fight would wrap-DEC to 255
-         * and the 2nd fortress would never SET 7 / never 90a6. */
+        /* Scripts never write E156=0 (cmd B values are 0x06..0x14). Leftover
+         * 0 after a previous fight: MSX 8f78 DECs 0->255 (255-row wait).
+         * Arm now so a mid-stream second group is not idle for 255 rows.
+         * Approach DEC still wraps if E150.0 is set without this path. */
         if (!s_e156)
             entity_base_arm();
     }
@@ -1298,8 +1304,7 @@ static void place_ctrl_at(u16 ptr)
         {
             s_e152 = nbase;
             entity_base_open(nbase);
-            /* Leftover E156==0 after a previous fight would wrap-DEC to 255
-             * and the 2nd fortress would never SET 7 / never 90a6. */
+            /* Same leftover-0 arm as place_tile_group. 93e7 then E150=2. */
             if (!s_e156)
                 entity_base_arm();
         }
@@ -1975,9 +1980,10 @@ static void cred_tick(void)
 }
 
 /* TMS nametable row r is always screen row r (no VSCROLL). MD maps that
- * onto the currently visible 24-row window (8px of s_scroll_px). The
- * E711>>5 remainder sits the letters 0-7px from a TMS pixel row; tiles
- * cannot land between rows. */
+ * onto the currently visible 24-row window using scroll_px&~7 (same
+ * numeric bind as >>3). The E711>>5 remainder sits the letters 0-7px
+ * from a TMS pixel row; tiles cannot land between rows. That leftover
+ * is MD VDP != TMS, not a missing 9251 store. */
 static u8 vis_nt_row(u8 tms_row)
 {
     u8 k = (u8)((s_scroll_px & 0xFFF8) >> 3);
@@ -2115,7 +2121,11 @@ static void ending_setup_91fd(void)
 
     memcpy(s_eb00, s_e800, sizeof(s_e800));
     memcpy(s_e800, s_3c00, sizeof(s_e800));
-    /* 24 dummy E702 INCs must not move MD VSCROLL; TMS has none. */
+    /* 24 dummy E702 INCs must not move MD VSCROLL; TMS has none.
+     * Rebase keeps (row-base)*8 + (E711>>5) at the pre-dummy pixel.
+     * Dummy assemble is ram-only: the 32-row MD plane is not rewritten.
+     * NT 24-31 stay the wrap/prefetch buffer; do not fill_letterbox_b
+     * here (that would wipe the 1-7px peek row). */ 
     s_scroll_base = (u16)(s_ms.row - (s_scroll_px >> 3));
 
     s_e157 = 0xD1;
@@ -2268,7 +2278,8 @@ void map_script_resume_scroll(void)
 }
 
 /* SUB_ram_8f5e: while E150 bit0, each E700-bit1 row DECs E156 and clamps E710.
- * countdown==0 -> E710=0, E157 extras, E15A=0xC0, E150:=2 (hold + SET 7). */
+ * 8f78 always DECs (0 wraps to 255, then 8f7e JR Z is not taken). countdown
+ * after DEC ==0 -> E710=0, E157 extras, E15A=0xC0, E150:=2 (hold + SET 7). */
 static void base_approach(u8 row_adv)
 {
     u8 flags = entity_base_flags();
@@ -2281,8 +2292,6 @@ static void base_approach(u8 row_adv)
     if (!(flags & 1))
         return;
     if (!row_adv)
-        return;
-    if (!s_e156)
         return;
 
     s_e156--;
