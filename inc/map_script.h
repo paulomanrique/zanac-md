@@ -65,7 +65,7 @@ const MapScript *map_script_state(void);
 /* Pixels the nametable advanced this frame (E711>>5 + row*8). SAT Y for
  * 8f25-class ground is +8 per E700.1, not this value. */
 u8   map_script_scroll_delta(void);
-/* E700 bit 1 this frame: map_script_step ran scroll_precompute (row carry). */
+/* E700 bit 1 this frame: 97e3 ran, or 980e SET bit1. */
 u8   map_script_row_carry(void);
 /* E710 current_scroll_speed. Type 85 8efc: NZ -> dir C, Z -> dir B. */
 u8   map_script_scroll_speed(void);
@@ -94,7 +94,8 @@ void map_script_stamp_82_digit(s16 x, s16 y, u8 fire_num);
 /* Type-72 black orb: dest is a stream pointer. Boots that PC + resolved round. */
 void map_script_warp(u16 dest);
 
-/* LAB_92af / init_credits_stream: arm stream 0xA6F4 and credits_display. */
+/* LAB_92af / init_credits_stream: arm stream 0xA6F4 and credits_display.
+ * Award E157&0x1F==0x10 is 91FD, ==0x11 is 9251; this is >=0x12 only. */
 void map_script_start_ending(void);
 u8   map_script_credits_active(void);
 u8   map_script_credits_exit(void);

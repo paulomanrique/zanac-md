@@ -82,6 +82,19 @@ static u8  s_warp_new;
 static u8  s_nt[32][PF_COLS];   /* VRAM playfield shadow, 24-col */
 static u8  s_e800[BOOT_ROWS][PF_COLS]; /* MSX E800 circular 24x24 */
 static u8  s_e714;              /* E714 circular write index 0-23 */
+static u8  s_e700;              /* E700: bit0 vram-pending, bit1 row-carry,
+                                 * bit2 980e column-reveal, bit3 first-sync */
+static u8  s_e70d;              /* E70D: 980e remaining column steps */
+/* 91FD LDIRVM E800 -> VRAM 0x3C00 is TMS scratch (24x24). MD has no 0x3C00
+ * window; keep the stash in RAM so the playfield restore is exact. */
+static u8  s_3c00[BOOT_ROWS][PF_COLS];
+static u8  s_eb00[BOOT_ROWS][PF_COLS]; /* 91FD LDIR E800 -> EB00 */
+static u8  s_end_snapped;       /* 980e flushed E714=0 linear NT 0-23 */
+static u8  s_end_phase;         /* 9251 sequencer; 0 = idle */
+static u8  s_end_wait;
+static u8  s_end_rows;          /* remaining 9263 iterations */
+static u8  s_end_y;             /* SAT Y for 92f3; starts 0x4C */
+static u8  s_end_tms_row;       /* TMS nametable row; starts 9 (0x3924) */
 /* scroll_speed_ramp_table 0x8F9A; 8f5e indexes 0x8F99+countdown (1-9). */
 static const u8 k_approach[10] = {
     0x00, 0x0C, 0x11, 0x14, 0x17, 0x1A, 0x1D, 0x20, 0x23, 0x26
@@ -118,6 +131,12 @@ static void scroll_precompute(u16 map_row);
 static void dma_nt_row(u8 nt_y, const u8 *src, TransferMethod tm);
 static void peek_next_row(u16 map_row);
 static void base_mode_11(void);
+static void place_ctrl_at(u16 ptr);
+static void scroll_sync(void);
+static void lab_980e(void);
+static void ending_setup_91fd(void);
+static void lab_9251_start(void);
+static void lab_9251_tick(void);
 static void base_hold(void);
 static void base_clear_tick(void);
 static void script_boot(u8 round, u16 pc);
@@ -1209,12 +1228,12 @@ static void place_tile_group(StreamSlot *st, u16 *pptr)
     *pptr = ptr;
 }
 
-/* SUB_ram_93e4: place_tile_group from 0xBCB2 at ybase 8 (ctrl is first byte). */
-static void base_mode_11(void)
+/* SUB_ram_93e7: 95ef from ctrl-first ptr, ybase 8; then E150=2, E153=5.
+ * 93e4 loads DE=0xBCB2 and falls in. 9251 calls with DE=0xBBF3. */
+static void place_ctrl_at(u16 ptr)
 {
     StreamSlot st;
     const u8 *p;
-    u16 ptr = 0xBCB2;
 
     p = blob_at(ptr);
     if (!p || !blob_ok(ptr, 1))
@@ -1284,7 +1303,14 @@ static void base_mode_11(void)
                 entity_base_arm();
         }
     }
-    s_e153 = 5;
+    /* 93e7: IY+0 := 0x80 (slot unused; this StreamSlot is local). */
+    entity_base_set(2);          /* IX+0x50 */
+    s_e153 = 5;                  /* IX+0x53 */
+}
+
+static void base_mode_11(void)
+{
+    place_ctrl_at(0xBCB2);
 }
 
 /* Peek stream head like MSX 0x95DD / delay-expiry 0x9A13:
@@ -1947,15 +1973,224 @@ static void cred_tick(void)
         s_cred_settle = CRED_SETTLE;
 }
 
+/* TMS nametable row r is always screen row r (no VSCROLL). MD maps that
+ * onto the currently visible 24-row window. */
+static u8 vis_nt_row(u8 tms_row)
+{
+    u8 k = (u8)(s_scroll_px >> 3);
+    u8 first = (u8)((u8)(0 - k) & 31);
+
+    return (u8)((first + tms_row) & 31);
+}
+
+/* scroll_sync 0x9AE4: wait E700.0 clear, RES bit 3, E714=0, copy 24x24
+ * from nametable 0x3800 (stride 32, 24 playfield cols) into E800.
+ * Does not rewrite VRAM -- TMS NT 0-23 IS the screen. */
+static void scroll_sync(void)
+{
+    u8 r;
+    u8 c;
+
+    s_e700 &= (u8)~8;
+    s_e714 = 0;
+    for (r = 0; r < BOOT_ROWS; r++)
+    {
+        u8 nr = vis_nt_row(r);
+
+        for (c = 0; c < PF_COLS; c++)
+            s_e800[r][c] = s_nt[nr][c];
+    }
+}
+
+/* scroll_vram_write 0x9A79 with E714==0: dump E800[0..23] to NT 0-23 and
+ * put NT 0 at the top of the 192. TMS writes VRAM 0x3800 with no VSCROLL. */
+static void e800_flush_linear(void)
+{
+    u8 r;
+
+    s_row_tm = DMA;
+    for (r = 0; r < BOOT_ROWS; r++)
+        dma_nt_row(r, s_e800[r], DMA);
+    fill_letterbox_b();
+    s_row_tm = DMA_QUEUE;
+    s_scroll_px = 0;
+    s_scroll_base = s_ms.row;
+    s_end_snapped = 1;
+    s_e700 &= (u8)~1;
+}
+
+/* copy_tile_column 0x986E: EB00 col C -> E800 col C, 24 rows stride 24. */
+static void copy_tile_column(u8 col)
+{
+    u8 r;
+
+    if (col >= PF_COLS)
+        return;
+    for (r = 0; r < BOOT_ROWS; r++)
+        s_e800[r][col] = s_eb00[r][col];
+}
+
+/* 982c overlapping LDIR dest=src+1 and LDDR dest=src-1, BC=n after DEC. */
+static void e800_squeeze(u8 n)
+{
+    u8 r;
+    u8 i;
+
+    if (!n)
+        return;
+    for (r = 0; r < BOOT_ROWS; r++)
+    {
+        for (i = 0; i < n; i++)
+            s_e800[r][(u8)(i + 1)] = s_e800[r][i];
+        for (i = 0; i < n; i++)
+            s_e800[r][(u8)(22 - i)] = s_e800[r][(u8)(23 - i)];
+    }
+}
+
+/* LAB_980e: E700 bit2 path. Bit3 -> scroll_sync + E70D=0x0C. E70D==0 RET Z
+ * (no bit1, so 8f5e / Y+=8 stop). Else DEC, squeeze unless old==1, stamp
+ * EB00 columns C and (~C+0x18), SET bits 0+1. */
+static void lab_980e(void)
+{
+    u8 old;
+    u8 c;
+    u8 mirrored;
+
+    if (s_e700 & 8)
+    {
+        scroll_sync();
+        s_e70d = 0x0C;
+    }
+    if (!s_e70d)
+        return;
+    old = s_e70d;
+    s_e70d--;
+    if (old != 1)
+        e800_squeeze(s_e70d);
+    c = s_e70d;
+    copy_tile_column(c);
+    mirrored = (u8)((u8)~c + 0x18);
+    copy_tile_column(mirrored);
+    s_e700 |= 3;
+    s_row_carry = 1;
+    e800_flush_linear();
+}
+
+static void tms_nt_put(u8 col, u8 tms_row, u8 tid)
+{
+    nt_put(col, vis_nt_row(tms_row), tid);
+}
+
+/* ending_setup 0x91FD. TMS LDIRVM 0x3C00 is RAM-mapped. BBB4 assemble is
+ * ram-only so the live nametable is not flashed. Stream/PC stay on BBB4. */
+static void ending_setup_91fd(void)
+{
+    u16 i;
+    u8 saved_ram;
+
+    sound_stop_all();
+    memcpy(s_3c00, s_e800, sizeof(s_e800));
+
+    s_ms.round = resolve_round_from_ptr(0xBBB4);
+    s_ms.pc = 0xBBB4;
+    s_ms.running = TRUE;
+    s_ms.last_cmd = "91fd";
+    load_trigger_from_pc();
+    s_ms.row = (u16)(s_ms.trigger - 1);
+
+    saved_ram = s_ram_only;
+    s_ram_only = 1;
+    for (i = 0; i < BOOT_ROWS; i++)
+    {
+        s_skip_precompute = 0;
+        s_ms.row++;
+        fire_pending();
+        if (!s_skip_precompute)
+            scroll_precompute(s_ms.row);
+    }
+    s_ram_only = saved_ram;
+
+    memcpy(s_eb00, s_e800, sizeof(s_e800));
+    memcpy(s_e800, s_3c00, sizeof(s_e800));
+    /* 24 dummy E702 INCs must not move MD VSCROLL; TMS has none. */
+    s_scroll_base = (u16)(s_ms.row - (s_scroll_px >> 3));
+
+    s_e157 = 0xD1;
+    s_e156 = 0x0C;
+    entity_base_set(1);
+    s_e700 = 0x0C;
+    s_e710 = 0x20;
+    s_e70d = 0;
+    s_end_snapped = 0;
+    s_end_phase = 0;
+    sound_play_event(SND_EV_BOSS);      /* 0x924B ev12 */
+    player_e102_res(0x04);              /* 0x92CA RES 2,E102 */
+}
+
+static void lab_9251_start(void)
+{
+    /* 9254 B=2 gameplay_frame_loop, then 9x (92f3 + 17 tiles + wait 6). */
+    s_end_phase = 1;
+    s_end_wait = 2;
+    s_end_rows = 9;
+    s_end_y = 0x4C;
+    s_end_tms_row = 9;                  /* 0x3924 = row 9 col 4 */
+}
+
+static void lab_9251_tick(void)
+{
+    const u8 *src;
+    u8 i;
+
+    if (!s_end_phase)
+        return;
+    if (s_end_wait)
+    {
+        s_end_wait--;
+        return;
+    }
+
+    if (s_end_rows)
+    {
+        /* 92f3: D=7, 8bca with HL=0x80<<8|C, BC=0x7F07. */
+        entity_scatter_8bca(0x80, (s16)s_end_y, 0x7F, 0x07, 7);
+        src = blob_at((u16)(0xBBFD + (u16)(9 - s_end_rows) * 17));
+        if (src && blob_ok((u16)(0xBBFD + (u16)(9 - s_end_rows) * 17), 17))
+        {
+            for (i = 0; i < 17; i++)
+                tms_nt_put((u8)(4 + i), s_end_tms_row, src[i]);
+        }
+        s_end_tms_row--;
+        s_end_y = (u8)(s_end_y - 8);
+        s_end_rows--;
+        s_end_wait = 6;                 /* 9285 B=6, including after last */
+        return;
+    }
+
+    if (s_end_phase == 1)
+    {
+        scroll_sync();
+        place_ctrl_at(0xBBF3);          /* 93e7; ctrl 0x83 -> 3x type 79 */
+        s_e157 = 0xB2;
+        s_end_wait = 10;                /* 92A4 B=0x0A */
+        s_end_phase = 2;
+        return;
+    }
+
+    player_e102_res(0x04);              /* clear_credits_busy */
+    entity_base_arm();                  /* JP 8fca */
+    s_end_phase = 0;
+}
+
 static void arm_ending_stream(void)
 {
     /* LAB_92af: HL=0xA6F4 -> E722, SET 5+3 E102, wait 0x3C, E700=0,
-     * E712=0x80, clear_credits_busy. ending_setup 0x91FD (E800 stash to
-     * VRAM 0x3C00, stream 0xBBB4, copy E800->EB00, restore, E157=0xD1,
-     * E156=0x0C, E150=1, E700=0x0C, E710=0x20, ev12) and LAB_9251 letters
-     * (0x3924 / 0xBBFD / 0x92F3 SAT) are not wired: 0x3C00 is TMS scratch,
-     * 0x92F3 SAT names are not in a data file. LAB_980e (E700 bit2 column
-     * reveal from EB00) and scroll_sync 0x9AE4 (LDIRMV 24x24) stay open. */
+     * E712=0x80, clear_credits_busy. 91FD / 9251 / 980e are separate
+     * award paths (E157&0x1F == 0x10 / 0x11 / >= 0x12). */
+    s_e700 = 0;
+    s_e70d = 0;
+    s_end_snapped = 0;
+    s_end_phase = 0;
     s_ms.round = 0;
     s_ms.pc = MAP_ENDING_STREAM;
     s_ms.row = 0;
@@ -2013,6 +2248,12 @@ static void scroll_speed_reset(u8 target)
     s_scroll_base = 0;
     s_ram_only = 0;
     s_dma_flip = 0;
+    s_e700 = 0;
+    s_e70d = 0;
+    s_end_snapped = 0;
+    s_end_phase = 0;
+    s_end_wait = 0;
+    s_end_rows = 0;
 }
 
 void map_script_resume_scroll(void)
@@ -2161,15 +2402,27 @@ static void base_clear_finish(void)
     u8 mode = s_clr_mode;
 
     s_clr_phase = 0;
-    if (mode >= 0x10)
-    {
-        if (!s_cred_on)
-            map_script_start_ending();
-        return;
-    }
+    /* 91ea: SUB 0x0F on E157&0x1F. C -> 4163; Z -> B7A5; DEC Z -> 91FD;
+     * DEC Z -> 9251; else 92af. */
     if (mode == 0x0F)
     {
         script_boot(8, map_script_ptrs[0]);
+        return;
+    }
+    if (mode == 0x10)
+    {
+        ending_setup_91fd();
+        return;
+    }
+    if (mode == 0x11)
+    {
+        lab_9251_start();
+        return;
+    }
+    if (mode >= 0x12)
+    {
+        if (!s_cred_on)
+            map_script_start_ending();
         return;
     }
     /* SUB_ram_4163: ev1, or ev2 if round%8==0. Attract (E102.7) skips. */
@@ -2461,32 +2714,46 @@ void map_script_update(void)
                     s_e710--;
             }
         }
-        /* E711 += E710; carry -> map_script_step (row++ / fire / precompute). */
+        /* E711 += E710; carry -> map_script_step, or 980e if E700 bit2. */
         sum = (u16)s_e711 + s_e710;
         s_e711 = (u8)sum;
         if (sum > 255)
         {
-            s_skip_precompute = 0;
-            s_ms.row++;
-            fire_pending();
-            /* Cmd 9 JP 9433 RETs without 97d5/precompute. */
-            if (!s_skip_precompute)
+            if (s_e700 & 4)
             {
-                /* 97e3: assemble once, DMA one nametable row at the wrap
-                 * edge, then peek row+1 (restored) so subpixel VSCROLL is
-                 * never stale/green. */
-                scroll_precompute(s_ms.row);
-                s_row_carry = 1;
+                /* 94bc BIT 2 -> JP 980e. No E702++, no fire, no 97e3. */
+                lab_980e();
+                if (s_row_carry)
+                    base_approach(1);
             }
-            peek_next_row((u16)(s_ms.row + 1));
-            base_approach(1);
+            else
+            {
+                s_skip_precompute = 0;
+                s_ms.row++;
+                fire_pending();
+                /* Cmd 9 JP 9433 RETs without 97d5/precompute. */
+                if (!s_skip_precompute)
+                {
+                    /* 97e3: assemble once, DMA one nametable row at the wrap
+                     * edge, then peek row+1 (restored) so subpixel VSCROLL is
+                     * never stale/green. */
+                    scroll_precompute(s_ms.row);
+                    s_row_carry = 1;
+                }
+                peek_next_row((u16)(s_ms.row + 1));
+                base_approach(1);
+            }
         }
+        lab_9251_tick();
         base_hold();
         base_clear_tick();
         warp_jingle_tick();
         prev_px = s_scroll_px;
-        s_scroll_px = (u16)(((u16)(s_ms.row - s_scroll_base) << 3)
-                            + (s_e711 >> 5));
+        if (s_end_snapped)
+            s_scroll_px = 0;
+        else
+            s_scroll_px = (u16)(((u16)(s_ms.row - s_scroll_base) << 3)
+                                + (s_e711 >> 5));
         s_scroll_delta = (u8)(s_scroll_px - prev_px);
     }
     cred_tick();
