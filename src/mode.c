@@ -63,8 +63,9 @@ s16 mode_draw_y(s16 y)
 
 s16 mode_draw_x(s16 x, u8 sat_col)
 {
-    /* TMS9918 SAT colour bit7 = Early Clock: hardware draws at X-32.
-     * Do not apply unconditionally — that wraps small X onto the HUD. */
+    /* TMS9918 SAT colour bit7 = Early Clock: hardware draws at SAT_X-32.
+     * Ship, shots, and EC enemies all use this so SAT overlap = graphic
+     * overlap. Collision never calls this (4560 is SAT vs SAT). */
     if (s_mode == MODE_ORIGINAL && (sat_col & 0x80))
         return (s16)(x - 32);
     return x;
