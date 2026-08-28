@@ -98,7 +98,7 @@ static void show_ship(int vis)
 {
     if (!s_spr)
         return;
-    if (mode_get() == MODE_ORIGINAL && s_x >= (s16)(MODE_BAR_COL * 8))
+    if (mode_hud_overlap(s_x, MODE_SPR_W))
         vis = 0;
     SPR_setVisibility(s_spr, vis ? VISIBLE : HIDDEN);
     if (vis)
@@ -621,10 +621,13 @@ void player_update(void)
     }
     else if (s_spr)
     {
-        if (mode_get() == MODE_ORIGINAL && s_x >= (s16)(MODE_BAR_COL * 8))
+        if (mode_hud_overlap(s_x, MODE_SPR_W))
             SPR_setVisibility(s_spr, HIDDEN);
         else
+        {
+            SPR_setVisibility(s_spr, VISIBLE);
             SPR_setPosition(s_spr, s_x, mode_draw_y(s_y));
+        }
     }
 }
 

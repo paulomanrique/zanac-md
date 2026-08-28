@@ -439,6 +439,18 @@ static const u8 k_box_sat[30] = {
     0x01,0x11,0x21, 0x21,0x11,0x01
 };
 
+/* WINDOW does not occlude MD sprites. Never VISIBLE over cols 24–31
+ * (that flicker). Occupancy: draw_x + width > 192, not only draw_x >= 192. */
+static void spr_vis_playfield(Sprite *sp, s16 dx, int want_vis)
+{
+    if (!sp)
+        return;
+    if (mode_hud_overlap(dx, MODE_SPR_W))
+        SPR_setVisibility(sp, HIDDEN);
+    else
+        SPR_setVisibility(sp, want_vis ? VISIBLE : HIDDEN);
+}
+
 static void spr_sync(Slot *s)
 {
     s16 dx;
@@ -449,12 +461,7 @@ static void spr_sync(Slot *s)
     dx = mode_draw_x(s->x, s->sat_col);
     dy = mode_draw_y(s->y);
     SPR_setPosition(s->spr, dx, dy);
-    /* Original HUD is WINDOW cols 24-31. Playfield sprites must not land
-     * there (TMS 4/line hid them; MD would draw over the dashboard). */
-    if (mode_get() == MODE_ORIGINAL && dx >= (s16)(MODE_BAR_COL * 8))
-        SPR_setVisibility(s->spr, HIDDEN);
-    else
-        SPR_setVisibility(s->spr, VISIBLE);
+    spr_vis_playfield(s->spr, dx, 1);
 }
 
 /* MSX spawn_col_marker (0x71da): type39 slot, color 0x81 black complement via
@@ -875,12 +882,29 @@ static int hit_overlap(s16 x1, s16 y1, u8 sat1, s16 x2, s16 y2, u8 sat2)
     return aabb(ax, ay, aw, ah, bx, by, bw, bh);
 }
 
-/* Both AABBs use the X the player sees (TMS EC = SAT_X−32). Stored X stays SAT. */
-static int hit_overlap_vis(s16 x1, s16 y1, u8 sat1, u8 col1,
-                           s16 x2, s16 y2, u8 sat2, u8 col2)
+/* Visual X the player aims at. Stored SAT X is unchanged.
+ * Nametable-only structures (bases 73–79, idols/fireboxes): 8854/8ca2
+ * and place_tile_group SUB 0x20 — the stamp cell is the graphic, 32px
+ * left of SAT X (sat_col is 0, no EC bit). Sprites use mode_draw_x
+ * (TMS EC bit7). Do not assume bit7 is enough for ground tiles. */
+static s16 slot_hit_x(const Slot *s)
 {
+    if (mode_get() != MODE_ORIGINAL)
+        return s->x;
+    if (!s->spr
+        || s->kind == KIND_BASE
+        || s->kind == KIND_WIDE
+        || s->kind == KIND_FIREBOX)
+        return (s16)(s->x - 32);
+    return mode_draw_x(s->x, s->sat_col);
+}
+
+static int hit_overlap_slot(s16 x1, s16 y1, u8 sat1, u8 col1, const Slot *e)
+{
+    u8 esat = e->sat ? e->sat : (u8)0x40;
+
     return hit_overlap(mode_draw_x(x1, col1), y1, sat1,
-                       mode_draw_x(x2, col2), y2, sat2);
+                       slot_hit_x(e), e->y, esat);
 }
 
 /* death_transition_table 0x716B (collision_response 0x453E): type&0x7F ->
@@ -1528,7 +1552,7 @@ static void orb_step(Slot *e)
     {
         SPR_setAnimAndFrame(e->spr, 0,
             e->script ? k_orb_yel_frame[idx] : k_orb_blk_frame[idx]);
-        SPR_setVisibility(e->spr, VISIBLE);
+        spr_vis_playfield(e->spr, mode_draw_x(e->x, e->sat_col), 1);
     }
 }
 
@@ -3877,16 +3901,19 @@ static void update_fire(void)
     cycle = (u8)(fn == 0 || fn == 1 || fn == 2 || fn == 7);
     if (f->spr)
     {
+        s16 fdx = mode_draw_x(f->x, f->sat_col);
+
         spr_sync(f);
-        if (mode_get() == MODE_ORIGINAL
-            && mode_draw_x(f->x, f->sat_col) >= (s16)(MODE_BAR_COL * 8))
+        /* spr_sync hid HUD overlap. Do not SPR_setVisibility(VISIBLE)
+         * over the bar (that flicker). Blink/expire only on-playfield. */
+        if (mode_hud_overlap(fdx, MODE_SPR_W))
             SPR_setVisibility(f->spr, HIDDEN);
         else if (fn == 4 && s_fexpire && s_fexpire <= 0x0F)
             SPR_setVisibility(f->spr, HIDDEN);
         else if (cycle)
-            SPR_setVisibility(f->spr, (f->script & 1) ? VISIBLE : HIDDEN);
+            spr_vis_playfield(f->spr, fdx, (f->script & 1));
         else
-            SPR_setVisibility(f->spr, VISIBLE);
+            spr_vis_playfield(f->spr, fdx, 1);
     }
 
     if (fn != 2 && fn != 3)
@@ -4490,15 +4517,12 @@ static void collide_bolt_enemies(Slot *bolt, u8 persist)
         s16 sx, sy;
         u8 drop;
         u8 kind;
-        u8 esat;
         if (!e->alive)
             continue;
         /* 0x716B/entity_post: shots leg (44BA/44CA); 44A6 bullets excluded. */
         if (!enemy_takes_shots(e))
             continue;
-        esat = e->sat ? e->sat : (u8)0x40;
-        if (!hit_overlap_vis(bolt->x, bolt->y, bolt_sat, bolt->sat_col,
-                             e->x, e->y, esat, e->sat_col))
+        if (!hit_overlap_slot(bolt->x, bolt->y, bolt_sat, bolt->sat_col, e))
             continue;
 
         if (!persist)
@@ -4769,9 +4793,8 @@ static void collide_player(void)
         if (!(pf & POST_SHIP))
             continue;
         {
-            u8 esat = e->sat ? e->sat : (u8)0x40;
-            /* Ship is drawn without EC; enemies use mode_draw_x (SAT bit7). */
-            if (!hit_overlap_vis(px, py, SAT_PLAYER, 0, e->x, e->y, esat, e->sat_col))
+            /* Ship is drawn without EC. Ground nametable-only uses stamp X. */
+            if (!hit_overlap_slot(px, py, SAT_PLAYER, 0, e))
                 continue;
         }
         if (pf & POST_PICK)
