@@ -103,6 +103,7 @@ static void stream_stamp_buf(void);
 static void arm_ending_stream(void);
 static void scroll_speed_reset(u8 target);
 static void fire_pending(void);
+static void ensure_wrap_tiles(void);
 static void base_mode_11(void);
 static void base_hold(void);
 static void base_clear_tick(void);
@@ -539,6 +540,25 @@ static void nt_put(u8 col, u8 row, u8 tid)
     VDP_setTileMapXY(BG_B, tile_attr(tid), col, row);
 }
 
+/*
+ * MSX 8948: (E714 + Y/8) mod 24 on a 24-row rewritten nametable.
+ * MD Original uses hardware VSCROLL on a 32-row plane:
+ *   VSCROLL = -scroll_px - y_off  →  NT pixel Y = simY - scroll_px
+ * (letterbox is the y_off term; playfield sim Y=0 is NT row 0 at px=0).
+ */
+static int sat_to_nt(s16 x, s16 y, u8 *col, u8 *row)
+{
+    s16 nty;
+    u8 c = (u8)((u8)x >> 3);
+
+    if (c >= PF_COLS)
+        return 0;
+    nty = (s16)(y - (s16)s_scroll_px);
+    *col = c;
+    *row = (u8)((nty >> 3) & 31);
+    return 1;
+}
+
 /* type62 8744: LDIRVM 0x20 bytes from 876b+(phase?0x20:0) -> VRAM 0x1800.
  * 24-col playfield only — HUD cols 24-31 untouched. */
 static const u8 k_riser_nt[2][32] = {
@@ -661,6 +681,11 @@ void map_script_base_seg_down(u16 bind, u8 variant)
     punch_bind(bind, variant);
 }
 
+void map_script_base_no_segments(void)
+{
+    s_e152 = 0;
+}
+
 /* 88ab word table: 84->88B1, 85->88B8, 86->88C2.
  * 88b1 / 88c2 also used by 8892 type 87 and 8824 type 81.
  * 88cb = type 88; 88d8 = type 82 / 89. */
@@ -689,16 +714,10 @@ static void punch_88ed(s16 x, s16 y, const u8 *d, s16 xadj, s16 yadj)
     s16 py = (s16)(y + yadj);
 
     yaln = (u16)(py - 0x10) & 0xF8;
-    col0 = (u8)((u8)px >> 3);
-    {
-        u16 bind = (u16)(0x3800 + (yaln << 2) + col0);
-        u16 off = (u16)(bind - 0x3800);
-        u8 yrow = (u8)((off >> 5) & 31);
-        col0 = (u8)(off & 31);
-        row0 = (u8)((yrow - (u8)(s_scroll_px >> 3)) & 31);
-    }
     /* 88ed: C = (Y-sub)/8; C>=0x18 -> no punch (below 192). */
     if ((u8)((u16)(py - 0x10) >> 3) >= 0x18)
+        return;
+    if (!sat_to_nt(px, (s16)yaln, &col0, &row0))
         return;
 
     rows = *d++;
@@ -759,18 +778,64 @@ void map_script_stamp_82_digit(s16 x, s16 y, u8 fire_num)
     s16 py = y;
 
     yaln = (u16)(py - 0x10) & 0xF8;
-    col0 = (u8)((u8)px >> 3);
-    {
-        u16 bind = (u16)(0x3800 + (yaln << 2) + col0);
-        u16 off = (u16)(bind - 0x3800);
-        u8 yrow = (u8)((off >> 5) & 31);
-        col0 = (u8)(off & 31);
-        row0 = (u8)((yrow - (u8)(s_scroll_px >> 3)) & 31);
-    }
     /* Same off-bottom gate as 88ed. */
     if ((u8)((u16)(py - 0x10) >> 3) >= 0x18)
         return;
+    if (!sat_to_nt(px, (s16)yaln, &col0, &row0))
+        return;
     nt_put(col0, row0, (u8)(0x30 + fire_num));
+}
+
+void map_script_stamp_ground_dead(s16 x, s16 y)
+{
+    /* Type 44/69 death: 2x2 wreck (88b1 tiles) at SAT x,y into s_nt + VRAM. */
+    punch_88ed(x, y, k_88ab_84, 0, 0);
+}
+
+static void fill_unused_nt_rows(void)
+{
+    u8 r;
+    u8 x;
+
+    /* Plane rows 24-31 are not in the MSX 24-row nametable. Leave them as
+     * fill tile 0x28 so VSCROLL wrap never shows stale/uninitialized VRAM. */
+    for (r = BOOT_ROWS; r < 32; r++)
+    {
+        for (x = 0; x < PF_COLS; x++)
+            nt_put(x, r, 0x28);
+    }
+}
+
+/*
+ * MD 32-row plane + negative VSCROLL reveals NT row 31,30,... as scroll_px
+ * steps 1..7 of each tile. Paint the incoming map row at that wrap edge
+ * BEFORE VSCROLL changes, every pixel-step — not only when E702 increments.
+ * Fire commands for that row first (MSX map_script_step then precompute).
+ */
+static void ensure_wrap_tiles(void)
+{
+    u16 want;
+    u16 nt_y;
+    u16 saved_row;
+
+    want = (u16)(s_scroll_base + ((s_scroll_px + 7) >> 3));
+    if ((s_scroll_px & 7) == 0)
+        want = (u16)(s_scroll_base + (s_scroll_px >> 3) + 1);
+
+    if (want != (u16)(s_last_painted + 1))
+        return;
+
+    nt_y = (u16)((s_scroll_base - want) & 31);
+    saved_row = s_ms.row;
+    s_ms.row = want;
+    fire_pending();
+    /* cmd 9 replaces row/pc/trigger; keep that and skip the restore. */
+    if (s_ms.row != want)
+        return;
+
+    paint_nt_row(nt_y, want);
+    s_last_painted = want;
+    s_ms.row = saved_row;
 }
 
 static void bg_fill_plane(void)
@@ -790,6 +855,8 @@ static void bg_fill_plane(void)
     s_last_painted = s_ms.row;
     s_scroll_base = s_ms.row;
     s_scroll_px = 0;
+    fill_unused_nt_rows();
+    ensure_wrap_tiles();
 }
 
 static void bg_load_tiles(void)
@@ -834,22 +901,12 @@ static void bg_init(void)
 
 static void bg_update(void)
 {
-    u16 map_row;
-    u16 nt_y;
+    /* Incoming wrap row must be in VRAM before VSCROLL reveals it. */
+    ensure_wrap_tiles();
 
     /* VSCROLL = -pixel - y_off. pixel = E702*8 + (E711>>5).
      * Negative = scenery down, new terrain from the top. */
     VDP_setVerticalScroll(BG_B, (s16)(-(s16)s_scroll_px - (s16)mode_y_off()));
-
-    /* One nametable row per E702 tile-row (MSX scroll_precompute).
-     * After the 24-row boot fill, row==base is at NT 0; the next row
-     * paints at NT 31 and VSCROLL steps 8px. */
-    map_row = s_ms.row;
-    if (map_row == s_last_painted)
-        return;
-    s_last_painted = map_row;
-    nt_y = (u16)((s_scroll_base - map_row) & 31);
-    paint_nt_row(nt_y, map_row);
 }
 
 void map_script_reset_scroll(void)
@@ -929,6 +986,10 @@ static void place_tile_group(StreamSlot *st, u16 *pptr)
     {
         s_e152 = nbase;
         entity_base_open(nbase);
+        /* Leftover E156==0 after a previous fight would wrap-DEC to 255
+         * and the 2nd fortress would never SET 7 / never 90a6. */
+        if (!s_e156)
+            entity_base_arm();
     }
     }
     st->count = extra;
@@ -1005,6 +1066,10 @@ static void base_mode_11(void)
         {
             s_e152 = nbase;
             entity_base_open(nbase);
+            /* Leftover E156==0 after a previous fight would wrap-DEC to 255
+             * and the 2nd fortress would never SET 7 / never 90a6. */
+            if (!s_e156)
+                entity_base_arm();
         }
     }
     s_e153 = 5;
@@ -1359,12 +1424,13 @@ static void cmd_script_jump(u8 cmd, const u8 *ops)
     if (s_ms.round >= 1 && s_ms.round <= 8)
         s_continue_round = s_ms.round;
     s_ms.pc = dest;
-    s_ms.row = 0;
-    s_scroll_px = 0;
-    s_scroll_base = 0;
-    s_last_painted = 0;
     entity_alc_reset();
     load_trigger_from_pc();
+    /* LAB_941b: E702 = trigger-1. Do not reset E714 / VSCROLL — MSX keeps
+     * the circular nametable and new rows enter at the wrap. */
+    s_ms.row = (u16)(s_ms.trigger - 1);
+    s_scroll_base = (u16)(s_ms.row - (s_scroll_px >> 3));
+    s_last_painted = s_ms.row;
 }
 
 /* Rebuild one charset tile from 1bpp occupancy + a TMS CT byte (FG|BG). */
@@ -1698,6 +1764,8 @@ static void base_approach(u8 row_adv)
     if (!(flags & 1))
         return;
     if (!row_adv)
+        return;
+    if (!s_e156)
         return;
 
     s_e156--;

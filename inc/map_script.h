@@ -73,6 +73,8 @@ void map_script_resume_scroll(void);
 void map_script_base_cleared(void);
 /* 8baa/8ca2: DEC E152 and punch destroyed tiles at the stored 8948 bind. */
 void map_script_base_seg_down(u16 bind, u8 variant);
+/* Last live KIND_BASE died: E152 := 0 so 8f5e hold can 90a6. */
+void map_script_base_no_segments(void);
 /* 8854/88ed: punch 0x88ab destroyed-tile desc for types 84-86 at SAT x,y. */
 void map_script_punch_88ab(s16 x, s16 y, u8 type);
 /* 880d family: 88ed punches at SAT x,y with per-branch origin SUB. */
@@ -82,6 +84,8 @@ void map_script_punch_88cb(s16 x, s16 y); /* 8892 type 88: X-0x20 Y-0x10 */
 void map_script_punch_88d8(s16 x, s16 y); /* 8874 type 82/89: X-0x28 Y-0x18 */
 /* 87e2 type 82: stamp digit glyph 0x30+fire# (X-0x28 Y-0x10); no SAT. */
 void map_script_stamp_82_digit(s16 x, s16 y, u8 fire_num);
+/* Type 44/69 death: 2x2 wreck (88b1 tiles) at SAT x,y into s_nt + VRAM. */
+void map_script_stamp_ground_dead(s16 x, s16 y);
 
 /* Type-72 black orb: dest is a stream pointer. Boots that PC + resolved round. */
 void map_script_warp(u16 dest);

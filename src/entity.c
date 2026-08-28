@@ -298,6 +298,8 @@ typedef struct {
     u8  sat;        /* MSX SAT_NAME (+0x03); indexes collision_size_table */
     u8  sat_col;    /* MSX SAT_COLOR (+0x04); TMS ink = low nibble */
     u8  frame;      /* current spr_objs frame (for sat_col remap) */
+    u8  vram_fr;    /* last DMA'd frame; 0xFF = none */
+    u8  vram_nib;   /* last DMA'd color nibble; 0xFF = none */
     u16 dest;       /* idol warp ptr or fire# */
     u16 bind;       /* 8948 nametable VRAM, SET 7 */
     Sprite *spr;
@@ -439,10 +441,20 @@ static const u8 k_box_sat[30] = {
 
 static void spr_sync(Slot *s)
 {
-    s16 dy = mode_draw_y(s->y);
+    s16 dx;
+    s16 dy;
 
-    if (s->spr)
-        SPR_setPosition(s->spr, s->x, dy);
+    if (!s->spr)
+        return;
+    dx = mode_draw_x(s->x, s->sat_col);
+    dy = mode_draw_y(s->y);
+    SPR_setPosition(s->spr, dx, dy);
+    /* Original HUD is WINDOW cols 24-31. Playfield sprites must not land
+     * there (TMS 4/line hid them; MD would draw over the dashboard). */
+    if (mode_get() == MODE_ORIGINAL && dx >= (s16)(MODE_BAR_COL * 8))
+        SPR_setVisibility(s->spr, HIDDEN);
+    else
+        SPR_setVisibility(s->spr, VISIBLE);
 }
 
 /* MSX spawn_col_marker (0x71da): type39 slot, color 0x81 black complement via
@@ -581,6 +593,10 @@ static void spr_upload_color(Slot *s)
     else
         want = baked;
 
+    /* Same frame + same nibble: vis/XOR-high-nibble blinks must not DMA. */
+    if (s->vram_fr == s->frame && s->vram_nib == want)
+        return;
+
     nbytes = (u16)(ts->numTile * 32);
     vaddr = (u16)((sp->attribut & TILE_INDEX_MASK) * 32);
     src = (const u8 *)FAR_SAFE(ts->tiles, nbytes);
@@ -588,6 +604,8 @@ static void spr_upload_color(Slot *s)
     if (want == baked)
     {
         DMA_queueDma(DMA_VRAM, (void *)src, vaddr, (u16)(nbytes / 2), 2);
+        s->vram_fr = s->frame;
+        s->vram_nib = want;
         return;
     }
 
@@ -595,9 +613,13 @@ static void spr_upload_color(Slot *s)
     if (!buf)
     {
         DMA_queueDma(DMA_VRAM, (void *)src, vaddr, (u16)(nbytes / 2), 2);
+        s->vram_fr = s->frame;
+        s->vram_nib = want;
         return;
     }
     remap_tiles(buf, src, nbytes, baked, want);
+    s->vram_fr = s->frame;
+    s->vram_nib = want;
 }
 
 static void spr_frame_cb(Sprite *sp)
@@ -626,14 +648,18 @@ static void spr_place(Slot *s, u16 frame)
     s->frame = (u8)frame;
     if (!s->spr)
     {
-        s->spr = SPR_addSpriteEx(&spr_objs, s->x, mode_draw_y(s->y),
+        s->vram_fr = 0xFF;
+        s->vram_nib = 0xFF;
+        s->spr = SPR_addSpriteEx(&spr_objs, mode_draw_x(s->x, s->sat_col),
+                                 mode_draw_y(s->y),
                                  TILE_ATTR(PAL2, TRUE, FALSE, FALSE),
-                                 SPR_FLAG_AUTO_VRAM_ALLOC | SPR_FLAG_AUTO_VISIBILITY);
+                                 SPR_FLAG_AUTO_VRAM_ALLOC);
         if (s->spr)
         {
             s->spr->data = (u32)s;
             SPR_setFrameChangeCallback(s->spr, spr_frame_cb);
             SPR_setAnimAndFrame(s->spr, 0, frame);
+            spr_sync(s);
         }
     }
     else
@@ -667,6 +693,8 @@ static void spr_kill(Slot *s)
     s->sat = 0;
     s->sat_col = 0;
     s->frame = 0;
+    s->vram_fr = 0xFF;
+    s->vram_nib = 0xFF;
     s->dest = 0;
     s->bind = 0;
 }
@@ -917,8 +945,10 @@ static u8 post_flags(u8 t)
     /* no entity_post: spawners, explosion, husk, marker, clear */
     if (t == 11 || t == 69 || t == 35 || t == 60 || t == 80 || t == 39 || t == 40 || t == 0)
         return 0;
-    /* 44CA shots-only ground structures / bases / firebox / wide */
-    if (t == 70 || t == 71 || t == 81 || t == 82
+    /* 44CA shots-only ground structures / bases / firebox / wide.
+     * Type 44 is 44BA on MSX; Original mode still ignores ship AABB (44CA)
+     * so the plane/husk never kills the player. */
+    if (t == 44 || t == 69 || t == 70 || t == 71 || t == 81 || t == 82
         || (t >= 73 && t <= 79) || (t >= 84 && t <= 89))
         return POST_SHOT;
     /* full entity_post 44BA (airborne, type21/36/44/45, guns, ...) */
@@ -1712,6 +1742,35 @@ static void box_step(Slot *e)
     e->y = (s16)(ypos >> 8);
     e->vx = 0;
     e->vy = 0;
+}
+
+/* 0x78af handler_type63_power_chip: Y 8.8 only. No box frame, no SAT blink. */
+static void chip_step(Slot *e)
+{
+    s32 ypos;
+
+    ypos = ((s32)e->y << 8) | (u8)e->timer;
+    ypos += (s16)e->bind;
+    e->timer = (u8)ypos;
+    e->y = (s16)(ypos >> 8);
+    e->vx = 0;
+    e->vy = 0;
+}
+
+/* 0x7882: in-place type 63; SAT 0x04 / color 0x8F / pattern chip. */
+static void become_chip(Slot *e)
+{
+    marker_kill(e);
+    e->kind = KIND_CHIP;
+    e->variant = 0;
+    e->hp = 1;
+    e->ground = 0;
+    e->vx = 0;
+    e->vy = 0;
+    e->clock = 1;
+    e->sat = 0x04;
+    e->sat_col = 0x8F;
+    spr_place(e, FRAME_CHIP);
 }
 
 static void spawn_gun(Slot *e, u8 type)
@@ -3778,7 +3837,10 @@ static void update_fire(void)
     if (f->spr)
     {
         spr_sync(f);
-        if (fn == 4 && s_fexpire && s_fexpire <= 0x0F)
+        if (mode_get() == MODE_ORIGINAL
+            && mode_draw_x(f->x, f->sat_col) >= (s16)(MODE_BAR_COL * 8))
+            SPR_setVisibility(f->spr, HIDDEN);
+        else if (fn == 4 && s_fexpire && s_fexpire <= 0x0F)
             SPR_setVisibility(f->spr, HIDDEN);
         else if (cycle)
             SPR_setVisibility(f->spr, (f->script & 1) ? VISIBLE : HIDDEN);
@@ -4128,7 +4190,7 @@ static void update_enemies(void)
         else if (e->kind == KIND_BOX)
             box_step(e);
         else if (e->kind == KIND_CHIP)
-            box_step(e);        /* type63: inherit Y 8.8 (+0c=1) */
+            chip_step(e);
         else if (e->kind == KIND_GROUND)
         {
             /* type44 +0c=3: X|Y 8.8 via dest/bind + script/timer fracs. */
@@ -4553,15 +4615,7 @@ static void collide_bolt_enemies(Slot *bolt, u8 persist)
                 /* 0x7882: in-place type 63; keep Yvel 8.8 (bind/timer). */
                 award_for(kind);
                 sound_play_explode();
-                e->kind = KIND_CHIP;
-                e->variant = 0;
-                e->hp = 1;
-                e->ground = 0;
-                e->vx = 0;
-                e->vy = 0;
-                /* dest/bind/script/timer kept from box (bind=0x01C0). */
-                if (e->spr)
-                    SPR_setAnimAndFrame(e->spr, 0, FRAME_CHIP);
+                become_chip(e);
                 return;
             }
             if (kind == KIND_DESCEND)
@@ -4580,6 +4634,12 @@ static void collide_bolt_enemies(Slot *bolt, u8 persist)
                 spr_kill(e);
                 box_death_drop(drop, sx, sy);
             }
+            else if (kind == KIND_GROUND)
+            {
+                /* Nametable husk, then type35. Ship still ignores ground. */
+                map_script_stamp_ground_dead(sx, sy);
+                become_expl(e, slot_msx_type(e));
+            }
             else if (kind == KIND_BASE)
             {
                 /* 8baa: 8ca2 punch via stored 8948 bind, DEC E152.
@@ -4592,6 +4652,16 @@ static void collide_bolt_enemies(Slot *bolt, u8 persist)
                 if (s_base_left)
                     s_base_left--;
                 map_script_base_seg_down(bind, drop);
+                {
+                    u8 n = 0;
+                    u8 k;
+
+                    for (k = 0; k < ENEMY_SLOTS; k++)
+                        if (s_en[k].alive && s_en[k].kind == KIND_BASE)
+                            n++;
+                    if (!n)
+                        map_script_base_no_segments();
+                }
             }
             else
             {
@@ -4650,6 +4720,8 @@ static void collide_player(void)
             continue;          /* 782c: no entity_post / SAT is countdown */
         if (e->kind == KIND_CIRCLE && !(e->aux & 0x40))
             continue;          /* 83ee: idle XOR only, no 44BA */
+        if (e->kind == KIND_GROUND)
+            continue;          /* ship AABB ignores ground (44CA) */
         /* 0x453E path: only types on a ship leg (44BA/44B0/44A6) count.
          * Shots-only structures (44CA) and no-post types are ignored. */
         et = slot_msx_type(e);

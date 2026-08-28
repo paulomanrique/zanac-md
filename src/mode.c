@@ -61,6 +61,15 @@ s16 mode_draw_y(s16 y)
     return (s16)(y + (s16)s_cur->y_off);
 }
 
+s16 mode_draw_x(s16 x, u8 sat_col)
+{
+    /* TMS9918 SAT colour bit7 = Early Clock: hardware draws at X-32.
+     * Do not apply unconditionally — that wraps small X onto the HUD. */
+    if (s_mode == MODE_ORIGINAL && (sat_col & 0x80))
+        return (s16)(x - 32);
+    return x;
+}
+
 u16 mode_y_off(void)
 {
     return s_cur->y_off;
