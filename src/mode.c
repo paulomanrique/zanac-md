@@ -127,7 +127,8 @@ void mode_draw_letterbox(void)
         return;
 
     attr = mode_letter_attr();
-    /* Screen rows 0-1 and 26-27: 16px letterbox. Leave cols 24-31 to WINDOW. */
-    VDP_fillTileMapRect(BG_A, attr, 0, 0, MODE_BAR_COL, 2);
-    VDP_fillTileMapRect(BG_A, attr, 0, 26, MODE_BAR_COL, 2);
+    /* Screen rows 0-1 and 26-27: 16px letterbox. Full H32 width so
+     * transparent WINDOW cells in cols 24-31 cannot show BG_B wrap. */
+    VDP_fillTileMapRect(BG_A, attr, 0, 0, MODE_H32_COLS, 2);
+    VDP_fillTileMapRect(BG_A, attr, 0, 26, MODE_H32_COLS, 2);
 }

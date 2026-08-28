@@ -102,9 +102,11 @@ static void go_title(void)
 static void game_boot(GameMode mode)
 {
     mode_set(mode);
-    mode_apply_video();
+    /* title_screen_init 0x41db: disable_display before FILVRM / charset.
+     * mode_apply_video must not run while the title is still on screen. */
     if (mode == MODE_ORIGINAL)
         VDP_setEnable(FALSE);
+    mode_apply_video();
 
     VDP_clearPlane(BG_A, TRUE);
     VDP_clearPlane(BG_B, TRUE);
