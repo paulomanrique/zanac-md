@@ -691,7 +691,8 @@ static int sat_to_nt(s16 x, s16 y, u8 *col, u8 *row)
      * (aligned punch origin), unsigned like MSX SUB on SAT Y.
      * SAT Y walks +8 per E700.1 (8f25/8a5a/8f45). MD VSCROLL also has
      * E711>>5 subpixels; bind with the 8px row so the stamp hits the
-     * 1-row DMA cell (MSX nametable has no subpixel scroll). */
+     * 1-row DMA cell (MSX nametable has no subpixel scroll). Sprite DRAW
+     * adds (scroll_px & 7) in entity.c; SAT/collision stay on this grid. */
     if (y < 0)
         return 0;
     if ((u8)((u16)y >> 3) >= BOOT_ROWS)
@@ -1974,10 +1975,12 @@ static void cred_tick(void)
 }
 
 /* TMS nametable row r is always screen row r (no VSCROLL). MD maps that
- * onto the currently visible 24-row window. */
+ * onto the currently visible 24-row window (8px of s_scroll_px). The
+ * E711>>5 remainder sits the letters 0-7px from a TMS pixel row; tiles
+ * cannot land between rows. */
 static u8 vis_nt_row(u8 tms_row)
 {
-    u8 k = (u8)(s_scroll_px >> 3);
+    u8 k = (u8)((s_scroll_px & 0xFFF8) >> 3);
     u8 first = (u8)((u8)(0 - k) & 31);
 
     return (u8)((first + tms_row) & 31);
@@ -2763,6 +2766,11 @@ void map_script_update(void)
 u8 map_script_scroll_delta(void)
 {
     return s_scroll_delta;
+}
+
+u8 map_script_scroll_frac(void)
+{
+    return (u8)(s_scroll_px & 7);
 }
 
 u8 map_script_row_carry(void)

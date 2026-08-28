@@ -442,46 +442,32 @@ def emit(out_root: Path, rom: bytearray, report: list):
                               (dest, img.size[0], img.size[1], label))
 
             spr_dir = res / "sprites"
-            # shot / duster / teruzo / luster / box / chip / lead / sig / shot2 / shot3
+            # Unfolded: primary bits only + type39 compl frames (TMS 1).
+            # Colors match entity.c k_frame_color / tools/rebuild_sprites.py.
             write_strip(spr_dir / "objs.png", [
                 (10, 15), (22, 9), (24, 10), (30, 14),
                 (53, 15), (1, 11), (7, 15), (28, 15),
                 (11, 15), (12, 15),
                 (3, 15), (9, 15), (2, 15),
-                # degid left/right/complete - gswoop 30/32 SAT 0xec/0xf0/0xf4
                 (59, 15), (60, 15), (61, 15),
-                # veybar 22-25 SAT 0x84..0x94 telegraph (7d73: 0x94-E)
-                (33, 15), (34, 15), (35, 15), (36, 15), (37, 15),
-                # type39 col-marker complements (71f6 dual-SAT): black=TMS 1
-                (38, 1), (39, 1), (40, 1), (41, 1), (42, 1),  # veybar_compl
-                (23, 1),   # duster_compl
-                (25, 1),   # teruzo_compl
-                (54, 1),   # box_compl
-                (32, 1),   # luster_B_compl (primary pat 30)
-                (55, 15), (57, 1),  # umber_A + umber_A_compl
-                (51, 15), (52, 1),  # stealth + stealth_compl
-                # edge-swooper 26-29 spinner anim 0x7E68/0x7E70 SAT AC/B0/B4/B8
-                (43, 15), (44, 15), (45, 15), (46, 15),
-                (47, 1), (48, 1), (49, 1), (50, 1),  # spinner_compl sat+0x10
-                # type61 large descender sart SAT 0xF8 + col-marker 0xFC
-                (62, 3),   # sart (TMS cyan 0x83)
-                (63, 1),   # sart_compl
-                # ground-guns 46-55 loga SAT 0x48 + fire-flash/compl 0x4C
-                (18, 15),  # loga_A
-                (19, 1),   # loga_A_compl
-                # type44 ground-structure plane SAT 0x40 + col-marker 0x44
-                (16, 3),   # plane (TMS cyan 0x83)
-                (17, 1),   # plane_compl
-                # type36 flashing super_hard_bolt SAT 0x34
-                (13, 15),  # super_hard_bolt (TMS white 0x8f)
-                # types 21/45 light_bar SAT 0x18 (was FRAME_LEAD stand-in)
-                (6, 15),   # light_bar (TMS white 0x8f; type21 colors via SAT)
-                # pairdesc 57/58: sig_double/triple (was FRAME_TERUZO stand-in)
-                (26, 15),  # sig_triple SAT 0x68 type 58
-                (27, 15),  # sig_double SAT 0x6C type 57
-                # type67 med_circle SAT 0x20 (was FRAME_CIRCLE / lg_circle pat9 stand-in)
-                (8, 15),   # medium_circle (TMS white; SAT color 0x86)
-            ], "pats + type39 + umber + stealth + spinner + sart + loga18/compl + plane16/compl + bolt13 + light_bar6 + sig26/27 + med_circle8")
+                (33, 7), (34, 7), (35, 7), (36, 7), (37, 7),
+                (38, 1), (39, 1), (40, 1), (41, 1), (42, 1),
+                (23, 1), (25, 1), (54, 1), (32, 1),
+                (55, 15), (57, 1),
+                (51, 8), (52, 1),
+                (43, 14), (44, 14), (45, 14), (46, 14),
+                (47, 1), (48, 1), (49, 1), (50, 1),
+                (62, 7), (63, 1),
+                (18, 15), (19, 1),
+                (16, 7), (17, 1),
+                (13, 15),
+                (6, 4),
+                (26, 15), (27, 15),
+                (8, 6),
+                (29, 11), (31, 1),
+                (56, 7), (58, 1),
+                (20, 1), (21, 1),  # loga_B SAT 0x50 / fire 0x54
+            ], "59 frames, type39 unfolded from gfx_sprite_patterns 0x6976")
             # player ship is MSX pattern 14 (SAT 0x38). pat 15 is the unused complement.
             write_strip(spr_dir / "ship.png", [(14, 15)], "pat 14 player_ship")
         else:
