@@ -875,6 +875,14 @@ static int hit_overlap(s16 x1, s16 y1, u8 sat1, s16 x2, s16 y2, u8 sat2)
     return aabb(ax, ay, aw, ah, bx, by, bw, bh);
 }
 
+/* Both AABBs use the X the player sees (TMS EC = SAT_X−32). Stored X stays SAT. */
+static int hit_overlap_vis(s16 x1, s16 y1, u8 sat1, u8 col1,
+                           s16 x2, s16 y2, u8 sat2, u8 col2)
+{
+    return hit_overlap(mode_draw_x(x1, col1), y1, sat1,
+                       mode_draw_x(x2, col2), y2, sat2);
+}
+
 /* death_transition_table 0x716B (collision_response 0x453E): type&0x7F ->
  * post-collision class/type written back to both parties. "Classes": */
 #define CLS_NONE   0x00  /* inactive */
@@ -1354,20 +1362,20 @@ static void spawn_ground_fall(Slot *e, u8 type, s16 x, s16 y, u16 dest)
      * +0x17 = (R&3)+1; player_pos_snapshot 4c8b (= aim_4c91 +
      * set_velocity_from_dir 8.8); +0c=3 X|Y motion; +03=0x40 plane,
      * +04=0x83 cyan; spawn_col_marker SAT 0x44. Port: dest/bind/
-     * script/timer 8.8 like type20/37; vx/vy 0 so shared pass inert.
-     * cmd1 type 0x45 writes script pattern into +0x03 (dest low). */
+     * script/timer 8.8 like type20/37; vx/vy 0 so shared pass inert. */
     u8 speed = (u8)((rnd() & 3) + 1);
     u8 sat = (u8)((dest & 0xFF) ? (dest & 0xFF) : 0x40);
 
     e->kind = KIND_GROUND;
     e->variant = type;
     e->hp = 3;
-    e->ground = 1;
+    e->ground = 0;              /* 82d0: entity_update 4898, not E700.1 Y+8 */
     e->dest = dest;
     e->x = x;
     e->y = y;
     e->alive = 1;
     apply_dir_88(e, aim_4c91(x, y), speed);
+    e->sat_col = 0x83;               /* 82d0 +04 cyan; TMS EC bit7 */
     spr_place(e, FRAME_PLANE);       /* visual plane; hitbox from sat */
     e->sat = sat;
     marker_place(e, FRAME_PLANE_C);  /* spawn_col_marker SAT 0x44 */
@@ -3229,6 +3237,39 @@ static void spawn_spawner(Slot *e)
     spr_place(e, FRAME_FIRE);   /* SAT 0x1E initially transparent-ish */
 }
 
+/* cmd 1 97CA: type 69 + (+01 emit, +02 count, +03 interval). 7a67 copies
+ * those to +18/+19/+1b/+1c then 71c5 (Y=0, random X). Not a nametable stamp. */
+static void spawn_spawner_cmd1(Slot *e, u8 emit, u8 count, u8 interval)
+{
+    u8 r1 = rnd();
+    u8 r2 = rnd();
+    u8 x = (u8)((r1 & 0x7f) + (r2 & 0x1f) + 0x28);
+
+    e->kind = KIND_SPAWNER;
+    e->variant = 69;
+    e->hp = 3;
+    e->ground = 0;
+    e->script = emit;
+    e->dest = count ? count : 1;
+    e->timer = interval ? interval : 0x28;
+    e->clock = e->timer;
+    e->x = (s16)x;
+    e->y = 0;
+    e->vy = 0;
+    if (x < 0x78)
+    {
+        e->vx = 2;
+        e->aux = 3;
+    }
+    else
+    {
+        e->vx = (s8)0xFE;
+        e->aux = 5;
+    }
+    e->alive = 1;
+    spr_place(e, FRAME_FIRE);
+}
+
 static void spawner_step(Slot *e)
 {
     /* base_spawner_active 7a9c: E12D.bit3 gate; interval; 8ddb; walk on fire;
@@ -4456,7 +4497,8 @@ static void collide_bolt_enemies(Slot *bolt, u8 persist)
         if (!enemy_takes_shots(e))
             continue;
         esat = e->sat ? e->sat : (u8)0x40;
-        if (!hit_overlap(bolt->x, bolt->y, bolt_sat, e->x, e->y, esat))
+        if (!hit_overlap_vis(bolt->x, bolt->y, bolt_sat, bolt->sat_col,
+                             e->x, e->y, esat, e->sat_col))
             continue;
 
         if (!persist)
@@ -4502,7 +4544,6 @@ static void collide_bolt_enemies(Slot *bolt, u8 persist)
         kind = e->kind;
         {
             u16 dest = e->dest;
-            u16 bind = e->bind;
             if (kind == KIND_WIDE || kind == KIND_FIREBOX)
             {
                 /* 880d: A=+0x18 type. Default (IX+0)=0x48, then dispatch.
@@ -4636,13 +4677,12 @@ static void collide_bolt_enemies(Slot *bolt, u8 persist)
             }
             else if (kind == KIND_GROUND)
             {
-                /* Nametable husk, then type35. Ship still ignores ground. */
-                map_script_stamp_ground_dead(sx, sy);
+                /* 44 → type 35 (k_death_trans). Airborne; no 88ed stamp. */
                 become_expl(e, slot_msx_type(e));
             }
             else if (kind == KIND_BASE)
             {
-                /* 8baa: 8ca2 punch via stored 8948 bind, DEC E152.
+                /* 8baa: 8ca2 punch at live SAT XY, DEC E152.
                  * E152==0 is noticed in 8f5e hold (90a6), not here.
                  * 8b85 ev17 + 8bc1 scatter (type35 SFX/score per shard). */
                 award_for(kind);
@@ -4651,7 +4691,7 @@ static void collide_bolt_enemies(Slot *bolt, u8 persist)
                 scatter_expl(sx, sy);
                 if (s_base_left)
                     s_base_left--;
-                map_script_base_seg_down(bind, drop);
+                map_script_base_seg_down(sx, sy, drop);
                 {
                     u8 n = 0;
                     u8 k;
@@ -4730,7 +4770,8 @@ static void collide_player(void)
             continue;
         {
             u8 esat = e->sat ? e->sat : (u8)0x40;
-            if (!hit_overlap(px, py, SAT_PLAYER, e->x, e->y, esat))
+            /* Ship is drawn without EC; enemies use mode_draw_x (SAT bit7). */
+            if (!hit_overlap_vis(px, py, SAT_PLAYER, 0, e->x, e->y, esat, e->sat_col))
                 continue;
         }
         if (pf & POST_PICK)
@@ -5270,6 +5311,16 @@ u8 entity_place_ground(u8 type, s16 x, s16 y, u16 dest)
 {
     Slot *e;
     const ModeAssets *a = mode_assets();
+
+    /* cmd 1 97CA: type 69 with (+01 emit, +02 count, +03 interval), not XY. */
+    if (type == 69 || type == 0x45)
+    {
+        e = free_enemy();
+        if (!e)
+            return 0;
+        spawn_spawner_cmd1(e, (u8)y, (u8)x, (u8)dest);
+        return 1;
+    }
 
     if (x < -16)
         x = -16;

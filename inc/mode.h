@@ -42,7 +42,7 @@ void mode_apply_video(void);
 /* Sim Y -> sprite/plane screen Y (Original +16). */
 s16  mode_draw_y(s16 y);
 /* Sim X -> sprite screen X. Original: SAT color bit7 (TMS EC) is X-32.
- * Collision stays on stored MSX SAT X. */
+ * AABBs use this visual X for both sides; stored entity X stays MSX SAT X. */
 s16  mode_draw_x(s16 x, u8 sat_col);
 u16  mode_y_off(void);
 u16  mode_text_row(u16 msx_row);
