@@ -19,8 +19,9 @@ static const u8 k_fire_init[8][2] = {
 };
 
 static Sprite *s_spr;
-static s16 s_x;
+static s16 s_x;             /* MSX SAT X (+02). Original draw: mode_draw_x 0x8F. */
 static s16 s_y;
+static u8  s_sat_col;       /* MSX SAT colour (+04); ship is 0x8F (EC). */
 /* Sub-pixel halves of the position: MSX keeps X as (IX+0x02, IX+0x07) and Y as
  * (IX+0x01, IX+0x06), integer byte first, so the ship moves in 8.8 steps. */
 static u8  s_xfrac;
@@ -63,12 +64,28 @@ static const u16 k_award[21] = {
 
 static void place_start(void)
 {
-    const ModeAssets *a = mode_assets();
+    /* 0x75E3 SAT X = 0x78, 0x75DF SAT Y = 0xA0. MD mode keeps a centered
+     * visual spawn on the wider playfield (no EC). */
+    if (mode_get() == MODE_ORIGINAL)
+    {
+        s_x = 0x78;
+        s_y = 0xA0;
+    }
+    else
+    {
+        const ModeAssets *a = mode_assets();
 
-    s_x = (s16)((a->playfield_w - SHIP_W) / 2);
-    s_y = (s16)(a->playfield_h - SHIP_H - 16);
+        s_x = (s16)((a->playfield_w - SHIP_W) / 2);
+        s_y = (s16)(a->playfield_h - SHIP_H - 16);
+    }
     s_xfrac = 0;
     s_yfrac = 0;
+    s_sat_col = 0x8F;
+}
+
+static s16 ship_draw_x(void)
+{
+    return mode_draw_x(s_x, s_sat_col);
 }
 
 /* player_ship_update 0x7634 / 0x765A: add the 8.8 velocity to the position,
@@ -96,13 +113,16 @@ static s16 step_axis(s16 pos, u8 *frac, s16 vel, s16 lo, s16 hi)
 
 static void show_ship(int vis)
 {
+    s16 dx;
+
     if (!s_spr)
         return;
-    if (mode_hud_overlap(s_x, MODE_SPR_W))
+    dx = ship_draw_x();
+    if (mode_hud_overlap(dx, MODE_SPR_W))
         vis = 0;
     SPR_setVisibility(s_spr, vis ? VISIBLE : HIDDEN);
     if (vis)
-        SPR_setPosition(s_spr, s_x, mode_draw_y(s_y));
+        SPR_setPosition(s_spr, dx, mode_draw_y(s_y));
 }
 
 static void fire_select(u8 n)
@@ -168,7 +188,10 @@ void player_init(void)
     s_e14f = 0;
 
     PAL_setPalette(PAL2, a->ship->palette->data, CPU);
-    s_spr = SPR_addSprite(a->ship, s_x, mode_draw_y(s_y), TILE_ATTR(PAL2, TRUE, FALSE, FALSE));
+    s_sat_col = 0x8F;
+    /* EC before first frame: 0x75EB SAT colour 0x8F, hardware X = SAT-32. */
+    s_spr = SPR_addSprite(a->ship, ship_draw_x(), mode_draw_y(s_y),
+                          TILE_ATTR(PAL2, TRUE, FALSE, FALSE));
 }
 
 s16 player_x(void)
@@ -534,7 +557,7 @@ void player_update(void)
     s_xvel_sel = sel;
 
     /* MSX player_ship_update 0x7612: X clamp 0x28..0xC8, Y 0x1E..0xB8.
-     * Original mode caps X early so the ship stays out of HUD cols 24-31. */
+     * Those are SAT coordinates. Original EC draw keeps the sprite in 0-191. */
     if (mode_get() == MODE_ORIGINAL)
     {
         min_x = MODE_SHIP_MIN_X;
@@ -614,19 +637,26 @@ void player_update(void)
     if (s_invuln)
     {
         s_invuln--;
-        /* MSX XOR sat_color 0x0E (0x8F <-> 0x81) each frame of the 64-count. */
+        /* MSX XOR sat_color 0x0E (0x8F <-> 0x81) each frame of the 64-count.
+         * Both values keep TMS EC bit7, so draw X stays SAT-32. */
+        s_sat_col = (u8)(s_sat_col ^ 0x0E);
         show_ship((s_invuln & 2) == 0);
         if (!s_invuln)
+        {
+            s_sat_col = 0x8F;
             show_ship(1);
+        }
     }
     else if (s_spr)
     {
-        if (mode_hud_overlap(s_x, MODE_SPR_W))
+        s16 dx = ship_draw_x();
+
+        if (mode_hud_overlap(dx, MODE_SPR_W))
             SPR_setVisibility(s_spr, HIDDEN);
         else
         {
             SPR_setVisibility(s_spr, VISIBLE);
-            SPR_setPosition(s_spr, s_x, mode_draw_y(s_y));
+            SPR_setPosition(s_spr, dx, mode_draw_y(s_y));
         }
     }
 }

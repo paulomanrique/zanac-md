@@ -670,6 +670,16 @@ static int sat_to_nt(s16 x, s16 y, u8 *col, u8 *row)
     return 1;
 }
 
+/* 8854 / 8ca2 SUB 0x20: nametable pixel X of the tiles the player sees.
+ * Original stamps SAT_X-32 so the art sits with EC sprites; 4560 still
+ * uses stored SAT X. Zanac MD has no EC — stamp at SAT X. */
+static s16 nt_from_sat_x(s16 sat_x)
+{
+    if (mode_get() == MODE_ORIGINAL)
+        return (s16)(sat_x - 0x20);
+    return sat_x;
+}
+
 /* type62 8744: LDIRVM 0x20 bytes from 876b+(phase?0x20:0) -> VRAM 0x1800.
  * 24-col playfield only — HUD cols 24-31 untouched. */
 static const u8 k_riser_nt[2][32] = {
@@ -744,7 +754,8 @@ static void punch_bind(s16 x, s16 y, u8 variant)
     u8 c;
     u8 i;
 
-    /* 8ca2: live SAT X-0x20 / Y-0x10, then 88ed into E800+VRAM. */
+    /* 8ca2: live SAT X-0x20 / Y-0x10, then 88ed into E800+VRAM.
+     * Same SUB on both modes (MSX 8ca2); Original 4560 still uses SAT X. */
     if (!sat_to_nt((s16)(x - 0x20), (s16)(y - 0x10), &col, &row))
         return;
     w = 1;
@@ -807,7 +818,7 @@ static const u8 k_88d8[] = {
     4, 0x3E, 0x3E, 0x3E, 0x3E, 4, 0x3A, 0x3E, 0x3E, 0x3D
 };
 
-/* 88ed: desc at (x+xadj, y+yadj). Baseline 8854 is MD x / Y-0x10. */
+/* 88ed: desc at (x+xadj, y+yadj). Baseline 8854 is SAT_X-0x20 / Y-0x10. */
 static void punch_88ed(s16 x, s16 y, const u8 *d, s16 xadj, s16 yadj)
 {
     u16 yaln;
@@ -817,7 +828,7 @@ static void punch_88ed(s16 x, s16 y, const u8 *d, s16 xadj, s16 yadj)
     u8 r;
     u8 w;
     u8 c;
-    s16 px = (s16)(x + xadj);
+    s16 px = nt_from_sat_x((s16)(x + xadj));
     s16 py = (s16)(y + yadj);
 
     yaln = (u16)(py - 0x10) & 0xF8;
@@ -874,14 +885,14 @@ void map_script_punch_88d8(s16 x, s16 y)
 }
 
 /* 87e2: only type 82. H=X-0x28 L=Y-0x10 via 8948; write 0x30+(IX+0x1c).
- * Same X delta as punch_88d8 (xadj -8); Y matches 8854 baseline (yadj 0).
+ * nt_from_sat_x is 8854's SAT-0x20; extra -8 = 8874/87e2 SAT-0x28.
  * MSX sat_color stays 0 — digit is nametable-only. */
 void map_script_stamp_82_digit(s16 x, s16 y, u8 fire_num)
 {
     u16 yaln;
     u8 col0;
     u8 row0;
-    s16 px = (s16)(x - 8);
+    s16 px = (s16)(nt_from_sat_x(x) - 8);
     s16 py = y;
 
     yaln = (u16)(py - 0x10) & 0xF8;
@@ -1025,6 +1036,8 @@ static void place_tile_group(StreamSlot *st, u16 *pptr)
             break;
         type = r[0];
         y = (s16)r[1];
+        /* 0x964C: SAT X = ybase*8 + blob X − 0x20. Collision uses this SAT
+         * X (4560). Original stamps tiles at SAT−32 so they sit with EC. */
         x = (s16)st->ybase * 8 + (s16)r[2] - 0x20;
         dest = 0;
         if (s_ms.idol_ptr)
@@ -1110,7 +1123,7 @@ static void base_mode_11(void)
                 break;
             type = r[0];
             y = (s16)r[1];
-            x = (s16)st.ybase * 8 + (s16)r[2] - 0x20;
+            x = (s16)st.ybase * 8 + (s16)r[2] - 0x20; /* SAT X, same as 0x964C */
             dest = 0;
             if (s_ms.idol_ptr)
             {

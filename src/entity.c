@@ -882,29 +882,14 @@ static int hit_overlap(s16 x1, s16 y1, u8 sat1, s16 x2, s16 y2, u8 sat2)
     return aabb(ax, ay, aw, ah, bx, by, bw, bh);
 }
 
-/* Visual X the player aims at. Stored SAT X is unchanged.
- * Nametable-only structures (bases 73–79, idols/fireboxes): 8854/8ca2
- * and place_tile_group SUB 0x20 — the stamp cell is the graphic, 32px
- * left of SAT X (sat_col is 0, no EC bit). Sprites use mode_draw_x
- * (TMS EC bit7). Do not assume bit7 is enough for ground tiles. */
-static s16 slot_hit_x(const Slot *s)
-{
-    if (mode_get() != MODE_ORIGINAL)
-        return s->x;
-    if (!s->spr
-        || s->kind == KIND_BASE
-        || s->kind == KIND_WIDE
-        || s->kind == KIND_FIREBOX)
-        return (s16)(s->x - 32);
-    return mode_draw_x(s->x, s->sat_col);
-}
-
-static int hit_overlap_slot(s16 x1, s16 y1, u8 sat1, u8 col1, const Slot *e)
+/* collision_routine 0x4560: both boxes are SAT X/Y and sat_name>>1 into
+ * 0x45C9. Do not convert to visual X — ship/shots/EC enemies all store
+ * SAT X and draw with TMS EC, so SAT overlap is graphic overlap. */
+static int hit_overlap_slot(s16 x1, s16 y1, u8 sat1, const Slot *e)
 {
     u8 esat = e->sat ? e->sat : (u8)0x40;
 
-    return hit_overlap(mode_draw_x(x1, col1), y1, sat1,
-                       slot_hit_x(e), e->y, esat);
+    return hit_overlap(x1, y1, sat1, e->x, e->y, esat);
 }
 
 /* death_transition_table 0x716B (collision_response 0x453E): type&0x7F ->
@@ -3897,8 +3882,11 @@ static void update_fire(void)
     }
 
     f->script++;
-    /* fire 0/1/2/7 run: INC sat_color AND 0x8F. 3/4/5 stay solid. */
+    /* fire 0/1/2/7 run: INC sat_color, keep TMS EC bit7 so SAT overlap
+     * stays graphic overlap. 3/4/5 stay 0x8F. */
     cycle = (u8)(fn == 0 || fn == 1 || fn == 2 || fn == 7);
+    if (cycle)
+        spr_set_sat_col(f, (u8)(0x80 | ((f->sat_col + 1) & 0x0F)));
     if (f->spr)
     {
         s16 fdx = mode_draw_x(f->x, f->sat_col);
@@ -4522,7 +4510,7 @@ static void collide_bolt_enemies(Slot *bolt, u8 persist)
         /* 0x716B/entity_post: shots leg (44BA/44CA); 44A6 bullets excluded. */
         if (!enemy_takes_shots(e))
             continue;
-        if (!hit_overlap_slot(bolt->x, bolt->y, bolt_sat, bolt->sat_col, e))
+        if (!hit_overlap_slot(bolt->x, bolt->y, bolt_sat, e))
             continue;
 
         if (!persist)
@@ -4793,8 +4781,8 @@ static void collide_player(void)
         if (!(pf & POST_SHIP))
             continue;
         {
-            /* Ship is drawn without EC. Ground nametable-only uses stamp X. */
-            if (!hit_overlap_slot(px, py, SAT_PLAYER, 0, e))
+            /* 4560 SAT vs SAT. Ship AABB still skips KIND_GROUND (44CA). */
+            if (!hit_overlap_slot(px, py, SAT_PLAYER, e))
                 continue;
         }
         if (pf & POST_PICK)
@@ -5123,6 +5111,9 @@ bool entity_spawn_shot(s16 x, s16 y)
     free->vx = 0;
     free->vy = vy;
     free->spr = NULL;
+    /* shot_handler 0x7237: SAT colour 0x8F (EC) before the sprite is
+     * placed, copied from ship SAT X at 0x76e1. */
+    free->sat_col = 0x8F;
     spr_place(free, frame);
     if (!free->spr)
     {
@@ -5173,6 +5164,9 @@ void entity_try_spawn_fire(s16 x, s16 y, u8 xvel_sel)
     s_fire.y = y;
     s_fire.spr = NULL;
     s_fexpire = 0;
+    /* 0x72bc fire 0/1/2/7 start 0x80 (EC); 0x7335/0x73d2 fire 3/4/5 are
+     * 0x8F. Bit7 must be set before spr_place so the first frame shifts. */
+    s_fire.sat_col = 0x8F;
 
     if (fn == 1)
     {
@@ -5247,6 +5241,8 @@ void entity_try_spawn_fire(s16 x, s16 y, u8 xvel_sel)
         frame = FRAME_FIRE;
     }
 
+    if (fn == 0 || fn == 1 || fn == 2 || fn == 7)
+        s_fire.sat_col = 0x81;      /* 0x72bc 0x80 then 0x72de INC; EC stays */
     spr_place(&s_fire, frame);
     if (!s_fire.spr)
     {
