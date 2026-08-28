@@ -18,7 +18,7 @@
  *   4 Vibrator   - lg_circle, rise + X bang-bang around anchor, persist hit->ev24
  *   5 Rewinder   - target, X follows ship, vy=-2 then +4/256 rewind, ammo shots
  *   6 Plasma     - no persistent entity (explode_enemies + ev19)
- *   7 High Speed - comet, fire0_dir_table fan, speed 0xC3, fire_life_timer
+ *   7 High Speed - comet, fire0_dir_table, 0xC3 8.8 (x4*3 = 6px), fire_life_timer
  * Enemies: G group-1 airborne + round-1 pickups that the spawn_table emits
  *   4-6     box     - 7826: DEC +03 SAT countdown (0 wraps 255f) then
  *           reveal SAT 0xD4 color 0x8F HP5 Yvel 8.8 01C0; not vis/hit
@@ -465,6 +465,8 @@ static void marker_kill(Slot *s);
 static u8 hw_sprite_count(void);
 static int band_overlap(s16 a, s16 b);
 static int line_budget_full(s16 dy);
+static int step_88_4898(Slot *e);
+static void apply_dir_88(Slot *e, u8 dir, u8 speed);
 
 static void spr_vis_playfield(Sprite *sp, s16 dx, s16 dy, int want_vis)
 {
@@ -1259,13 +1261,6 @@ static void apply_dir_fast(Slot *e, u8 dir)
      * Fire 0 speed 0xC2 = x3 x4 x2 on unit 128 -> 12 px/frame cardinal. */
     e->vx = (s8)(k_dir_vy[dir & 15] * 6);
     e->vy = (s8)(k_dir_vx[dir & 15] * 6);
-}
-
-static void apply_dir_fire7(Slot *e, u8 dir)
-{
-    /* Fire 7 speed 0xC3: same prescale x4, count 3 vs fire 0 count 2. */
-    e->vx = (s8)(k_dir_vy[dir & 15] * 9);
-    e->vy = (s8)(k_dir_vx[dir & 15] * 9);
 }
 
 static s16 clamp16(s16 v, s16 lo, s16 hi)
@@ -4276,11 +4271,12 @@ static void update_fire(void)
         }
         if (s_fexpire)
         {
+            /* 74e2: DEC +1b; 0x1e SAT 0x20; 0x0f color 0x81; Z -> 7507. */
             s_fexpire--;
-            if (s_fexpire == 0x1E && f->spr)
-                SPR_setAnimAndFrame(f->spr, 0, FRAME_LEAD);
-            if (s_fexpire == 0x0F && f->spr)
-                SPR_setVisibility(f->spr, HIDDEN);
+            if (s_fexpire == 0x1E)
+                spr_place(f, FRAME_MED_CIRCLE);
+            if (s_fexpire == 0x0F)
+                spr_set_sat_col(f, 0x81);
             if (!s_fexpire)
             {
                 spr_kill(f);
@@ -4304,13 +4300,25 @@ static void update_fire(void)
         s_fvy = (s16)(s_fvy + 4);
         f->y = (s16)(f->y + (s_fvy >> 8));
     }
+    else if (fn == 7)
+    {
+        /* 7306 -> 72de -> 4898: +0c=3 X|Y 8.8, unsigned Y>=0xD0 / X>=0xD1. */
+        if (step_88_4898(f))
+        {
+            fire_offscreen_reset(7);
+            return;
+        }
+    }
     else
     {
         f->x += f->vx;
         f->y += f->vy;
     }
 
-    f->script++;
+    /* Fire 7 script is 4898 X frac (apply_dir_88); do not use it as a
+     * blink tick. 72de is color INC only; SAT write every frame. */
+    if (fn != 7)
+        f->script++;
     /* fire 0/1/2/7 run: INC sat_color, keep TMS EC bit7 so SAT overlap
      * stays graphic overlap. 3/4/5 stay 0x8F. */
     cycle = (u8)(fn == 0 || fn == 1 || fn == 2 || fn == 7);
@@ -4325,15 +4333,14 @@ static void update_fire(void)
          * over the bar (that flicker). Blink/expire only on-playfield. */
         if (mode_hud_overlap(fdx, MODE_SPR_W))
             SPR_setVisibility(f->spr, HIDDEN);
-        else if (fn == 4 && s_fexpire && s_fexpire <= 0x0F)
-            SPR_setVisibility(f->spr, HIDDEN);
         else if (cycle)
-            spr_vis_playfield(f->spr, fdx, mode_draw_y(f->y), (f->script & 1));
+            spr_vis_playfield(f->spr, fdx, mode_draw_y(f->y),
+                              (fn == 7) ? 1 : (f->script & 1));
         else
             spr_vis_playfield(f->spr, fdx, mode_draw_y(f->y), 1);
     }
 
-    if (fn != 2 && fn != 3)
+    if (fn != 2 && fn != 3 && fn != 7)
     {
         if (f->x < -16 || f->x > (s16)(a->playfield_w + 8)
             || f->y < -24 || f->y > (s16)(a->playfield_h + 8))
@@ -4638,6 +4645,9 @@ static void update_enemies(void)
             }
             spr_place(e, k_t35_frame[e->aux]);
             spr_set_sat_col(e, k_t35_col[e->aux]);
+            if (e->spr)
+                spr_sync(e);
+            continue;               /* 84c9: +0c bit2 anim only, no Y cull */
         }
         else if (e->kind == KIND_DUSTER)
         {
@@ -5313,19 +5323,8 @@ static void collide_player(void)
         }
         if (cls == CLS_EXPL)
         {
-            marker_kill(e);
-            e->kind = KIND_EXPL;
-            e->variant = 0;
-            e->hp = 0;
-            e->timer = 16;
-            e->script = 0;
-            e->ground = 0;
-            e->vx = 0;
-            e->vy = 0;
-            if (e->spr)
-                SPR_setAnimAndFrame(e->spr, 0, FRAME_CIRCLE);
-            else
-                spr_place(e, FRAME_CIRCLE);
+            /* 453E -> 0x23; type35 first frame ALC+ev17+4a6a(+0x18). */
+            become_expl(e, slot_msx_type(e));
         }
         else
             spr_kill(e);  /* CLS_CLEAR bullets (20/37/38/41/42/43) */
@@ -5699,9 +5698,10 @@ void entity_try_spawn_fire(s16 x, s16 y, u8 xvel_sel)
     }
     else if (fn == 7)
     {
-        /* High Speed 0x728F: SAT 0x08 comet, fire0_dir_table, speed 0xC3. */
+        /* High Speed 0x728F: SAT 0x08 comet, fire0_dir_table, +17=0xC3.
+         * 4cf7: bit7 x4, count 3, unit 128 -> 6 px/frame cardinal 8.8. */
         dir = k_fire7_dir[xvel_sel];
-        apply_dir_fire7(&s_fire, dir);
+        apply_dir_88(&s_fire, dir, 12);
         frame = FRAME_COMET;
     }
     else
@@ -5720,6 +5720,9 @@ void entity_try_spawn_fire(s16 x, s16 y, u8 xvel_sel)
         s_fire.alive = 0;
         return;
     }
+    /* 7331 SAT 0x10. FRAME_CIRCLE is pat 9 (no pat 4 in objs); 4560 uses +03. */
+    if (fn == 3)
+        s_fire.sat = 0x10;
     sound_play_event(SND_EV_FIRE);
 }
 
