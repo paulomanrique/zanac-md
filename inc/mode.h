@@ -28,6 +28,7 @@ typedef struct {
 
 #define MODE_BAR_COL    24
 #define MODE_BAR_W      8
+#define MODE_H32_COLS   32              /* H32 nametable width */
 #define MODE_SCREEN_H   224
 #define MODE_BAR_PX     (MODE_BAR_COL * 8)  /* HUD starts at x=192 */
 #define MODE_SPR_W      16                  /* MSX 16x16 SAT; occupancy clip */
@@ -55,7 +56,8 @@ u16  mode_letter_attr(void);
 /* 1 if [draw_x, draw_x+width) intersects WINDOW cols 24-31 (x>=192). */
 int  mode_hud_overlap(s16 draw_x, u16 width);
 
-/* Black letterbox rows 0-1 / 26-27 + right bar (Original only). */
+/* Black letterbox rows 0-1 / 26-27, full H32 width (Original only).
+ * WINDOW HUD still sits on top in cols 24-31. */
 void mode_draw_letterbox(void);
 
 #endif

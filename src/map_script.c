@@ -116,8 +116,10 @@ static u8  s_row_carry;         /* E700 bit 1: 97e3 ran this frame */
 static u16 s_scroll_base;       /* E702 after build_tile_screen; VSCROLL 0 */
 static u8  s_skip_precompute;   /* cmd 9 941b RET: this step does not 97e3 */
 static u8  s_ram_only;          /* boot: assemble E800 without poking VRAM */
-/* Two DMA_QUEUE sources -- SGDK stores the pointer until vblank. */
-static u16 s_dma_row[2][PF_COLS];
+/* Two DMA_QUEUE sources -- SGDK stores the pointer until vblank.
+ * Original pads to MODE_H32_COLS so cols 24-31 of a wrap row are never
+ * leftover charset. */
+static u16 s_dma_row[2][MODE_H32_COLS];
 static u8  s_dma_flip;
 static TransferMethod s_row_tm = DMA_QUEUE;
 static ColSlot s_col_snap[COL_SLOTS];
@@ -130,6 +132,8 @@ static void fire_pending(void);
 static void scroll_precompute(u16 map_row);
 static void dma_nt_row(u8 nt_y, const u8 *src, TransferMethod tm);
 static void peek_next_row(u16 map_row);
+static void fill_letterbox_b(void);
+static void bg_set_vscroll(void);
 static void base_mode_11(void);
 static void place_ctrl_at(u16 ptr);
 static void scroll_sync(void);
@@ -567,6 +571,7 @@ static void dma_nt_row(u8 nt_y, const u8 *src, TransferMethod tm)
 {
     u8 x;
     u16 *dst;
+    u16 width;
 
     nt_y &= 31;
     dst = s_dma_row[s_dma_flip];
@@ -575,16 +580,31 @@ static void dma_nt_row(u8 nt_y, const u8 *src, TransferMethod tm)
         s_nt[nt_y][x] = src[x];
         dst[x] = tile_attr(src[x]);
     }
-    VDP_setTileMapDataRow(BG_B, dst, nt_y, 0, PF_COLS, tm);
+    width = PF_COLS;
+    if (mode_get() == MODE_ORIGINAL)
+    {
+        u16 blank = mode_letter_attr();
+
+        /* H32 shows 32 cols. Pad the HUD slice so a wrap DMA cannot
+         * leak leftover charset through a transparent WINDOW cell. */
+        for (; x < MODE_H32_COLS; x++)
+            dst[x] = blank;
+        width = MODE_H32_COLS;
+    }
+    VDP_setTileMapDataRow(BG_B, dst, nt_y, 0, width, tm);
     /* DMA_QUEUE keeps the source pointer until vblank -- do not reuse. */
     if (tm == DMA_QUEUE)
         s_dma_flip ^= 1;
+    /* Wrap/peek lives on BG_B. TMS 24-row NT has no pixels above the 192.
+     * Clip with BG_A bars after the transfer; do not wipe NT 24-31. */
+    mode_draw_letterbox();
 }
 
 /*
- * 9a79 display order onto the 32-row plane at VSCROLL 0: NT row i =
- * E800[(E714+i) mod 24]. Newest sits at NT 0 so VSCROLL = -scroll_px - y_off
- * reveals wrap rows 31,30,... from the top of the 192.
+ * 9a79 display order onto the 32-row plane: NT row i =
+ * E800[(E714+i) mod 24]. Newest sits at NT 0. VSCROLL = -scroll_px - y_off
+ * then puts NT 0 at the top of the 192 and reveals wrap 31,30,... as
+ * pixels. TMS has no VSCROLL; those wrap pixels fall in the 16px bars.
  */
 static void flush_boot_playfield(void)
 {
@@ -597,14 +617,34 @@ static void flush_boot_playfield(void)
 /*
  * Unused 32-row wrap (NT 24-31 at boot) is the same PAL0 black tile as
  * BG_A letterbox -- never charset 0x28. Prefetch overwrites NT 31 with map.
+ * Full H32 width: cols 24-31 of a wrap row are otherwise leftover VRAM.
  */
 static void fill_letterbox_b(void)
 {
     if (mode_get() != MODE_ORIGINAL)
         return;
 
-    VDP_fillTileMapRect(BG_B, mode_letter_attr(), 0, BOOT_ROWS, PF_COLS,
+    VDP_fillTileMapRect(BG_B, mode_letter_attr(), 0, BOOT_ROWS, MODE_H32_COLS,
                         (u16)(32 - BOOT_ROWS));
+}
+
+/*
+ * TMS nametable row 0 is screen row 0 (no VSCROLL, 24 rows). MD 32-row
+ * plane plus 16px letterbox must start at VSCROLL = -scroll_px - y_off so
+ * NT 0 sits at the top of the 192, not in screen Y 0-15.
+ * VSRAM is 10-bit; the plane wraps at 256px -- keep the low 8 bits.
+ */
+static void bg_set_vscroll(void)
+{
+    u16 off;
+
+    VDP_setVerticalScroll(BG_A, 0);
+    off = (u16)((s_scroll_px + mode_y_off()) & 0xFF);
+    VDP_setVerticalScroll(BG_B, (s16)(-(s16)off));
+    /* Screen Y 0-15 / 208-223 always show 16px of BG_B "above/below" the
+     * 192 (wrap or peek). Clip those pixels; wiping NT 24-31 would hide
+     * the 1-7px peek that VSCROLL places at the top of the 192. */
+    mode_draw_letterbox();
 }
 
 /* 97e3 scroll_precompute: DEC E714 (wrap 0->23), assemble once. */
@@ -1080,7 +1120,9 @@ static void bg_fill_plane(void)
      * show map, not black/0x28. Carry runs the real 97e3. */
     peek_next_row((u16)(s_ms.row + 1));
     s_row_tm = DMA_QUEUE;
-    mode_draw_letterbox();
+    /* NT 0 at the top of the 192 before the first visible line. VSCROLL 0
+     * would park NT 0-1 in the 16px bar and NT 24-25 in the 192. */
+    bg_set_vscroll();
 }
 
 static void bg_load_tiles(void)
@@ -1135,10 +1177,9 @@ static void bg_init(void)
 
 static void bg_update(void)
 {
-    /* Wrap row is already in VRAM (prefetch / this carry). Then move VSCROLL.
-     * VSCROLL = pixel offset in the 8px row + 8*wrap, plus 16px letterbox. */
-    VDP_setVerticalScroll(BG_A, 0);
-    VDP_setVerticalScroll(BG_B, (s16)(-(s16)s_scroll_px - (s16)mode_y_off()));
+    /* Wrap row is already in VRAM (prefetch / this carry). Then move VSCROLL
+     * and re-clip the 16px bars so wrap/peek cannot leak above the 192. */
+    bg_set_vscroll();
 }
 
 void map_script_reset_scroll(void)
@@ -2026,6 +2067,9 @@ static void e800_flush_linear(void)
     s_scroll_base = s_ms.row;
     s_end_snapped = 1;
     s_e700 &= (u8)~1;
+    /* Plane is linear NT 0-23. Park VSCROLL at -y_off now -- the register
+     * still held the live wrap offset until this point. */
+    bg_set_vscroll();
 }
 
 /* copy_tile_column 0x986E: EB00 col C -> E800 col C, 24 rows stride 24. */
@@ -2125,7 +2169,8 @@ static void ending_setup_91fd(void)
      * Rebase keeps (row-base)*8 + (E711>>5) at the pre-dummy pixel.
      * Dummy assemble is ram-only: the 32-row MD plane is not rewritten.
      * NT 24-31 stay the wrap/prefetch buffer; do not fill_letterbox_b
-     * here (that would wipe the 1-7px peek row). */ 
+     * here (that would wipe the 1-7px peek row). BG_A letterbox still
+     * clips wrap pixels that VSCROLL parks in the 16px bars. */
     s_scroll_base = (u16)(s_ms.row - (s_scroll_px >> 3));
 
     s_e157 = 0xD1;
