@@ -15,9 +15,9 @@
  * Fire during the swirl RET C skips the rest of the intro (logo settles).
  *
  * HIS art, same motion:
- *   BG_B — blue title_zanac wordmark, 5 staggered strips on the MSX path
- *          (deltas from path[0] mapped onto TITLE_ZANAC_TILE_X/Y).
- *   BG_A — opaque groove lip + STATIC title_mdmark in front + SCORE/credits.
+ *   BG_B  - blue title_zanac wordmark, 5 staggered strips on the MSX path
+ *           (deltas from path[0] mapped onto TITLE_ZANAC_TILE_X/Y).
+ *   BG_A  - opaque groove lip + STATIC title_mdmark in front + SCORE/credits.
  * The MD mark is drawn once at rest and never moves. Color 0 on both planes
  * is transparent, so the blue settles behind the mark.
  *
@@ -271,7 +271,7 @@ static void lookup_swirl(u8 a, s16 *col, s16 *row)
 }
 
 /* Clip to the 32-wide H32 view so the wordmark falls off the edge instead
- * of wrapping, the way draw_logo_row 0x5BA0 clipped n = 32−col. */
+ * of wrapping, the way draw_logo_row 0x5BA0 clipped n = 32-col. */
 static void blit_zanac_bar(s16 dest_x, s16 dest_y, u8 src_y, u8 h, int draw)
 {
     s16 x = dest_x;
