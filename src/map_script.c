@@ -80,8 +80,8 @@ static u16 s_warp_jwait;
 static u8  s_warp_old;
 static u8  s_warp_new;
 static u8  s_nt[32][PF_COLS];   /* VRAM playfield shadow, 24-col */
-static u8  s_e800[BOOT_ROWS][PF_COLS]; /* MSX E800 circular 24×24 */
-static u8  s_e714;              /* E714 circular write index 0–23 */
+static u8  s_e800[BOOT_ROWS][PF_COLS]; /* MSX E800 circular 24x24 */
+static u8  s_e714;              /* E714 circular write index 0-23 */
 /* scroll_speed_ramp_table 0x8F9A; 8f5e indexes 0x8F99+countdown (1-9). */
 static const u8 k_approach[10] = {
     0x00, 0x0C, 0x11, 0x14, 0x17, 0x1A, 0x1D, 0x20, 0x23, 0x26
@@ -99,10 +99,11 @@ static const u8 k_clear_award[19] = {
 };
 static u16 s_scroll_px;         /* pixel VSCROLL = 8*(row-base) + (E711>>5) */
 static u8  s_scroll_delta;      /* pixels advanced this frame */
+static u8  s_row_carry;         /* E700 bit 1: 97e3 ran this frame */
 static u16 s_scroll_base;       /* E702 after build_tile_screen; VSCROLL 0 */
 static u8  s_skip_precompute;   /* cmd 9 941b RET: this step does not 97e3 */
 static u8  s_ram_only;          /* boot: assemble E800 without poking VRAM */
-/* Two DMA_QUEUE sources — SGDK stores the pointer until vblank. */
+/* Two DMA_QUEUE sources -- SGDK stores the pointer until vblank. */
 static u16 s_dma_row[2][PF_COLS];
 static u8  s_dma_flip;
 static TransferMethod s_row_tm = DMA_QUEUE;
@@ -195,7 +196,7 @@ static u8 resolve_round_from_ptr(u16 dest)
 {
     u8 i;
 
-    /* First 8 table entries, highest address first. Below round-1 → 0. */
+    /* First 8 table entries, highest address first. Below round-1 -> 0. */
     for (i = 0; i < 8; i++)
     {
         if (dest >= map_script_ptrs[i])
@@ -551,7 +552,7 @@ static void dma_nt_row(u8 nt_y, const u8 *src, TransferMethod tm)
         dst[x] = tile_attr(src[x]);
     }
     VDP_setTileMapDataRow(BG_B, dst, nt_y, 0, PF_COLS, tm);
-    /* DMA_QUEUE keeps the source pointer until vblank — do not reuse. */
+    /* DMA_QUEUE keeps the source pointer until vblank -- do not reuse. */
     if (tm == DMA_QUEUE)
         s_dma_flip ^= 1;
 }
@@ -571,7 +572,7 @@ static void flush_boot_playfield(void)
 
 /*
  * Unused 32-row wrap (NT 24-31 at boot) is the same PAL0 black tile as
- * BG_A letterbox — never charset 0x28. Prefetch overwrites NT 31 with map.
+ * BG_A letterbox -- never charset 0x28. Prefetch overwrites NT 31 with map.
  */
 static void fill_letterbox_b(void)
 {
@@ -582,7 +583,7 @@ static void fill_letterbox_b(void)
                         (u16)(32 - BOOT_ROWS));
 }
 
-/* 97e3 scroll_precompute: DEC E714 (wrap 0→23), assemble once. */
+/* 97e3 scroll_precompute: DEC E714 (wrap 0->23), assemble once. */
 static void scroll_precompute(u16 map_row)
 {
     u8 x;
@@ -602,7 +603,7 @@ static void scroll_precompute(u16 map_row)
 }
 
 /*
- * Subpixel VSCROLL (E711>>5) reveals the next map row 1–7 px before the
+ * Subpixel VSCROLL (E711>>5) reveals the next map row 1-7 px before the
  * E711-carry that runs 97e3. Peek that row into the wrap NT, then restore
  * column/stream cursors so col_step is not advanced twice (PR #1).
  * Commands still run only on the real carry (not during the peek).
@@ -662,7 +663,7 @@ static int sat_to_nt(s16 x, s16 y, u8 *col, u8 *row)
     c = (u8)((u16)x >> 3);
     if (c >= PF_COLS)
         return 0;
-    /* 88ed: C = Y/8 on the 192; C>=0x18 → no punch. Y is the 8948 L
+    /* 88ed: C = Y/8 on the 192; C>=0x18 -> no punch. Y is the 8948 L
      * (aligned punch origin), unsigned like MSX SUB on SAT Y. */
     if (y < 0)
         return 0;
@@ -676,7 +677,7 @@ static int sat_to_nt(s16 x, s16 y, u8 *col, u8 *row)
 
 /* 8854 / 8ca2 SUB 0x20: nametable pixel X of the tiles the player sees.
  * Original stamps SAT_X-32 so the art sits with EC sprites; 4560 still
- * uses stored SAT X. Zanac MD has no EC — stamp at SAT X. */
+ * uses stored SAT X. Zanac MD has no EC -- stamp at SAT X. */
 static s16 nt_from_sat_x(s16 sat_x)
 {
     if (mode_get() == MODE_ORIGINAL)
@@ -685,7 +686,7 @@ static s16 nt_from_sat_x(s16 sat_x)
 }
 
 /* type62 8744: LDIRVM 0x20 bytes from 876b+(phase?0x20:0) -> VRAM 0x1800.
- * 24-col playfield only — HUD cols 24-31 untouched. */
+ * 24-col playfield only -- HUD cols 24-31 untouched. */
 static const u8 k_riser_nt[2][32] = {
     {
         0x07,0x1F,0x3F,0x7F,0x43,0x81,0xE1,0xE1,
@@ -756,7 +757,6 @@ static void punch_bind(s16 x, s16 y, u8 variant)
     u8 tiles[9];
     u8 r;
     u8 c;
-    u8 i;
     u8 ysub;
 
     /* 8ca2: live SAT X-0x20 / Y-0x10 (u8), then 88ed into E800+VRAM. */
@@ -780,10 +780,12 @@ static void punch_bind(s16 x, s16 y, u8 variant)
     }
     else if (variant == 79)
     {
+        /* Death punch is 8c80 -> 8d07, not a 3x3 of 0xE7. */
         w = 3;
         h = 3;
-        for (i = 0; i < 9; i++)
-            tiles[i] = 0xE7;
+        tiles[0] = 0x82; tiles[1] = 0x1E; tiles[2] = 0x83;
+        tiles[3] = 0xA4; tiles[4] = 0x1E; tiles[5] = 0xA3;
+        tiles[6] = 0x83; tiles[7] = 0x1E; tiles[8] = 0x82;
     }
     else if (variant != 75)
     {
@@ -803,7 +805,105 @@ void map_script_base_seg_down(s16 x, s16 y, u8 variant)
 {
     if (s_e152)
         s_e152--;
-    punch_bind(x, y, variant);
+    if (variant == 79)
+        map_script_punch_79_hp(x, y, 0);
+    else
+        punch_bind(x, y, variant);
+}
+
+/* 8ced / 8cfa / 8d07: 88ed row-major desc (rows, then per-row width+tiles). */
+static const u8 k_79_8ced[] = {
+    3, 3, 0x8C, 0x8D, 0x8E, 3, 0x8F, 0x90, 0x91, 3, 0x92, 0x93, 0x94
+};
+static const u8 k_79_8cfa[] = {
+    3, 3, 0x95, 0x96, 0x97, 3, 0x98, 0x99, 0x9A, 3, 0x9B, 0x9C, 0x9D
+};
+static const u8 k_79_8d07[] = {
+    3, 3, 0x82, 0x1E, 0x83, 3, 0xA4, 0x1E, 0xA3, 3, 0x83, 0x1E, 0x82
+};
+
+void map_script_punch_79_hp(s16 x, s16 y, u8 hp)
+{
+    const u8 *d = k_79_8d07;
+
+    /* 8c80: CP 0x15 NC -> 8ced; NZ -> 8cfa; Z -> 8d07. Origin X-0x24 Y-0x14. */
+    if (hp >= 0x15)
+        d = k_79_8ced;
+    else if (hp)
+        d = k_79_8cfa;
+    punch_88ed(x, y, d, -4, -4);
+}
+
+static void base_nt_cell(s16 x, s16 y, u8 dc, u8 dr, u8 tid)
+{
+    u8 col;
+    u8 row;
+    u8 ysub;
+
+    /* 8c39 uses +06/+07 bind from 8948 (SAT X-0x20, Y-0x10). */
+    ysub = (u8)((u8)y - 0x10);
+    if ((u8)(ysub >> 3) >= 0x18)
+        return;
+    if (!sat_to_nt((s16)(x - 0x20), (s16)(ysub & 0xF8), &col, &row))
+        return;
+    nt_put((u8)(col + dc), (u8)((row + dr) & 31), tid);
+}
+
+void map_script_base_8c15(s16 x, s16 y, u8 variant, u8 phase)
+{
+    u8 p = (u8)(phase & 3);
+    u8 t0;
+    u8 rows;
+    u8 cols;
+    u8 step;
+    u8 r;
+    u8 c;
+
+    if (variant == 79)
+        return;
+    if (variant == 73)
+    {
+        t0 = (u8)(0xD3 + p * 4);
+        rows = 2;
+        cols = 2;
+        step = 1;
+    }
+    else if (variant == 74)
+    {
+        t0 = (u8)(0xC3 + p * 4);
+        rows = 2;
+        cols = 2;
+        step = 1;
+    }
+    else
+    {
+        /* 75-78: C = 0xBF+phase, E=0 (same tile). B/D select 1x1 / 1x2 / 2x1 / 2x2. */
+        t0 = (u8)(0xBF + p);
+        step = 0;
+        if (variant == 75)
+        {
+            rows = 1;
+            cols = 1;
+        }
+        else if (variant == 76)
+        {
+            rows = 1;
+            cols = 2;
+        }
+        else if (variant == 77)
+        {
+            rows = 2;
+            cols = 1;
+        }
+        else
+        {
+            rows = 2;
+            cols = 2;
+        }
+    }
+    for (r = 0; r < rows; r++)
+        for (c = 0; c < cols; c++)
+            base_nt_cell(x, y, c, r, (u8)(t0 + (step ? (u8)(r * cols + c) : 0)));
 }
 
 void map_script_base_no_segments(void)
@@ -894,7 +994,7 @@ void map_script_punch_88d8(s16 x, s16 y)
 
 /* 87e2: only type 82. H=X-0x28 L=Y-0x10 via 8948; write 0x30+(IX+0x1c).
  * nt_from_sat_x is 8854's SAT-0x20; extra -8 = 8874/87e2 SAT-0x28.
- * MSX sat_color stays 0 — digit is nametable-only. */
+ * MSX sat_color stays 0 -- digit is nametable-only. */
 void map_script_stamp_82_digit(s16 x, s16 y, u8 fire_num)
 {
     u8 col0;
@@ -916,7 +1016,7 @@ static void bg_fill_plane(void)
     u8 i;
 
     /* 9ae4 scroll_sync: E714 := 0. 0x28 is the MSX empty-playfield tile in
-     * RAM only — never a visible boot wallpaper. Assemble 24 rows without
+     * RAM only -- never a visible boot wallpaper. Assemble 24 rows without
      * poking VRAM, then one flush, then prefetch the wrap row, then show. */
     memset(s_e800, 0x28, sizeof(s_e800));
     s_e714 = 0;
@@ -925,7 +1025,7 @@ static void bg_fill_plane(void)
 
     /* MSX build_tile_screen 0x946E: map_script_step x24.
      * Each step INC E702, fire-if-trigger, else/then scroll_precompute.
-     * Cmd 9 (JP 9433 RET) skips that step's assemble. RAM only — 0x28 is
+     * Cmd 9 (JP 9433 RET) skips that step's assemble. RAM only -- 0x28 is
      * never a visible boot wallpaper (display is off until the flush). */
     for (i = 0; i < BOOT_ROWS; i++)
     {
@@ -942,7 +1042,7 @@ static void bg_fill_plane(void)
     s_row_tm = DMA;
     flush_boot_playfield();
     fill_letterbox_b();
-    /* Peek row+1 into NT 31 (restore col/stream). First 1–7 px of VSCROLL
+    /* Peek row+1 into NT 31 (restore col/stream). First 1-7 px of VSCROLL
      * show map, not black/0x28. Carry runs the real 97e3. */
     peek_next_row((u16)(s_ms.row + 1));
     s_row_tm = DMA_QUEUE;
@@ -1043,8 +1143,8 @@ static void place_tile_group(StreamSlot *st, u16 *pptr)
             break;
         type = r[0];
         y = (s16)r[1];
-        /* 0x964C: SAT X = ybase*8 + blob X − 0x20. Collision uses this SAT
-         * X (4560). Original stamps tiles at SAT−32 so they sit with EC. */
+        /* 0x964C: SAT X = ybase*8 + blob X - 0x20. Collision uses this SAT
+         * X (4560). Original stamps tiles at SAT-32 so they sit with EC. */
         x = (s16)st->ybase * 8 + (s16)r[2] - 0x20;
         dest = 0;
         if (s_ms.idol_ptr)
@@ -1482,16 +1582,24 @@ static void cmd_idol_banner(u8 cmd, const u8 *ops)
     (void)cmd;
     s_ms.idol_ptr = read_le16(ops);
     s_idol_cur = 0;                     /* IX+0x1D := 0 */
-    s_ms.banner_timer = 180;
-
-    s_ms.banner[0] = 'R';
-    s_ms.banner[1] = 'O';
-    s_ms.banner[2] = 'U';
-    s_ms.banner[3] = 'N';
-    s_ms.banner[4] = 'D';
-    s_ms.banner[5] = ' ';
-    s_ms.banner[6] = (char)('0' + (round % 10));
-    s_ms.banner[7] = 0;
+    /* E15E := 0x96; SET 4,E102; print " ROUND n " at 0x3948 (row 10 col 8).
+     * E180 split (IY+0x0A=8, IY+0x22=0x11) keeps that nametable strip from
+     * the 24-col scroll DMA until display_timer_countdown 0x41BA zeros E180.
+     * MD stamps on BG_A (does not VSCROLL) for the same 150 frames. */
+    s_ms.banner_timer = 0x96;
+    s_ms.banner[0] = ' ';
+    s_ms.banner[1] = 'R';
+    s_ms.banner[2] = 'O';
+    s_ms.banner[3] = 'U';
+    s_ms.banner[4] = 'N';
+    s_ms.banner[5] = 'D';
+    s_ms.banner[6] = ' ';
+    s_ms.banner[7] = (char)('0' + (round % 10));
+    s_ms.banner[8] = ' ';
+    s_ms.banner[9] = 0;
+    player_e102_set(0x10);
+    if (mode_get() == MODE_ORIGINAL)
+        hud_draw_str(BG_A, 8, mode_text_row(10), s_ms.banner);
     /* MSX 0x9044 plays ev25 but stop_all kills the ev7->ev1 chain; keep BGM. */
     s_banner_bgm_arm = 1;
 }
@@ -1526,7 +1634,7 @@ static void cmd_script_jump(u8 cmd, const u8 *ops)
     s_ms.pc = dest;
     entity_alc_reset();
     load_trigger_from_pc();
-    /* LAB_941b: E702 = trigger-1. Do not reset E714 / E800 — MSX keeps
+    /* LAB_941b: E702 = trigger-1. Do not reset E714 / E800 -- MSX keeps
      * the circular nametable. Cmd 9 RETs without 97d5/precompute. Keep
      * VSCROLL continuous: rebase so (row-base)*8 matches current pixels. */
     s_ms.row = (u16)(s_ms.trigger - 1);
@@ -1714,10 +1822,15 @@ static void cred_clear_page(void)
     u8 y;
 
     /* Do not wipe the right bar or letterbox. */
-    if (mode_get() == MODE_ORIGINAL && cols > MODE_BAR_COL)
+    if (mode_get() == MODE_ORIGINAL)
         cols = MODE_BAR_COL;
     for (y = 0; y < 16; y++)
-        VDP_clearText(0, (u16)(y0 + y), cols);
+    {
+        if (mode_get() == MODE_ORIGINAL)
+            hud_fill_tile(BG_A, 0, (u16)(y0 + y), 0, cols);
+        else
+            VDP_clearText(0, (u16)(y0 + y), cols);
+    }
 }
 
 static void cred_enter(void)
@@ -1840,6 +1953,7 @@ static void scroll_speed_reset(u8 target)
     s_warp_jwait = 0;
     s_scroll_px = 0;
     s_scroll_delta = 0;
+    s_row_carry = 0;
     s_scroll_base = 0;
     s_ram_only = 0;
     s_dma_flip = 0;
@@ -1889,7 +2003,7 @@ static void base_approach(u8 row_adv)
             s_time_on = 1;      /* 9014: write TIME at 0x3AB9 */
         if (!(s_e158 & 2))
         {
-            /* 8fd4 SET 3,(E12D) — OR bit1 so stream bit survives. */
+            /* 8fd4 SET 3,(E12D) -- OR bit1 so stream bit survives. */
             s_ms.spawn_ctrl = (u8)(s_ms.spawn_ctrl | 0x0A);
             entity_on_spawn_ctrl(s_ms.spawn_ctrl);
             s_e159 = s_e155;
@@ -1960,11 +2074,11 @@ static void base_clear_full(void)
 
     entity_alc_ease();
     entity_dec_encounter_a();
-    /* 90c2 SUB_bfc8: E150 bit1 still set, so E130 is not incremented —
+    /* 90c2 SUB_bfc8: E150 bit1 still set, so E130 is not incremented --
      * HUD refresh of E12E/E132/E130 only. E150=0 follows at 90c9. */
     entity_inc_encounter_b();
     /* 90c5: RES 3,E12D before E150=0. Keep SET 0 from dec_encounter_a.
-     * Do not push s_ms.spawn_ctrl through entity_on_spawn_ctrl — R1 never
+     * Do not push s_ms.spawn_ctrl through entity_on_spawn_ctrl -- R1 never
      * sends cmd 0 so that copy may lack bit1. */
     entity_spawn_res3();
     s_ms.spawn_ctrl = (u8)((s_ms.spawn_ctrl | 0x01) & (u8)~0x08);
@@ -2098,7 +2212,7 @@ static void base_timer_tick(void)
     {
         l = 0x59;
         h = daa_sub1(h, &c);
-        /* 9061 SUB 3,DAA — CF => E159 BCD underflow -> RES 3,E12D. */
+        /* 9061 SUB 3,DAA -- CF => E159 BCD underflow -> RES 3,E12D. */
         s_e159 = daa_sub3(s_e159, &c);
         if (c && (s_e158 & 1))
         {
@@ -2204,7 +2318,7 @@ static void script_boot(u8 round, u16 pc)
         s_continue_round = round;
     /* MSX 0x4225: E12D := 3 (bit0 sticky + bit1 stream). alc_recompute
      * already ran; keep bit1 so cmd-B hold SET3 (8fd4) cannot wipe the
-     * R1 stream — R1 never sends cmd 0 to re-arm bit1. */
+     * R1 stream -- R1 never sends cmd 0 to re-arm bit1. */
     s_ms.spawn_ctrl = 0x02;
     entity_on_spawn_ctrl(s_ms.spawn_ctrl);
     entity_alc_reset();
@@ -2247,29 +2361,36 @@ void map_script_update(void)
     if (s_ms.banner_timer)
     {
         s_ms.banner_timer--;
-        if (!s_ms.banner_timer && s_banner_bgm_arm)
+        if (!s_ms.banner_timer)
         {
-            s_banner_bgm_arm = 0;
-            /* SUB_ram_4163 after round banner: restore main theme if fanfare
-             * or other SFX cleared the ev7->ev1 chain. */
-            if (s_ms.running && !s_cred_on && !sound_bgm_active())
+            player_e102_res(0x10);
+            if (mode_get() == MODE_ORIGINAL && s_ms.banner[0])
+                hud_fill_tile(BG_A, 8, mode_text_row(10), 0, 9);
+            if (s_banner_bgm_arm)
             {
-                if ((s_ms.round & 7) == 0)
-                    sound_play_event(SND_EV_ROUND8);
-                else
-                    sound_play_event(SND_EV_THEME);
+                s_banner_bgm_arm = 0;
+                /* SUB_ram_4163 after round banner: restore main theme if fanfare
+                 * or other SFX cleared the ev7->ev1 chain. */
+                if (s_ms.running && !s_cred_on && !sound_bgm_active())
+                {
+                    if ((s_ms.round & 7) == 0)
+                        sound_play_event(SND_EV_ROUND8);
+                    else
+                        sound_play_event(SND_EV_THEME);
+                }
             }
         }
     }
 
     s_scroll_delta = 0;
+    s_row_carry = 0;
     if (s_ms.running)
     {
         u16 sum;
         u16 prev_px;
 
         /* scroll_velocity_ctrl 0x9480: ramp E710 toward E712 every 4 frames.
-         * E150 bits 0-1 skip the ramp. Clear ceremony freezes E710=0 — MSX
+         * E150 bits 0-1 skip the ramp. Clear ceremony freezes E710=0 -- MSX
          * 90a6 runs inside gameplay_frame_loop which never calls 9480. */
         if (s_clr_phase)
             s_e710 = 0;
@@ -2299,6 +2420,7 @@ void map_script_update(void)
                  * edge, then peek row+1 (restored) so subpixel VSCROLL is
                  * never stale/green. */
                 scroll_precompute(s_ms.row);
+                s_row_carry = 1;
             }
             peek_next_row((u16)(s_ms.row + 1));
             base_approach(1);
@@ -2320,6 +2442,11 @@ u8 map_script_scroll_delta(void)
     return s_scroll_delta;
 }
 
+u8 map_script_row_carry(void)
+{
+    return s_row_carry;
+}
+
 u8 map_script_scroll_speed(void)
 {
     return s_e710;
@@ -2329,26 +2456,8 @@ void map_script_draw_hud(void)
 {
     const ModeAssets *a = mode_assets();
     u16 cols = a->screen_width / 8;
-    u16 vis = cols;
 
     mode_draw_letterbox();
-
-    if (mode_get() == MODE_ORIGINAL)
-        vis = MODE_BAR_COL;
-
-    VDP_setTextPalette(PAL0);
-
-    if (s_ms.banner_timer && s_ms.banner[0])
-    {
-        u16 len = (u16)strlen(s_ms.banner);
-        u16 x = (vis > len) ? (u16)((vis - len) / 2) : 0;
-        VDP_setTextPalette(PAL1);
-        VDP_drawText(s_ms.banner, x, mode_text_row(4));
-    }
-    else
-    {
-        VDP_clearText(0, mode_text_row(4), vis);
-    }
 
     if (mode_get() == MODE_ORIGINAL)
     {
@@ -2356,6 +2465,20 @@ void map_script_draw_hud(void)
         hud_draw_round(s_ms.round);
         hud_draw_time(s_time_on, s_e155);
         return;
+    }
+
+    VDP_setTextPalette(PAL0);
+
+    if (s_ms.banner_timer && s_ms.banner[0])
+    {
+        u16 len = (u16)strlen(s_ms.banner);
+        u16 x = (cols > len) ? (u16)((cols - len) / 2) : 0;
+        VDP_setTextPalette(PAL1);
+        VDP_drawText(s_ms.banner, x, mode_text_row(4));
+    }
+    else
+    {
+        VDP_clearText(0, mode_text_row(4), cols);
     }
 
     VDP_drawText(a->name, 1, 1);
@@ -2402,7 +2525,10 @@ void map_script_draw_credits(void)
             u16 len = (u16)strlen(s);
             u16 vis = (mode_get() == MODE_ORIGINAL) ? MODE_BAR_COL : cols;
             u16 x = (vis > len) ? (u16)((vis - len) / 2) : 0;
-            VDP_drawText(s, x, row);
+            if (mode_get() == MODE_ORIGINAL)
+                hud_draw_str(BG_A, x, row, s);
+            else
+                VDP_drawText(s, x, row);
         }
         row++;
         if (row > mode_text_row(20))

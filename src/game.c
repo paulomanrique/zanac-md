@@ -51,6 +51,11 @@ static void pause_save_tiles(void)
 
 static void pause_draw_text(void)
 {
+    if (mode_get() == MODE_ORIGINAL)
+    {
+        hud_draw_str(BG_A, PAUSE_COL, pause_row(), "PAUSE");
+        return;
+    }
     VDP_setTextPalette(PAL0);
     VDP_setTextPriority(TRUE);
     VDP_drawTextBG(BG_A, "PAUSE", PAUSE_COL, pause_row());

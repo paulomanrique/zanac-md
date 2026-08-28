@@ -64,6 +64,8 @@ const MapScript *map_script_state(void);
 
 /* Pixels the nametable advanced this frame (E710 acc). Ground sprites lock to it. */
 u8   map_script_scroll_delta(void);
+/* E700 bit 1 this frame: map_script_step ran scroll_precompute (row carry). */
+u8   map_script_row_carry(void);
 /* E710 current_scroll_speed. Type 85 8efc: NZ -> dir C, Z -> dir B. */
 u8   map_script_scroll_speed(void);
 
@@ -75,6 +77,10 @@ void map_script_base_cleared(void);
 void map_script_base_seg_down(s16 x, s16 y, u8 variant);
 /* Last live KIND_BASE died: E152 := 0 so 8f5e hold can 90a6. */
 void map_script_base_no_segments(void);
+/* 8c15: live nametable cells from type-0xC9 dispatch (phase 0-3). */
+void map_script_base_8c15(s16 x, s16 y, u8 variant, u8 phase);
+/* 8c80: type 79 88ed stages. HP>=0x15 -> 8ced; NZ -> 8cfa; 0 -> 8d07. */
+void map_script_punch_79_hp(s16 x, s16 y, u8 hp);
 /* 8854/88ed: punch 0x88ab destroyed-tile desc for types 84-86 at SAT x,y. */
 void map_script_punch_88ab(s16 x, s16 y, u8 type);
 /* 880d family: 88ed punches at SAT x,y with per-branch origin SUB. */
