@@ -1493,6 +1493,7 @@ static void become_husk(Slot *e, u8 orig)
  *     (score + anim +0x0d/0e/0f/10 then entity_update)
  *   later: 8f45 scroll-off (Y>=0xD0 -> bfab + clear); +0x0f ? 4898 : 48d0
  */
+static void entity_inc_encounter_a(void);
 static int step_8f45(Slot *e);
 static int step_8f25_unarmed(Slot *e);
 
