@@ -120,6 +120,14 @@ static void show_ship(int vis)
     dx = ship_draw_x();
     if (mode_hud_overlap(dx, MODE_SPR_W))
         vis = 0;
+    if (mode_get() == MODE_ORIGINAL)
+    {
+        s16 y0 = (s16)mode_y_off();
+        s16 dy = mode_draw_y(s_y);
+
+        if (dy < y0 || dy >= (s16)(y0 + 192))
+            vis = 0;
+    }
     SPR_setVisibility(s_spr, vis ? VISIBLE : HIDDEN);
     if (vis)
         SPR_setPosition(s_spr, dx, mode_draw_y(s_y));
@@ -520,6 +528,8 @@ void player_update(void)
             {
                 s_over = 1;
                 s_over_timer = PLAYER_OVER_WAIT;
+                s_e102 = (u8)(s_e102 | 0x80);   /* game_over_handler SET 7 */
+                player_save_hiscore();          /* 0x4672 compare_save_hiscore */
             }
             else
             {
@@ -648,17 +658,7 @@ void player_update(void)
         }
     }
     else if (s_spr)
-    {
-        s16 dx = ship_draw_x();
-
-        if (mode_hud_overlap(dx, MODE_SPR_W))
-            SPR_setVisibility(s_spr, HIDDEN);
-        else
-        {
-            SPR_setVisibility(s_spr, VISIBLE);
-            SPR_setPosition(s_spr, dx, mode_draw_y(s_y));
-        }
-    }
+        show_ship(1);
 }
 
 void player_draw_hud(void)
@@ -702,15 +702,22 @@ void player_draw_hud(void)
 
 void player_draw_over(void)
 {
-    const ModeAssets *a = mode_assets();
-    u16 cols = a->screen_width / 8;
-    const char *msg = "GAME OVER";
-    u16 vis = (mode_get() == MODE_ORIGINAL) ? MODE_BAR_COL : cols;
-    u16 x = (vis > 9) ? (u16)((vis - 9) / 2) : 0;
+    /* game_over_handler 0x468A: " GAME OVER " (lead+trail space) at
+     * nametable 0x3987 (row 12 col 7), charset tiles via 0x5C25. */
+    if (mode_get() == MODE_ORIGINAL)
+    {
+                hud_draw_str(BG_A, 7, mode_text_row(12), " GAME OVER ");
+        return;
+    }
 
-    (void)msg;
-    VDP_setTextPalette(PAL1);
-    VDP_drawText("GAME OVER", x, mode_text_row(12));
+    {
+        const ModeAssets *a = mode_assets();
+        u16 cols = a->screen_width / 8;
+        u16 x = (cols > 9) ? (u16)((cols - 9) / 2) : 0;
+
+        VDP_setTextPalette(PAL1);
+        VDP_drawText("GAME OVER", x, mode_text_row(12));
+    }
 }
 
 void player_release(void)

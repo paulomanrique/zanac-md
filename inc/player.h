@@ -8,7 +8,7 @@
 #define PLAYER_LIVES_INIT   3     /* title_screen_init: (IX+0x0A)=3 at E10A */
 #define PLAYER_IFRAMES      64    /* ship spawn blink IX+0x1B = 0x40 */
 #define PLAYER_DEATH_WAIT   64    /* main-loop respawn wait */
-#define PLAYER_OVER_WAIT    180   /* shorter than MSX 800-frame jingle wait */
+#define PLAYER_OVER_WAIT    0x320 /* game_over_handler 0x469F BC=0x320 */
 
 void player_init(void);
 void player_update(void);
