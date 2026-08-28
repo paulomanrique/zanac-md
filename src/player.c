@@ -98,6 +98,8 @@ static void show_ship(int vis)
 {
     if (!s_spr)
         return;
+    if (mode_get() == MODE_ORIGINAL && s_x >= (s16)(MODE_BAR_COL * 8))
+        vis = 0;
     SPR_setVisibility(s_spr, vis ? VISIBLE : HIDDEN);
     if (vis)
         SPR_setPosition(s_spr, s_x, mode_draw_y(s_y));
@@ -619,7 +621,10 @@ void player_update(void)
     }
     else if (s_spr)
     {
-        SPR_setPosition(s_spr, s_x, mode_draw_y(s_y));
+        if (mode_get() == MODE_ORIGINAL && s_x >= (s16)(MODE_BAR_COL * 8))
+            SPR_setVisibility(s_spr, HIDDEN);
+        else
+            SPR_setPosition(s_spr, s_x, mode_draw_y(s_y));
     }
 }
 
