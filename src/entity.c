@@ -20,32 +20,41 @@
  *   6 Plasma     - no persistent entity (explode_enemies + ev19)
  *   7 High Speed - comet, fire0_dir_table fan, speed 0xC3, fire_life_timer
  * Enemies: G group-1 airborne + round-1 pickups that the spawn_table emits
- *   4-6     box     - 7826: Yvel 8.8 01C0 (bflags Y-only), 5 hp;
- *           type 4 drops 3 type-38; type 5 none; type 6 chip.
- *           Port: dest/bind/script/timer 8.8 (like type20/guns).
+ *   4-6     box     - 7826: DEC +03 SAT countdown (0 wraps 255f) then
+ *           reveal SAT 0xD4 color 0x8F HP5 Yvel 8.8 01C0; not vis/hit
+ *           until SET 7. type 4 drops 3x38; type 5 none; type 6 chip.
+ *           proto_box 77a1: X=(H&3F)+0x38 +0x20/child; types 77ea;
+ *           SAT countdown 7808. Port: dest/bind/script/timer 8.8.
  *   10      duster  - 7a2a: Yvel 8.8 0300, +0c=0x13 (Y|X|X-homing),
  *           x_accel +16=8 tgt +14 (X<0x88?FF:00), +17=1; random_x 71c5.
  *           Port: dest/bind/script/timer 8.8 (like type20/26); aux=+14 tgt.
+ *           4898 u8 wrap-cull Y>=0xD0 / X>=0xD1.
  *   12-15   teruzo  - 7b07: +0c=3 +17=4 set_velocity_from_dir 8.8;
  *           teruzo_motion_tables dir every 8f (+1f). Port: apply_dir_88
  *           speed 4; aux=+18 idx, clock=+1f; dest/bind/script/timer 8.8.
+ *           4898 u8 wrap-cull Y>=0xD0 / X>=0xD1.
  *   16-18   luster  - 7beb/7c8a/7cb3: Yvel 8.8 0200; 16 +0c=1 Y-only
  *           sides 40/B0; 17 +0c=0x13 Xvel FC00 X-home accel 40 iters 4
  *           tgt=spawn X sides 30/B0; 18 +0c=0x13 Xvel +/-0300 X-home
  *           accel 0e iters 2 tgt FF/00 sides 60/90 fire +1d=30->37.
- *           Port: dest/bind/script/timer 8.8; aux=+14; clock=+1d.
- *           16/17->38 (dir +1d); 18->37 aim.
- *   56      sig     - 819d: E=4, join 81a8 speed 5 set_velocity_from_dir 8.8
- *           +0c=3; SAT 0x70. Same path as 59 (drop integer apply_dir).
+ *           Port: dest/bind/script/timer 8.8 u8 wrap; aux=+14; clock=+1d.
+ *           16/17->38 (dir +1d) 8ddb parent XY; 18->37 aim.
+ *           SAT 0x74 start; 16/17 0x18-band 0x74, 0x10-band 0x78+38;
+ *           18 fire 0x74+37, +1d==8 -> 0x78. 4898 Y>=0xD0 / X>=0xD1.
+ *   56      sig     - 819d: 71c5 (Y=0, X=0x28..0xC6), E=4, join 81a8
+ *           speed 5 set_velocity_from_dir 8.8 +0c=3; SAT 0x70. Dir 4 = down.
+ *           4898 u8 wrap-cull Y>=0xD0 / X>=0xD1.
  *   59      sideways 8269: +0x1a&0x0F dir, join 81a8 speed 5
  *           set_velocity_from_dir 8.8 +0c=3; SAT 0x70. From pairdesc 57/58,
  *           stealth 66 (808a x5), swoop28 8ddb C=4. Port: KIND_SIG variant 59
  *           + apply_dir_88(...,5) + 8.8 step (shares 81a8 with type56).
+ *           4898 u8 wrap-cull Y>=0xD0 / X>=0xD1.
  *   63      chip    - pickup, raises shot_level
  *   68      proto_box -> 3 boxes (types 4/5/6)
  *   80      husk    - 8e14: bfb3+ev18+849c first frame, then 8f45 / clear
  *   83      fire-up - 8e3a: Yvel FFE0 8.8; SAT 0x24/0x81 blank vs 0x04/8eaf[+1c]; collect fire_select
- *   44      ground  - 82d0: aim_4c91+set_vel 8.8 speed (R&3)+1, +0c=3, 3 hp;
+ *   44      ground  - 82d0: 71c5 (Y=0, X=(H&7F)+(L&1F)+0x28), then
+ *           aim_4c91+set_vel 8.8 speed (R&3)+1, +0c=3, 3 hp;
  *           SAT 0x40 plane / col-marker 0x44 plane_compl (cyan 0x83);
  *           spr FRAME_PLANE (compl folded; marker occupancy).
  *   64      proto   - table-driven converter (spawn_type_list[E130/2+R&3])
@@ -59,35 +68,43 @@
  *   87      wide    - nametable (no SAT); HP 3; 880d->8892 type-80 husk + 88b1
  *   88      wide    - nametable (no SAT); HP 3; 880d->8892 type-80 husk + 88cb
  *   89      wide    - nametable (no SAT); HP 3; 880d->8892 then 8874: R&7 fire-up + 88d8
- *   46-55   gun     - 8094 ground-gun pairs; Yvel 8.8 0150 (bflags Y-only),
+ *   46-55   gun     - 8094 ground-gun pairs; Y leftover 0 (no +01 write),
+ *           X=0x30/0xC0; Yvel 8.8 0150 (bflags Y-only),
  *           fire 38/21 via 816d/8ddb. SAT 0x48 loga_A / fire 0x4c compl;
  *           spawn_col_marker. Port: dest/bind/script/timer 8.8;
  *           aux=ang|side|latch, clock=+0x18 period. Osc bit5 pauses bind=0;
  *           spr FRAME_LOGA (compl folded); fire flash -> LOGA_C on primary.
- *   61      descender - 8302: Yvel 8.8 0200 (+0c=1), halt Y=0x60
+ *   61      descender - 8302: X=0x40/0xB0, Y leftover 0 (no +01 write);
+ *           Yvel 8.8 0200 (+0c=1), halt Y=0x60
  *           (+1e=0x20, +0c=0), then rise Yvel FC00. Port: dest/bind/
  *           script/timer 8.8; clock=+1e (was integer vy=2/-4).
- *   65-66   stealth - table X, 4/7 hp, 7f99: +17=1 set_vel 8.8 +0c=3;
- *           volley 8084/8087/808a (20/59). Port: dest/bind/script/timer;
- *           clock=+1d period.
- *   67      med_circle - 839f: +0c=3 +17=3 HP5; +1b=0x78 reaim,
- *           +1c=0x1e phases; on 0: aim_4c91+set_vel speed 3, reload
- *           +1b=0x32+(R&0x1e); +05 bit0 arms motion, bit1 stops reaim.
- *           SAT 0x20 pat 8. Port: clock=+1b; aux=phase|mot|stop; 8.8;
- *           spr FRAME_MED_CIRCLE.
+ *   65-66   stealth - 7f99 writes X from 807c, never +01: stream leftover
+ *           Y=0 (top). 4/7 hp, +17=1 set_vel 8.8 +0c=3; volley 8084/8087/
+ *           808a (20/59). +04 sat_col 0x85 (65) / 0x8b (66); SAT 0xCC solid
+ *           (no XOR, no vis). Port: dest/bind/script/timer; clock=+1d.
+ *           4898 u8 wrap-cull Y>=0xD0 / X>=0xD1.
+ *   67      med_circle - 839f: writes Y/X, +04=0x86, SAT 0x20 pat 8;
+ *           +0c=3 +17=3 HP5; +1b=0x78 +1c=0x1e. 83d8: SAT XOR 0x34/0x0c
+ *           only while +05.0 clear (no 44BA, no 4898). First +1b Z:
+ *           SET +05.0, aim_4c91+set_vel speed 3, +04=0x8d, reload
+ *           +1b=0x32+(R&0x1e); +05.1 stops reaim. Port: sat_col 0x86,
+ *           idle XOR not vis; clock=+1b; aux=phase|mot|stop; 8.8;
+ *           spr FRAME_MED_CIRCLE (pat 8 kept).
  *   73-79   base    - nametable-only (sat_col=0 like MSX); HP from base_segment_table
- *   7-9     umber   - 791d: Yvel 8.8 0300, +0c=0x09 (Y|Y-homing), +15=0x10
- *           iters +17=1, tgt +13 unset (0). Burst at Yvel==0: 7x38 / 2x41;
- *           type9 +1d=8 -> type20. Port: dest/bind/script/timer 8.8; clock=+1d.
+ *   7-9     umber   - 791d: X=0x78, Y leftover 0 (top); Yvel 8.8 0300,
+ *           +0c=0x09 (Y|Y-homing), +15=0x10 iters +17=1, tgt +13 unset (0).
+ *           Burst at Yvel==0: 7x38 / 2x41 at parent XY (7 writes IX+01/+02;
+ *           8 copies both; 9 8ddb type20); type9 +1d=8 -> type20.
+ *           Port: dest/bind/script/timer 8.8; clock=+1d. Stream Y=0.
  *   11/69   spawner - 7ad4/7a67: E130 table, interval 0x28, drift on fire
  *           +/-2 bounce u8 X>=0xC0, 8ddb C=3/5, E12D.bit3 gate
  *   22-25   veybar  - 7d0f/7db4: Yvel 8.8 0400, +15=0x14 iters 1, tgt 0;
- *           shared active 7d4c: morph fire @clock 0x20 -> type37 (7d8c).
- *           22/23 +0c=0x09 (Xvel armed, motion off until morph): 7d95
- *           +17=4, 4c91, set_velocity_from_dir, then +17=1 / +15=0x0c /
- *           SET +0c.1 before type37 (parent re-aim; drops spawn +/-1 Xvel).
- *           24/25 +0c=0x1b X-home accel 0x10 clock 0x58, morph spawns
- *           type37 only (no re-aim / X-arm; already on).
+ *           shared active 7d4c: morph fire @clock 0x20 -> type37 (7d8c)
+ *           via 8ddb parent XY (no +4/+8). 22/23 +0c=0x09 (Xvel armed,
+ *           motion off until morph): 7d95 +17=4, 4c91, set_velocity_from_dir,
+ *           then +17=1 / +15=0x0c / SET +0c.1 before type37 (parent re-aim;
+ *           drops spawn +/-1 Xvel). 24/25 +0c=0x1b X-home accel 0x10 clock
+ *           0x58, morph spawns type37 only (no re-aim / X-arm; already on).
  *           Morph SAT telegraph 7d73: when clock<0x40 and (RRCA x2) only
  *           bits 2-3 set, (IX+03)=0x94-E and marker +0x14; fire @0xa0.
  *           Port: dest/bind/script/timer 8.8; clock=+1d; aux=flags(22/23)
@@ -95,8 +112,10 @@
  *   26-29   swooper 7de2/7e78: 8.8 Xvel (FF40/00C0/FE00/0200), Yvel 0280,
  *           +0c=0x0F (Y|X motion|anim|Y_homing), accel +15=07 iters +17=1,
  *           Y tgt +13 unset (0); fire +1e (18/18/04/04)->20; child +1d 37/20/59/41
- *           via 8ddb C=0x04. Anim table 0x7E68/0x7E70 pats 43-46 (+0d/+0e=4,
- *           +0x10=4); 71f6 marker SAT=parent+0x10 (pats 47-50).
+ *           via 8ddb C=0x04 parent XY (no +4/+8), like luster/veybar.
+ *           29->41 C=0x04 heading base+4 may still read offset. Anim table
+ *           0x7E68/0x7E70 pats 43-46 (+0d/+0e=4, +0x10=4); 71f6 marker
+ *           SAT=parent+0x10 (pats 47-50).
  *           +04 body: A 0x8E (7e68), B 0x87 (7e70) via sat_col remap.
  *           Port: dest/bind/script/timer 8.8; aux=child, clock=fire;
  *           spr FRAME_SPINNER_0..3 (compl folded; marker occupancy).
@@ -105,10 +124,13 @@
  *           Xvel FE80 (32: FF00). Port: dest/bind/script/timer 8.8; aux=sib,
  *           clock=+0c|sense|lock|xor. +04^=0x06/frame (sat_col); merge |dx|<0x0B:
  *           +03=0xf4, sib->type40, X+5, +0c=1, SET lock (7f5b-7f78).
- *   31/33   tracker - 7f84: Y-then-X (playerY CP + bit6 CCF); +04^=0x06
- *           @ 7f73; pat 51 sat 0xCC. Stream init ~7f99/807c (no volley).
+ *   31/33   tracker - 7f84 run (no +01 write): leftover Y=0. Y-then-X
+ *           (playerY CP + bit6 CCF); +04^=0x06 @ 7f73; pat 51 sat 0xCC.
+ *           Stream ~7f99/807c X+dir, no volley, Y leftover 0 (top).
  *           Also gswoop 30/32 child (own+1) pre-init sat 0xf0 degid_right.
- *   34      stealth - 7f99 shared 65/66: cruise 8.8 speed 1; 3x38 volley
+ *   34      stealth - 7f99 shared 65/66: 807c X, leftover Y=0 (top);
+ *           cruise 8.8 speed 1; 3x38 volley; +04 sat_col 0x88; SAT 0xCC solid.
+ *           4898 u8 wrap-cull Y>=0xD0 / X>=0xD1.
  *   62      invisible_riser 8709: Yvel 8.8 FF80, every-16f NT poke;
  *           type61 death gate (E140&3F)==(E103&3F) -> 62; else E148>=5
  *           -> 83. Ship touch: INC lives + ev8. Port: bind/timer 8.8;
@@ -117,27 +139,35 @@
  *           each frame, then entity_update + 7904 (HP16). SAT 0x34
  *           pat 13. Port: dest/bind/script/timer 8.8; spr FRAME_BOLT;
  *           vis toggle ~ XOR.
- *   57-58   pairdesc- 81d1: descend Yvel 8.8 0200 (+1f=0x20) then
- *           convert to type 59 (4c91 aim); 59 is 8.8 set_vel speed 5.
- *           SAT 0x6C pat 27 (57) / 0x68 pat 26 (58); color 0x8F.
- *           Port: bind=0x0200; clock=+1f; timer=Yfrac; FRAME_SIG_DOUBLE/TRIPLE.
+ *   57-58   pairdesc- 81d1/8247: 71c5 (Y=0, X=0x28..0xC6), E=4, JP 81ac
+ *           (speed 5 dir 4, +0c=3, +1f=0x20) then convert to type 59 (4c91
+ *           aim). 59 is 8.8 set_vel speed 5. SAT 0x6C pat 27 (57) / 0x68
+ *           pat 26 (58); color 0x8F. Port: apply_dir_88 dir4 spd5; clock=+1f;
+ *           FRAME_SIG_DOUBLE/TRIPLE.
  *   20      lead_homing 8668: +0c=0x0B Y-home tgt 0xFF accel 0x0C iters 1;
  *           Xvel 8.8: hi=(R&3)-2, lo=L (same prng); dest/script like other leads.
  *           Stream-capable (is_port_type): random_x 71c5 Y=0 + type20_init_vel;
  *           also child of umber-9 / stealth-65.
+ *           4898 u8 wrap-cull Y>=0xD0 / X>=0xD1 (no s32 X).
  *   37      lead_bullet 84dd/84e3: +0c=3 +17=3, player_pos_snapshot 4c8b
  *           (= aim_4c91 + set_velocity_from_dir 8.8 speed 3). Plain 37 no XOR.
+ *           Port: dest/bind/script/timer; apply_dir_88; 4898 u8 Y>=0xD0/X>=0xD1.
  *   42      proto_bullet 85cc: CALL 84e3 (type37 init), type:=0xA5, XOR R into
  *           X/Y vel low (8.8); port keeps variant 42 + 8.8 step. Type 79 every-4th.
+ *           4898 u8 wrap-cull like 37.
  *   43      proto_fragment 85d6: CALL 8507 (type38 init), type:=0xA6, same XOR;
  *           port keeps variant 43 + 8.8 step. Base fire 74/76/77/78 via 8dd9;
  *           74/77 C from +0x13 (vx), 76 DEC+mirror, 79 INC+&3 (ROM cadence).
+ *           4898 u8 wrap-cull like 38.
  *   21      light_bar 863b: +0x17=4, dir=+0x1a&0x0F, set_vel 8.8, SFX ev0x16;
- *           SAT 0x18 pat 6. Port: spr FRAME_LIGHT_BAR.
+ *           SAT 0x18 pat 6. Port: spr FRAME_LIGHT_BAR; 4898 u8 wrap-cull.
  *   38      burst_fragment 8507: +0x17=3, dir=+0x1a&0x0F, set_vel 8.8 (42/43 path sans XOR)
+ *           Port: 4898 u8 wrap-cull.
  *   45      light_bar_var 85ee/8608: 3 HP, speed (R&1)+2 via apply_dir_88,
  *           re-aim every 40f (+0x1a += (R&8)-4); aux packs speed|dir, clock=+0x1c;
- *           SAT 0x18 pat 6 (active also toggles 0x20 med). Port: FRAME_LIGHT_BAR.
+ *           8625 SAT +03 = 0x18+((clock&1)<<3) bar/med pulse. Port: FRAME_LIGHT_BAR
+ *           <-> FRAME_MED_CIRCLE on clock LSB (hitbox 16x6 <-> 14x14); sat_col 0x8F.
+ *           4898 u8 wrap-cull so it cannot re-aim past X=0xD1.
  *
  * Round 1's map-script never fires cmd 0; the MSX main loop still
  * runs ground_struct_spawn_ctrl with E12D bit1 set at game start.
@@ -263,7 +293,8 @@ typedef struct {
                      * gun 46-55: fire countdown +0x18; teruzo +0x1f;
                      * pairdesc 57/58: +0x1f descend; descender 61: +0x1e;
                      * type67: +0x1b reaim (0x78 then 0x32+(R&0x1e));
-                     * stealth 34/65/66: +0x1d volley period; off 8.8 fracs */
+                     * stealth 34/65/66: +0x1d volley period; off 8.8 fracs;
+                     * box 4/5/6: 0=782c SAT countdown (hidden), 1=revealed */
     u8  sat;        /* MSX SAT_NAME (+0x03); indexes collision_size_table */
     u8  sat_col;    /* MSX SAT_COLOR (+0x04); TMS ink = low nibble */
     u8  frame;      /* current spr_objs frame (for sat_col remap) */
@@ -287,7 +318,6 @@ static u8  s_stream_slot;     /* E126 stream_slot_ctr; every-16th -> type 61 */
 static u8  s_e124;            /* type35 burst counter; title init = 6 */
 static u8  s_e125;            /* bit0 -> BFA0 immediate type 44 */
 static u16 s_rng;
-static u8  s_box_seq;
 static u8  s_fireup_seq;
 
 /* ALC accumulators: E12E/E12F spawn_pos, E131 level_seg, E132 cmd-12 bias. */
@@ -330,7 +360,10 @@ static const u8 k_fire7_dir[9] = {
     0x0B, 0x0B, 0x0B, 0x0C, 0x0C, 0x0C, 0x0D, 0x0D, 0x0D
 };
 
-/* vel_dir_table 0x4D65 unit X,Y (mag 128). Fire 3 applies word0=X to Y, word1=Y to X. */
+/* vel_dir_table 0x4D65: two words/dir (mag 128). 4cf7 stores word0 -> IX+08 Yvel,
+ * word1 -> IX+0a Xvel, so dir 0 is RIGHT. Arrays keep ROM word order:
+ * k_unit_x[] = word0 (Y), k_unit_y[] = word1 (X). Fire 3 reads them that way;
+ * apply_dir_88 assigns dest=word1 (X) bind=word0 (Y). */
 static const s16 k_unit_x[16] = {
        0,   48,   90,  118,  128,  118,   90,   48,
        0,  -48,  -90, -118, -128, -118,  -90,  -48
@@ -391,9 +424,17 @@ static const s16 tz_yx[4][2] = {
 /* Block byte 2: lower 0x8A / upper 0x89. */
 static const u8 tz_col[4] = { 0x8A, 0x8A, 0x89, 0x89 };
 
-/* proto_box_type_table first groups (values 4/5/6). */
-static const u8 k_box_types[] = {
-    5,6,5, 4,5,6, 5,4,4, 5,5,5, 4,6,4
+/* proto_box_type_table 0x77ea: 10 groups of 3 (types 4/5/6). */
+static const u8 k_box_types[30] = {
+    0x05,0x06,0x05, 0x04,0x05,0x06, 0x05,0x04,0x04, 0x05,0x05,0x05,
+    0x04,0x06,0x04, 0x04,0x04,0x04, 0x06,0x05,0x04, 0x04,0x05,0x06,
+    0x05,0x04,0x06, 0x04,0x04,0x06
+};
+/* proto_box_sat_table 0x7808: countdown written to +03 before 782c DEC. */
+static const u8 k_box_sat[30] = {
+    0x01,0x21,0x01, 0x21,0x01,0x21, 0x01,0x21,0x41, 0x41,0x21,0x01,
+    0x11,0x01,0x11, 0x01,0x11,0x01, 0x21,0x01,0x41, 0x41,0x01,0x21,
+    0x01,0x11,0x21, 0x21,0x11,0x01
 };
 
 static void spr_sync(Slot *s)
@@ -892,6 +933,10 @@ static int enemy_takes_shots(const Slot *e)
     u8 et = slot_msx_type(e);
     u8 pf = post_flags(et);
 
+    if (e->kind == KIND_BOX && !e->clock)
+        return 0;              /* 782c: no entity_post until SET 7 */
+    if (e->kind == KIND_CIRCLE && !(e->aux & 0x40))
+        return 0;              /* 83ee: idle XOR only, no 44BA */
     if (pf & POST_PICK)
         return 0;
     if (!pf)
@@ -1052,10 +1097,8 @@ static void duster_step(Slot *e)
 {
     /* entity_update 4898 +0c=0x13: X_homing then Y/X 8.8 motion.
      * X_homing_sub 496B: tgt=aux(+14), accel=+16=8, B=+17=1.
-     * vx/vy 0 so shared pass inert. */
+     * Motion+cull is step_88_4898 in update_enemies. */
     u16 xvel = e->dest;
-    s32 xpos;
-    s32 ypos;
 
     if ((u8)e->x != e->aux)
     {
@@ -1065,26 +1108,15 @@ static void duster_step(Slot *e)
             xvel = (u16)(xvel - 0x0008);
     }
     e->dest = xvel;
-
-    ypos = ((s32)e->y << 8) | (u8)e->timer;
-    ypos += (s16)e->bind;
-    e->timer = (u8)ypos;
-    e->y = (s16)(ypos >> 8);
-
-    xpos = ((s32)e->x << 8) | (u8)e->script;
-    xpos += (s16)xvel;
-    e->script = (u8)xpos;
-    e->x = (s16)(xpos >> 8);
-    e->vx = 0;
-    e->vy = 0;
 }
 
 static void spawn_luster(Slot *e, u8 type)
 {
     /* handler_type16 0x7beb / type17 0x7c8a / type18 0x7cb3.
+     * Shared 7c05: SAT 0x74 / marker 0x7C, Yvel 0x0200, Y=0.
      * 8.8 packing matches type10 duster: dest=Xvel, bind=Yvel,
      * script=Xfrac, timer=Yfrac. aux=+14 X-home tgt; clock=+1d.
-     * All: Yvel 0x0200, Y=0. Children: 16/17->38, 18->37 aim. */
+     * 16/17->38 dir +1d; 18->37 aim. 8ddb copies parent XY. */
     u8 right = rnd() & 1;
 
     e->kind = KIND_LUSTER;
@@ -1100,38 +1132,38 @@ static void spawn_luster(Slot *e, u8 type)
     e->alive = 1;
     if (type == 18)
     {
-        /* +0c=0x13; +16=0x0e; +17=2; +1d=0x30; sides 60/ff or 90/00 */
+        /* +0c=0x13; +16=0x0e; +17=2; +1d=0x30; C=0x8B;
+         * DE=60ff / HL=9000; 7c32: +14=E, Xvel 03/FD from RRC E. */
         e->x = right ? 0x90 : 0x60;
         e->dest = right ? 0x0300 : 0xFD00;
         e->aux = right ? 0x00 : 0xFF;   /* +14 X-home tgt */
         e->clock = 0x30;                /* +1d fire */
+        e->sat_col = 0x8B;
     }
     else if (type == 17)
     {
-        /* +0c=0x13; Xvel 0xFC00; +16=0x40; +17=4; sides 30/01 or B0/07 */
+        /* +0c=0x13; Xvel 0xFC00; +16=0x40; +17=4; +1e=0xE0;
+         * DE=3001 / HL=B007; +1d=E; +14=D spawn X. C=0x8E. */
         e->x = right ? 0xB0 : 0x30;
         e->dest = 0xFC00;
         e->aux = (u8)e->x;              /* +14 = spawn X */
         e->clock = right ? 7 : 1;       /* +1d dir for type38 */
+        e->sat_col = 0x8E;
     }
     else
     {
-        /* type16: +0c=0x01 Y-only; sides 40/01 or B0/07; +1e band 0xC0 */
+        /* type16: +0c=0x01 Y-only; +1e=0xC0; DE=4001 / HL=B007.
+         * +1d=E dir. C=0x8E. */
         e->x = right ? 0xB0 : 0x40;
         e->dest = 0;
         e->aux = 0;
         e->clock = right ? 7 : 1;       /* +1d dir for type38 */
+        e->sat_col = 0x8E;
     }
-    if (type == 18)
-    {
-        spr_place(e, FRAME_LUSTER_A);     /* pat 29 SAT 0x74 color 0x8B */
-        marker_place(e, FRAME_LUSTER_A_C); /* pat 31 */
-    }
-    else
-    {
-        spr_place(e, FRAME_LUSTER);       /* pat 30 SAT 0x78 color 0x8E */
-        marker_place(e, FRAME_LUSTER_C);  /* pat 32 */
-    }
+    /* 7c14: all three start SAT 0x74 / marker 0x7C. 16/17 sat_col
+     * remaps A-frame baked 0xB -> 0xE. */
+    spr_place(e, FRAME_LUSTER_A);
+    marker_place(e, FRAME_LUSTER_A_C);
 }
 
 static void spawn_teruzo(Slot *e, u8 type)
@@ -1160,27 +1192,41 @@ static void spawn_teruzo(Slot *e, u8 type)
     marker_place(e, FRAME_TERUZO_C);  /* spawn_col_marker SAT 0x64 */
 }
 
-static void spawn_box(Slot *e, u8 type, s16 x, s16 y)
+static void spawn_box(Slot *e, u8 type, s16 x, s16 y, u8 sat_cd)
 {
-    /* handler_type4_box 0x7826 (types 4/5/6 share): after countdown
-     * IX+08=0xC0 Yvel.lo, +0c=1 Y_motion. Port keeps integer vy=1
-     * (prior approx) and packs frac 0xC0 like type20/guns:
-     * dest=Xvel, bind=Yvel, script=Xfrac, timer=Yfrac. */
+    /* handler_type4_box 0x7826 (types 4/5/6 share): +03 is SAT countdown
+     * until DEC hits 0, then spawn_col_marker, HP5, SAT 0xD4/0x8F,
+     * Yvel 8.8 01C0, SET 7. Hidden/unhitable until then (no entity_post).
+     * Stream leftover SAT=0 wraps 255 on first DEC. */
     e->kind = KIND_BOX;
     e->variant = type;
-    e->hp = 5;                  /* handler_type4_box +0x19 = 5 */
+    e->hp = 0;
     e->ground = 0;
     e->x = x;
     e->y = y;
     e->vx = 0;
     e->vy = 0;
-    e->dest = 0;                /* Xvel 8.8 (Y-only) */
-    e->bind = 0x01C0;           /* Yvel 8.8: vy=1 vy_frac=0xC0 */
-    e->script = 0;              /* X frac */
-    e->timer = 0;               /* Y frac */
+    e->dest = 0;
+    e->bind = 0;                /* Yvel armed at 782c reveal */
+    e->script = 0;
+    e->timer = 0;
     e->alive = 1;
-    spr_place(e, FRAME_BOX);
-    marker_place(e, FRAME_BOX_C);  /* spawn_col_marker SAT 0xD8 */
+    e->clock = 0;               /* 0 = countdown */
+    e->sat = sat_cd;            /* +03 countdown, not hitbox yet */
+    e->sat_col = 0;
+    e->aux = 0;
+    e->spr = NULL;
+    e->marker = 0;
+}
+
+/* 77e0: (bcd & 0x0F)*3 into proto_box type/SAT tables. */
+static u8 proto_box_off(u8 bcd)
+{
+    u8 i = (u8)(bcd & 0x0F);
+    u8 off = (u8)(i + (u8)(i << 1));
+    if (off > 27)
+        off = 27;
+    return off;
 }
 
 static void spawn_chip_at(s16 x, s16 y)
@@ -1208,18 +1254,20 @@ static void spawn_chip_at(s16 x, s16 y)
 
 static void apply_dir_88(Slot *e, u8 dir, u8 speed);
 
-/* handler_type56_sig_single @ 819d: E=4 then 81a8 (speed 5,
- * set_velocity_from_dir, +0c=3). Shares ROM 81a8 with type59. */
+/* handler_type56_sig_single @ 819d: 71c5 then E=4 join 81a8 (speed 5,
+ * set_velocity_from_dir, +0c=3). Shares ROM 81a8 with type59. Dir 4 = down. */
 static void spawn_sig(Slot *e)
 {
-    const ModeAssets *a = mode_assets();
+    u8 r1 = rnd();
+    u8 r2 = rnd();
+    u8 x = (u8)((r1 & 0x7f) + (r2 & 0x1f) + 0x28);
 
     e->kind = KIND_SIG;
     e->variant = 56;
     e->hp = 1;
     e->ground = 0;
-    e->x = 8;
-    e->y = (s16)(16 + (rnd() % (a->playfield_h / 2)));
+    e->x = (s16)x;
+    e->y = 0;                   /* 71c5 Y=0; X column 0x28..0xC6 */
     apply_dir_88(e, 4, 5);      /* E=4; +0x17=5 -> set_velocity_from_dir */
     e->alive = 1;
     e->sat_col = 0x8F;           /* +04; XOR 0x09 each frame @ 81c3 */
@@ -1266,6 +1314,8 @@ static u8 aim_4c91(s16 x, s16 y);
 static void spawn_ground_fall(Slot *e, u8 type, s16 x, s16 y, u16 dest)
 {
     /* handler_type44_ground_structure 0x82d0:
+     * Stream: 71c5 X=(H&0x7f)+(L&0x1f)+0x28, Y=0 (aim origin / on-screen
+     * time). Map-script entity_place_ground keeps its XY.
      * +0x17 = (R&3)+1; player_pos_snapshot 4c8b (= aim_4c91 +
      * set_velocity_from_dir 8.8); +0c=3 X|Y motion; +03=0x40 plane,
      * +04=0x83 cyan; spawn_col_marker SAT 0x44. Port: dest/bind/
@@ -1549,25 +1599,23 @@ static void spawn_wide_at(Slot *e, u8 type, s16 x, s16 y, u16 dest)
 
 static void spawn_proto_box(void)
 {
-    const ModeAssets *a = mode_assets();
-    s16 x;
-    s16 y = -8;
+    /* handler_type68 77a1: X=(H&0x3F)+0x38, +0x20 per child;
+     * types from 77ea[(E104&0x0F)*3]; SAT countdown from 7808 after
+     * nibble-swap(E105). Y left 0 (stream slot / 71c5 leftover). */
+    u8 r = rnd();
+    s16 x = (s16)((u8)((r & 0x3F) + 0x38));
+    u8 type_off = proto_box_off(player_score_mid());
+    u8 e105 = player_score_hi();
+    u8 sat_off = proto_box_off((u8)((e105 << 4) | (e105 >> 4)));
     u8 i;
 
-    /* proto_box: random X in ~0x38.., then +0x20 per child, 3 boxes. */
-    x = (s16)(24 + (rnd() % (a->playfield_w - 96)));
     for (i = 0; i < 3; i++)
     {
         Slot *e = free_enemy();
-        u8 t;
         if (!e)
             return;
-        t = k_box_types[s_box_seq];
-        s_box_seq++;
-        if (s_box_seq >= (u8)sizeof(k_box_types))
-            s_box_seq = 0;
-        spawn_box(e, t, x, y);
-        x = (s16)(x + 32);
+        spawn_box(e, k_box_types[type_off + i], x, 0, k_box_sat[sat_off + i]);
+        x = (s16)(x + 0x20);
     }
 }
 
@@ -1635,9 +1683,25 @@ static void spawn_child_dir(s16 x, s16 y, u8 stype, u8 dir)
 static void box_step(Slot *e)
 {
     /* entity_update 4898 Y_motion (+0c=1): 8.8 via bind/timer;
-     * shared pass inert. Types 4/5/6 share handler_type4_box. */
-    s32 ypos = ((s32)e->y << 8) | (u8)e->timer;
+     * shared pass inert. Types 4/5/6 share handler_type4_box.
+     * First-frame 782c: DEC +03, RET NZ (no move / no SAT / no hit). */
+    s32 ypos;
 
+    if (e->kind == KIND_BOX && !e->clock)
+    {
+        e->sat--;
+        if (e->sat)
+            return;
+        e->hp = 5;                  /* +0x19 = 5 */
+        e->bind = 0x01C0;           /* Yvel 8.8: vy=1 vy_frac=0xC0 */
+        e->clock = 1;
+        e->sat_col = 0x8F;          /* +04 */
+        spr_place(e, FRAME_BOX);    /* +03=0xD4 */
+        marker_place(e, FRAME_BOX_C);
+        /* 784d entity_update same frame after SET 7 */
+    }
+
+    ypos = ((s32)e->y << 8) | (u8)e->timer;
     ypos += (s16)e->bind;
     e->timer = (u8)ypos;
     e->y = (s16)(ypos >> 8);
@@ -1651,7 +1715,8 @@ static void spawn_gun(Slot *e, u8 type)
      * 8.8 packing matches type20/26-29/30: dest=Xvel, bind=Yvel,
      * script=Xfrac, timer=Yfrac. aux=ang|side(0x10)|latch(0x40);
      * clock=+0x18 fire countdown. Period/stype/flags from k_gun via
-     * variant. Do not touch type41/45 aux/clock beyond this kind. */
+     * variant. 8094 writes X=0x30/0xC0, never +01: stream leftover Y=0.
+     * Do not touch type41/45 aux/clock beyond this kind. */
     u8 pair = (u8)(((type - 46) & 0xFE) >> 1);
     u8 flags;
     u8 period;
@@ -1667,7 +1732,7 @@ static void spawn_gun(Slot *e, u8 type)
     e->hp = 1;
     e->ground = 0;
     e->x = right ? 0xC0 : 0x30;
-    e->y = -12;
+    e->y = 0;               /* 8094 leaves +01; stream Y=0 */
     e->vx = 0;
     e->vy = 0;
     e->dest = 0;            /* Xvel 8.8 (Y-only) */
@@ -1696,7 +1761,8 @@ static void gun_fire(Slot *e)
     stype = k_gun[pair][3];
     /* 816d: +03=0x4c loga_compl while firing (black flash; no body tint) */
     spr_place(e, FRAME_LOGA_C);
-    spawn_child_dir((s16)(e->x + 4), (s16)(e->y + 8), stype, dir);
+    /* 816d -> 8ddb: copy parent Y/X (IX+01/+02), no SAT centering offset. */
+    spawn_child_dir(e->x, e->y, stype, dir);
 }
 
 static void gun_step(Slot *e)
@@ -1908,13 +1974,20 @@ static void spawn_stealth(Slot *e, u8 type)
     e->hp = (type == 65) ? 4 : 7;
     e->ground = 0;
     e->x = k_stealth_x[si];
-    e->y = -12;
+    e->y = 0;               /* 7f99 leaves +01; stream leftover Y=0 (top) */
     /* 7f99: +17=1 set_velocity_from_dir, +0c=3 X|Y 8.8.
      * script/timer = X/Y fracs; variant==66 stands in for +05 bit0. */
     apply_dir_88(e, k_stealth_dir[si], 1);
     e->alive = 1;
     /* +0x0D/+0x1D = 0x30; type 65 overrides to 0x20. Port: clock=+1d. */
     e->clock = (type == 65) ? 32 : 48;
+    /* 7fc5 +04=0x88; 7fec type65 0x85; 8002 type66 0x8b. Solid SAT. */
+    if (type == 65)
+        e->sat_col = 0x85;
+    else if (type == 66)
+        e->sat_col = 0x8B;
+    else
+        e->sat_col = 0x88;          /* type 34 (0xA2) keeps 0x88 */
     spr_place(e, FRAME_STEALTH);      /* sat 0xCC pat 51 */
     marker_place(e, FRAME_STEALTH_C); /* spawn_col_marker SAT 0xD0 */
 }
@@ -1956,15 +2029,15 @@ static void stealth_step(Slot *e)
             }
         }
     }
-    if (e->spr)
-        SPR_setVisibility(e->spr, (e->clock & 1) ? VISIBLE : HIDDEN);
+    /* 8012: DEC +1d, volley, 4898, 71f6, JP 82a7 (44BA+7904). No vis, no XOR. */
 }
 
 static void spawn_descender(Slot *e)
 {
     /* handler_type61_large_descender 0x8302: +09=02, +0c=1 Y-only 8.8.
      * Pat 62 sart + compl 63 (SAT F8/FC). clock=+1e halt.
-     * +04 from 8eaf[E149&7] via sat_col (0x81->0x8F). */
+     * +04 from 8eaf[E149&7] via sat_col (0x81->0x8F).
+     * 8302 writes X=0x40/0xB0, never +01: leftover Y=0. */
     e->kind = KIND_DESCEND;
     e->variant = 61;
     e->hp = 1;
@@ -1975,7 +2048,7 @@ static void spawn_descender(Slot *e)
     e->script = 0;              /* X frac */
     e->timer = 0;               /* Y frac */
     e->x = (player_x() >= 0x78) ? 64 : 176;
-    e->y = -16;
+    e->y = 0;               /* 8302 leaves +01; stream Y=0 */
     e->vx = 0;
     e->vy = 0;
     e->alive = 1;
@@ -2110,8 +2183,8 @@ static int descender_on_death(Slot *e)
 
 static void spawn_med_circle(Slot *e)
 {
-    /* 0x839f init: X=0x40+(H&0x7f) Y=0x10+(L&0x7f); +0c=3 +17=3
-     * HP=+19=5; +1b=0x78 +1c=0x1e. Motion after first reaim. */
+    /* 0x839f: Y=0x10+(L&0x7f) X=0x40+(H&0x7f); +04=0x86 SAT 0x20;
+     * +0c=3 +17=3 HP5; +1b=0x78 +1c=0x1e. +05.0 still clear. */
     e->kind = KIND_CIRCLE;
     e->variant = 67;
     e->hp = 5;
@@ -2127,16 +2200,18 @@ static void spawn_med_circle(Slot *e)
     e->vx = 0;
     e->vy = 0;
     e->alive = 1;
-    spr_place(e, FRAME_MED_CIRCLE);
+    e->sat_col = 0x86;          /* +04; XOR 0x0c @ 83e0 */
+    spr_place(e, FRAME_MED_CIRCLE); /* +03=0x20 pat 8 */
 }
 
 static void circle_step(Slot *e)
 {
-    /* 0x83d8: SAT XOR flash; DEC +0x1b; on 0: SET +05.0, DEC +0x1c,
-     * if +0x1c==0 SET +05.1; else +04=0x8d, +1b=0x32+(R&0x1e),
-     * aim_4c91 + set_velocity_from_dir (+17=3). Bit0 gates entity_update. */
-    if (e->spr)
-        SPR_setVisibility(e->spr, (e->clock & 1) ? VISIBLE : HIDDEN);
+    /* 0x83d8: SAT name ^=0x34, color ^=0x0c (keep FRAME_MED_CIRCLE).
+     * DEC +1b; NZ + bit0 clear -> 48b8 only. Z: SET +05.0, DEC +1c,
+     * +1c==0 SET +05.1; else +04=0x8d, +1b=0x32+(R&0x1e),
+     * aim_4c91 + set_velocity_from_dir speed 3. Bit0 gates 4898. */
+    e->sat ^= 0x34;
+    spr_set_sat_col(e, (u8)(e->sat_col ^ 0x0c));
 
     e->clock--;
     if (!e->clock)
@@ -2154,11 +2229,13 @@ static void circle_step(Slot *e)
         {
             u8 r = rnd();
             e->clock = (u8)(0x32 + (r & 0x1E));
+            spr_set_sat_col(e, 0x8d);   /* 840a overwrites XOR that frame */
             apply_dir_88(e, aim_4c91(e->x, e->y), 3);
         }
         e->aux = a;
     }
 
+    /* 83ee: BIT 0 of +05 (aux 0x40) else 48b8 — no 4898 while idle. */
     if (e->aux & 0x40)
     {
         s32 xpos = ((s32)e->x << 8) | (u8)e->script;
@@ -2204,13 +2281,14 @@ static int spawn_from_type(u8 t);
 static void spawn_frag(s16 x, s16 y, u8 dir, u8 variant);
 static void entity_inc_encounter_a(void);
 
-/* set_velocity_from_dir (+0x17 = speed) into screen-space 8.8.
- * dest=Xvel, bind=Yvel, script=Xfrac, timer=Yfrac; vx/vy cleared so the
- * shared integer pass does not double-apply. */
+/* set_velocity_from_dir 4cf7 (+0x17 = speed) into screen-space 8.8.
+ * dest=Xvel (word1), bind=Yvel (word0), script=Xfrac, timer=Yfrac; vx/vy
+ * cleared so the shared integer pass does not double-apply.
+ * k_unit_x = ROM word0 (Y), k_unit_y = ROM word1 (X). */
 static void apply_dir_88(Slot *e, u8 dir, u8 speed)
 {
-    s16 xvel = (s16)(k_unit_x[dir & 15] * (s16)speed);
-    s16 yvel = (s16)(k_unit_y[dir & 15] * (s16)speed);
+    s16 xvel = (s16)(k_unit_y[dir & 15] * (s16)speed);
+    s16 yvel = (s16)(k_unit_x[dir & 15] * (s16)speed);
 
     e->dest = (u16)xvel;
     e->bind = (u16)yvel;
@@ -2304,17 +2382,19 @@ static void spawn_frag(s16 x, s16 y, u8 dir, u8 variant)
     else if (variant == 45)
     {
         /* handler_type45_light_bar_var 0x85ee:
-         * +0x17 = (R&1)+2 speed; CALL 850b (pat/dir); +0x19=3 HP; +0x1c=0x28.
-         * Same apply_dir_88 8.8 path as 21/37/38/41/42/43. Meta off fracs:
-         * aux=(speed<<4)|(dir&15), clock=+0x1c re-aim (type41 keeps aux for curve). */
+         * +0x17 = (R&1)+2 speed; CALL 850b (SAT 0x1C/col 0x8F/dir); +0x19=3 HP;
+         * +0x1c=0x28. Same apply_dir_88 8.8 path as 21/37/38/41/42/43.
+         * Meta off fracs: aux=(speed<<4)|(dir&15), clock=+0x1c re-aim.
+         * Active 8625 overwrites SAT 0x18/0x20; spawn LIGHT_BAR until first step. */
         u8 speed = (u8)(2 + (rnd() & 1));
         e->hp = 3;
         e->aux = (u8)((speed << 4) | (dir & 15));
         e->clock = 0x28;
+        e->sat_col = 0x8F;          /* 850b +04; pulse is size not color */
         apply_dir_88(e, (u8)(dir & 15), speed);
     }
     e->alive = 1;
-    /* 21/45: SAT 0x18 pat 6 light_bar (not lead 0x1C). */
+    /* 21: SAT 0x18 pat 6. 45: 850b writes 0x1C then 8625 pulses 0x18/0x20. */
     spr_place(e, (variant == 21 || variant == 45) ? FRAME_LIGHT_BAR : FRAME_LEAD);
 }
 
@@ -2324,9 +2404,8 @@ static void spawn_umber(Slot *e, u8 type)
      * 8.8 packing matches type20/duster: dest=Xvel, bind=Yvel,
      * script=Xfrac, timer=Yfrac. vx/vy 0 so shared pass inert.
      * +0c=0x09 Y|Y_homing; Yvel 0x0300; +15=0x10; +17=1; +13 tgt 0.
+     * 791d writes X=0x78, never +01: stream leftover Y=0 (top).
      * Type9: clock=+0x1d spawn timer 8. */
-    const ModeAssets *a = mode_assets();
-
     e->kind = KIND_UMBER;
     e->variant = type;
     e->hp = 1;
@@ -2338,7 +2417,7 @@ static void spawn_umber(Slot *e, u8 type)
     e->clock = (type == 9) ? 8 : 0;  /* +0x1d type9 only */
     e->aux = 0;
     e->x = 120;             /* +0x02 = 0x78 */
-    e->y = (s16)(a->playfield_h - 28);
+    e->y = 0;               /* 791d leaves +01; stream Y=0 */
     e->vx = 0;
     e->vy = 0;
     e->alive = 1;
@@ -2362,21 +2441,23 @@ static void umber_burst(Slot *e)
     u8 i;
     if (e->variant == 7)
     {
+        /* 0x7986: D/E = parent Y/X; 7x type38 write (HL)=26, +01=D, +02=E.
+         * Same 8ddb class as luster/veybar/swoop: parent XY, no SAT-center. */
         for (i = 0; i < 7; i++)
-            spawn_frag((s16)(e->x + 4), (s16)(e->y + 4), k_umber_burst[i], 38);
+            spawn_frag(e->x, e->y, k_umber_burst[i], 38);
     }
     else if (e->variant == 8)
     {
-        /* 0x79cc: +0x1a = 0x05 and 0x13 (bit4 marks curve sense). */
-        spawn_frag((s16)(e->x + 4), (s16)(e->y + 4), 5, 41);
-        spawn_frag((s16)(e->x + 4), (s16)(e->y + 4), 0x13, 41);
+        /* 0x79cc: two type41; copy IX+01/+02 into both; +0x1a = 0x05 / 0x13. */
+        spawn_frag(e->x, e->y, 5, 41);
+        spawn_frag(e->x, e->y, 0x13, 41);
     }
 }
 
 static void umber_step(Slot *e)
 {
     /* Active 0x7954: burst when Yvel word == 0 (before entity_update);
-     * type9 0x7a12: DEC +0x1d, reload 8, 8ddb type20.
+     * type9 0x7a12: DEC +0x1d, reload 8, 8ddb type20 at parent XY.
      * entity_update +0c=0x09: Y_homing_sub (tgt0, accel 0x10, B=1) then Y 8.8. */
     u16 yvel;
     s32 ypos;
@@ -2391,7 +2472,8 @@ static void umber_step(Slot *e)
         else
         {
             e->clock = 8;
-            spawn_frag((s16)(e->x + 4), (s16)(e->y), 0, 20);
+            /* 0x7a22: A=0x14 type20, 8ddb copies IX+01/+02. */
+            spawn_frag(e->x, e->y, 0, 20);
         }
     }
 
@@ -2454,7 +2536,7 @@ static void veybar_step(Slot *e)
      * Y_homing then Y/X 8.8. Morph 0x7d64: clock<0x40 and (RRCA x2) only
      * bits 2-3 set; 7d73 SAT (IX+03)=0x94-E, marker (IY+03)=SAT+0x14
      * then 71f6 dual-SAT sibling. Fire 0x7d8c when marker==0xa0
-     * (E==0x08 => clock==0x20): spawn type37. 22/23 (type>>1==0x4b):
+     * (E==0x08 => clock==0x20): 8ddb type37 at parent XY. 22/23 (type>>1==0x4b):
      * 7d95 +17=4 aim+set_vel, +17=1 +15=0x0c SET +0c.1; 24/25 skip
      * re-aim/arm (already +0c=0x1b). Telegraph clocks: 0x30/0x20/0x10/0x00
      * -> SAT 0x88/0x8c/0x90/0x94 (pats 34-37). */
@@ -2484,8 +2566,9 @@ static void veybar_step(Slot *e)
                 marker_place(e, (u16)(FRAME_VEYBAR_C0 + fi));
                 if ((u8)(sat + 0x14) == 0xa0)
                 {
-                    spawn_frag((s16)(e->x + 4), (s16)(e->y + 8),
-                               aim_4c91(e->x, e->y), 37);
+                    /* 7dab: alloc + 8ddb A=0x25 type37, IY Y/X = parent.
+                     * 24/25 skip 7d95 (type>>1 != 0x4b). Child 84e3 aims. */
+                    spawn_frag(e->x, e->y, 0, 37);
                 }
             }
         }
@@ -2520,8 +2603,8 @@ static void veybar_step(Slot *e)
                     yvel = e->bind;
                     e->aux = (u8)(e->aux | 2);
                     x_on = 1;
-                    spawn_frag((s16)(e->x + 4), (s16)(e->y + 8),
-                               aim_4c91(e->x, e->y), 37);
+                    /* 7dab: alloc + 8ddb A=0x25 type37 at parent XY. */
+                    spawn_frag(e->x, e->y, 0, 37);
                 }
             }
         }
@@ -2670,7 +2753,11 @@ static void swoop_step(Slot *e)
         s_swoop_afi[si] = fi;
     }
 
-    /* 7e3f: DEC +0x1e; on 0 reload 0x20 and 8ddb(child, C=0x04). */
+    /* 7e3f: DEC +0x1e; on 0 reload 0x20 and 8ddb(child, C=0x04).
+     * 8ddb: IY+01/+02 = parent IX+01/+02 (Y/X). No SAT-center +4/+8.
+     * 26->37 84e3 aims from that XY; 27->20 8668 ignores C; 28->59
+     * already parent XY; 29->41 C=0x04 (heading base+4, may still read
+     * offset). Spinner pats 43-46 unchanged. */
     if (e->clock)
         e->clock--;
     else
@@ -2678,10 +2765,11 @@ static void swoop_step(Slot *e)
         u8 ct = e->aux;
         e->clock = 0x20;
         if (ct == 37)
-            spawn_frag((s16)(e->x + 4), (s16)(e->y + 8),
-                       aim_4c91(e->x, e->y), 37);
+            /* 26: 8ddb A=0x25 type37 at parent XY (84e3 re-aims). */
+            spawn_frag(e->x, e->y, 0, 37);
         else if (ct == 20)
-            spawn_frag((s16)(e->x + 4), (s16)(e->y + 8), 0, 20);
+            /* 27: 8ddb A=0x14 type20 at parent XY. */
+            spawn_frag(e->x, e->y, 0, 20);
         else if (ct == 59)
         {
             Slot *c = free_enemy();
@@ -2690,8 +2778,8 @@ static void swoop_step(Slot *e)
                 init_type59(c, e->x, e->y, 4);
         }
         else
-            /* type 29: LAB_ram_8ddb with C=0x04 (not coarse aim_dir). */
-            spawn_frag((s16)(e->x + 4), (s16)(e->y + 8), 0x04, 41);
+            /* type 29: 8ddb A=0x29 type41 C=0x04 at parent XY. */
+            spawn_frag(e->x, e->y, 0x04, 41);
     }
 }
 
@@ -2708,7 +2796,7 @@ static void spawn_tracker(Slot *e, u8 type)
     e->hp = 7;
     e->ground = 0;
     e->x = k_stealth_x[si];
-    e->y = -12;
+    e->y = 0;               /* 7f84/807c never +01; stream leftover Y=0 */
     e->vx = 0;
     e->vy = 0;
     apply_dir_88(e, k_stealth_dir[si], 1);
@@ -2972,23 +3060,20 @@ static void flash_step(Slot *e)
 
 static void spawn_pairdesc(Slot *e, u8 type)
 {
-    /* 81d1/81ac: +1f=0x20 then entity_update; port keeps Y-only descend
-     * at 2 px/frame as 8.8 (was integer vy=2) before type59 convert. */
-    const ModeAssets *a = mode_assets();
+    /* 81d1/8247: 71c5, SAT 0x6C/0x68, E=4, JP 81ac (speed 5 dir 4,
+     * +0c=3, +1f=0x20). Convert to type59 after countdown. Keep sig art. */
+    u8 r1 = rnd();
+    u8 r2 = rnd();
+    u8 x = (u8)((r1 & 0x7f) + (r2 & 0x1f) + 0x28);
 
     e->kind = KIND_PAIRDESC;
     e->variant = type;
     e->hp = 1;
     e->clock = 32;              /* +0x1f descend frames */
     e->ground = 0;
-    e->dest = 0;                /* Xvel 8.8 (Y-only) */
-    e->bind = 0x0200;           /* Yvel 8.8: vy=2 */
-    e->script = 0;              /* X frac */
-    e->timer = 0;               /* Y frac */
-    e->x = (s16)(16 + (rnd() % (a->playfield_w - 48)));
-    e->y = -12;
-    e->vx = 0;
-    e->vy = 0;
+    e->x = (s16)x;
+    e->y = 0;                   /* 71c5 Y=0; X column 0x28..0xC6 */
+    apply_dir_88(e, 4, 5);      /* E=4; 81ac speed 5; +0c=3 X|Y */
     e->alive = 1;
     e->sat_col = 0x8F;              /* 81c3 XOR shared with 56/59 */
     /* MSX: type57 SAT 0x6C pat27 sig_double; type58 SAT 0x68 pat26 sig_triple */
@@ -2997,14 +3082,18 @@ static void spawn_pairdesc(Slot *e, u8 type)
 
 static void pairdesc_step(Slot *e)
 {
-    /* Y-only 8.8 descend (bind=0x0200); on +1f expire -> type59 @ 8269. */
+    /* +0c=3 X|Y 8.8 (dir 4 speed 5 from 81ac); on +1f expire -> type59 @ 8269. */
     if (e->clock)
     {
+        s32 xpos = ((s32)e->x << 8) | (u8)e->script;
         s32 ypos = ((s32)e->y << 8) | (u8)e->timer;
 
         e->clock--;
+        xpos += (s16)e->dest;
         ypos += (s16)e->bind;
+        e->script = (u8)xpos;
         e->timer = (u8)ypos;
+        e->x = (s16)(xpos >> 8);
         e->y = (s16)(ypos >> 8);
         e->vx = 0;
         e->vy = 0;
@@ -3110,31 +3199,42 @@ static void base_fire(Slot *e)
     /* 0x8d14: A=type-0xC9 -> dispatch_inline_table. ROM words:
      * 73->8d2a, 74->8d51, 75->8d6c, 76->8d73, 77->8d93, 78->8d98, 79->8db8.
      * Aim (4c91) only for 8d98 (type 78). 73/74/76/77/79 share +0x13 cursor (vx). */
+    /* 8d98 (type 78) is the only 8d14 path that aims; 42 re-aims in 84e3. */
     u8 dir = aim_4c91(e->x, e->y);
-    s16 x = (s16)(e->x + 4);
-    s16 y = (s16)(e->y + 8);
+    /* 8ddb: IY+01/+02 = parent IX+01/+02. No +4/+8. */
+    s16 x = e->x;
+    s16 y = e->y;
 
     if (e->variant == 73)
     {
-        /* 8d2a: ADD +0x13,3; while (a=&0x0f) in 9..13 keep adding.
-         * a<9 -> type 21 dir=a; a==14 -> type 42 (C stale: port dir 0);
-         * a==15 -> type 42 dir 4. Cursor stored in unused base vx. */
+        /* 8d2a: ADD +0x13,3; store; AND 0x0F; CP 0x0F / 0x0E / 0x09.
+         * 9..13: JR 8d2d adds 3 to the already-masked A (not the stored word).
+         * a<9 -> type 21 dir=a; a==14 -> type 42 C stale (port dir 0);
+         * a==15 -> type 42 C=4. Cursor in unused base vx. */
         u8 cur = (u8)e->vx;
         u8 a;
         for (;;)
         {
             cur = (u8)(cur + 3);
+            e->vx = (s8)cur;
             a = (u8)(cur & 0x0F);
-            if (a < 9 || a >= 14)
-                break;
+            if (a >= 15)
+            {
+                spawn_frag(x, y, 4, 42);
+                return;
+            }
+            if (a >= 14)
+            {
+                spawn_frag(x, y, 0, 42);
+                return;
+            }
+            if (a < 9)
+            {
+                spawn_frag(x, y, a, 21);
+                return;
+            }
+            cur = a;            /* 8d2d: next ADD uses masked A */
         }
-        e->vx = (s8)cur;
-        if (a >= 15)
-            spawn_frag(x, y, 4, 42);
-        else if (a >= 14)
-            spawn_frag(x, y, 0, 42);
-        else
-            spawn_frag(x, y, a, 21);
         return;
     }
     if (e->variant == 74 || e->variant == 77)
@@ -3230,49 +3330,55 @@ static void base_step(Slot *e)
         idx = 0;
     p5 = k_base[idx][4];
     if (s_e150 & 8)
-        p5 <<= 1;           /* E150 bit3: SLA IX+15 */
+        p5 <<= 1;           /* E150 bit3: SLA IX+15 (once in ROM via +05.0) */
     pat = (u8)(e->dest & 7);
     rec = (u8)((e->dest >> 3) & 0x1F);
     phase = e->script & 3;
-    p = k_pat_blob + k_pat_off[pat] + rec;
-    if (p[0] == 0)
+    /* 8aef type79 -> 8b6c (skip anim). 8b18: rage and phase==3 skip anim
+     * so the fire window stays open at double p5. */
+    if (e->variant != 79 && !((s_e150 & 8) && phase == 3))
     {
-        rec = 0;
-        p = k_pat_blob + k_pat_off[pat];
-        e->dest = (u16)((e->dest & (u16)~0x00F8) | ((u16)rec << 3));
-    }
-    if (phase == 0)
-        rate = p[0];
-    else if (phase == 3)
-        rate = p[2];
-    else
-        rate = p[1];
-
-    sum = (u16)e->timer + rate;
-    if (sum > 255)
-    {
-        s8 step = (e->script & 0x10) ? -1 : 1;
-        s8 np = (s8)(phase + step);
-        e->timer = 0;
-        if (np <= 0)
+        p = k_pat_blob + k_pat_off[pat] + rec;
+        if (p[0] == 0)
         {
-            rec = (u8)(rec + 3);
-            e->dest = (u16)((e->dest & (u16)~0x00F8) | ((u16)(rec & 0x1F) << 3));
-            e->script = (u8)((e->script & 0xF0) | 0);
-            e->script = (u8)(e->script & (u8)~0x10);
+            rec = 0;
+            p = k_pat_blob + k_pat_off[pat];
+            e->dest = (u16)((e->dest & (u16)~0x00F8) | ((u16)rec << 3));
         }
-        else if (np >= 3)
+        if (phase == 0)
+            rate = p[0];
+        else if (phase == 3)
+            rate = p[2];
+        else
+            rate = p[1];
+
+        sum = (u16)e->timer + rate;
+        if (sum > 255)
         {
-            e->script = (u8)((e->script & 0xF0) | 3 | 0x10);
+            s8 step = (e->script & 0x10) ? -1 : 1;
+            s8 np = (s8)(phase + step);
+            e->timer = 0;
+            if (np <= 0)
+            {
+                rec = (u8)(rec + 3);
+                e->dest = (u16)((e->dest & (u16)~0x00F8) | ((u16)(rec & 0x1F) << 3));
+                e->script = (u8)((e->script & 0xF0) | 0);
+                e->script = (u8)(e->script & (u8)~0x10);
+            }
+            else if (np >= 3)
+            {
+                e->script = (u8)((e->script & 0xF0) | 3 | 0x10);
+            }
+            else
+                e->script = (u8)((e->script & 0xF0) | (u8)np | (e->script & 0x10));
         }
         else
-            e->script = (u8)((e->script & 0xF0) | (u8)np | (e->script & 0x10));
+            e->timer = (u8)sum;
     }
-    else
-        e->timer = (u8)sum;
 
     phase = e->script & 3;
-    if ((phase == 3 || e->variant == 79) && e->y >= 0 && e->y < 184)
+    /* 8b6c fire acc: no on-screen Y gate (Y_motion 0xD0 is airborne only). */
+    if (phase == 3 || e->variant == 79)
     {
         fire_acc = (u8)(e->dest >> 8);
         sum = (u16)fire_acc + p5;
@@ -3368,8 +3474,10 @@ static int spawn_from_type(u8 t)
     }
     if (t == 63)
     {
-        const ModeAssets *a = mode_assets();
-        spawn_chip_at((s16)(16 + (rnd() % (a->playfield_w - 32))), -8);
+        /* Stream type63: same leftover as MSX (Y=0) + 71c5 X. */
+        u8 r1 = rnd();
+        u8 r2 = rnd();
+        spawn_chip_at((s16)((u8)((r1 & 0x7f) + (r2 & 0x1f) + 0x28)), 0);
         return 1;
     }
     if (t == 64)
@@ -3389,7 +3497,12 @@ static int spawn_from_type(u8 t)
     if (!e)
         return 0;
     if (t >= 4 && t <= 6)
-        spawn_box(e, t, (s16)(16 + (rnd() % 180)), -8);
+    {
+        /* Stream 4/5/6: 71c5 X, Y=0, SAT leftover 0 -> 256f countdown. */
+        u8 r1 = rnd();
+        u8 r2 = rnd();
+        spawn_box(e, t, (s16)((u8)((r1 & 0x7f) + (r2 & 0x1f) + 0x28)), 0, 0);
+    }
     else if (t == 10)
         spawn_duster(e);
     else if (t >= 12 && t <= 15)
@@ -3399,7 +3512,7 @@ static int spawn_from_type(u8 t)
     else if (t == 20)
     {
         /* handler_type20 8668 stream: random_x_pos 71c5, Y=0; first-frame
-         * Xvel 8.8 via type20_init_vel. Y-home tgt/accel baked in update. */
+         * Xvel 8.8 via type20_init_vel. Y-home then 4898 u8 wrap-cull. */
         u8 r1 = rnd();
         u8 r2 = rnd();
         u8 x = (u8)((r1 & 0x7f) + (r2 & 0x1f) + 0x28);
@@ -3419,7 +3532,14 @@ static int spawn_from_type(u8 t)
     else if (t == 83)
         spawn_fireup(e);
     else if (t == 44)
-        spawn_ground_fall(e, t, (s16)(16 + (rnd() % 180)), -12, 0);
+    {
+        /* 82d0 CALL 71c5: X=(H&0x7f)+(L&0x1f)+0x28, Y=0.
+         * Aim origin + on-screen time. Map-script keeps place_ground XY. */
+        u8 r1 = rnd();
+        u8 r2 = rnd();
+        spawn_ground_fall(e, t,
+            (s16)((u8)((r1 & 0x7f) + (r2 & 0x1f) + 0x28)), 0, 0);
+    }
     else if (t == 70 || t == 71)
         spawn_wide_at(e, t, (s16)(16 + (rnd() % 180)), -16, 0);
     else if (t == 82)
@@ -3672,34 +3792,76 @@ static void update_fire(void)
     }
 }
 
+/* 4898 Y_motion_sub / X_motion_sub: u8 8.8 ADD HL,DE then unsigned
+ * Y>=0xD0 / X>=0xD1 -> entity_clear. Sim stays MSX; letterbox is
+ * mode_draw_y at spr_sync only (do not cull in screen Y). */
+static int step_88_4898(Slot *e)
+{
+    u16 xpos = (u16)(((u16)((u8)e->x) << 8) | (u8)e->script);
+    u16 ypos = (u16)(((u16)((u8)e->y) << 8) | (u8)e->timer);
+
+    xpos = (u16)(xpos + e->dest);
+    ypos = (u16)(ypos + e->bind);
+    e->script = (u8)xpos;
+    e->timer = (u8)ypos;
+    e->x = (s16)(u8)(xpos >> 8);
+    e->y = (s16)(u8)(ypos >> 8);
+    e->vx = 0;
+    e->vy = 0;
+    if ((u8)e->y >= 0xD0 || (u8)e->x >= 0xD1)
+    {
+        spr_kill(e);
+        return 1;
+    }
+    return 0;
+}
+
 static void luster_step(Slot *e)
 {
     /* Active 7c43 (16/17) / 7cd8 (18) then entity_update via 79ae.
      * 16: +0c=1 Y 8.8 only. 17/18: +0c=0x13 X_homing then Y|X 8.8.
-     * X_homing_sub: tgt=aux(+14), accel=+16, B=+17 (4 / 2). */
+     * X_homing_sub: tgt=aux(+14), accel=+16, B=+17 (4 / 2).
+     * 8ddb children at parent XY. 4898 u8 8.8 + Y>=0xD0 / X>=0xD1. */
     u16 xvel = e->dest;
     u16 yvel = e->bind;
-    s32 xpos;
-    s32 ypos;
-    u8 y;
+    u16 xpos;
+    u16 ypos;
+    u8 y = (u8)e->y;
 
     if (e->variant == 18)
     {
-        /* 7ce1: DEC +0x1d; on 0 reload 0x30 and 8ddb type37. */
+        /* 7ce1: DEC +0x1d; on 0 reload 0x30, SAT 0x74/0x7C, 8ddb type37. */
         e->clock--;
         if (!e->clock)
         {
             e->clock = 0x30;
-            spawn_frag((s16)(e->x + 4), (s16)(e->y + 12), 0, 37);
+            spr_place(e, FRAME_LUSTER_A);
+            marker_place(e, FRAME_LUSTER_A_C);
+            spawn_frag(e->x, e->y, 0, 37);
+        }
+        /* 7cfc: +1d==8 -> SAT 0x78/0x80 (open telegraph). */
+        if (e->clock == 8)
+        {
+            spr_place(e, FRAME_LUSTER);
+            marker_place(e, FRAME_LUSTER_C);
         }
     }
     else
     {
-        /* 7c43 band: ((Y+0x10)&+1e)-0x10 == Y -> type38; +1e=C0/E0. */
+        /* 7c43: 0x18-band SAT 0x74/0x7C; 0x10-band SAT 0x78/0x80 + type38. */
         u8 mask = (e->variant == 16) ? 0xC0 : 0xE0;
-        y = (u8)e->y;
-        if ((u8)(((u8)(y + 0x10) & mask) - 0x10) == y)
-            spawn_frag((s16)(e->x + 4), (s16)(e->y + 14), e->clock, 38);
+
+        if ((u8)(((u8)(y + 0x18) & mask) - 0x18) == y)
+        {
+            spr_place(e, FRAME_LUSTER_A);
+            marker_place(e, FRAME_LUSTER_A_C);
+        }
+        else if ((u8)(((u8)(y + 0x10) & mask) - 0x10) == y)
+        {
+            spr_place(e, FRAME_LUSTER);
+            marker_place(e, FRAME_LUSTER_C);
+            spawn_frag(e->x, e->y, e->clock, 38);
+        }
     }
 
     if (e->variant == 17 || e->variant == 18)
@@ -3707,11 +3869,13 @@ static void luster_step(Slot *e)
         u8 accel = (e->variant == 17) ? 0x40 : 0x0e;
         u8 iters = (e->variant == 17) ? 4 : 2;
         u8 i;
+        u8 x = (u8)e->x;
+
         for (i = 0; i < iters; i++)
         {
-            if ((u8)e->x != e->aux)
+            if (x != e->aux)
             {
-                if ((u8)e->x < e->aux)
+                if (x < e->aux)
                     xvel = (u16)(xvel + accel);
                 else
                     xvel = (u16)(xvel - accel);
@@ -3720,21 +3884,26 @@ static void luster_step(Slot *e)
         e->dest = xvel;
     }
 
-    ypos = ((s32)e->y << 8) | (u8)e->timer;
-    ypos += (s16)yvel;
+    ypos = (u16)(((u16)((u8)e->y) << 8) | (u8)e->timer);
+    ypos = (u16)(ypos + yvel);
     e->timer = (u8)ypos;
-    e->y = (s16)(ypos >> 8);
+    e->y = (s16)(u8)(ypos >> 8);
 
     if (e->variant == 17 || e->variant == 18)
     {
-        xpos = ((s32)e->x << 8) | (u8)e->script;
-        xpos += (s16)xvel;
+        xpos = (u16)(((u16)((u8)e->x) << 8) | (u8)e->script);
+        xpos = (u16)(xpos + xvel);
         e->script = (u8)xpos;
-        e->x = (s16)(xpos >> 8);
+        e->x = (s16)(u8)(xpos >> 8);
     }
 
     e->vx = 0;
     e->vy = 0;
+
+    /* Y_motion_sub CP 0xD0; X_motion_sub CP 0xD1 (17/18 bit1 only). */
+    if ((u8)e->y >= 0xD0
+        || ((e->variant == 17 || e->variant == 18) && (u8)e->x >= 0xD1))
+        spr_kill(e);
 }
 
 /* handler_type84_wide_variant 0x8EC7: DEC +0x1c; on 0 reload +0x1d=0x18,
@@ -3917,7 +4086,11 @@ static void update_enemies(void)
             spr_set_sat_col(e, k_t35_col[e->aux]);
         }
         else if (e->kind == KIND_DUSTER)
+        {
             duster_step(e);
+            if (step_88_4898(e))
+                continue;
+        }
         else if (e->kind == KIND_TERUZO)
         {
             /* 7b07: +0c=3 X|Y 8.8; dir reload every 8f via set_vel speed 4. */
@@ -3928,39 +4101,22 @@ static void update_enemies(void)
                 e->clock = 8;
                 teruzo_step(e);
             }
-            {
-                s32 xpos = ((s32)e->x << 8) | (u8)e->script;
-                s32 ypos = ((s32)e->y << 8) | (u8)e->timer;
-
-                xpos += (s16)e->dest;
-                ypos += (s16)e->bind;
-                e->script = (u8)xpos;
-                e->timer = (u8)ypos;
-                e->x = (s16)(xpos >> 8);
-                e->y = (s16)(ypos >> 8);
-                e->vx = 0;
-                e->vy = 0;
-            }
+            if (step_88_4898(e))
+                continue;
         }
         else if (e->kind == KIND_LUSTER)
+        {
             luster_step(e);
+            if (!e->alive)
+                continue;
+        }
         else if (e->kind == KIND_SIG)
         {
             /* type56 @ 819d and type59 @ 8269 both join 81a8: +0c=3
-             * X|Y 8.8 via dest/bind + script/timer (set_velocity_from_dir speed 5). */
-            {
-                s32 xpos = ((s32)e->x << 8) | (u8)e->script;
-                s32 ypos = ((s32)e->y << 8) | (u8)e->timer;
-
-                xpos += (s16)e->dest;
-                ypos += (s16)e->bind;
-                e->script = (u8)xpos;
-                e->timer = (u8)ypos;
-                e->x = (s16)(xpos >> 8);
-                e->y = (s16)(ypos >> 8);
-                e->vx = 0;
-                e->vy = 0;
-            }
+             * X|Y 8.8 via dest/bind + script/timer (set_velocity_from_dir speed 5).
+             * 4898 u8 wrap-cull Y>=0xD0 / X>=0xD1. */
+            if (step_88_4898(e))
+                continue;
             /* 81c3: +04 ^= 0x09 (0x8F<->0x86) */
             spr_set_sat_col(e, (u8)(e->sat_col ^ 0x09));
         }
@@ -3997,22 +4153,12 @@ static void update_enemies(void)
             gun_step(e);
         else if (e->kind == KIND_STEALTH)
         {
-            /* 7f99/8012: volley then entity_update +0c=3 X|Y 8.8
-             * (set_velocity_from_dir speed 1 at spawn). */
+            /* 7f99/8012: volley then entity_update 4898 +0c=3 X|Y 8.8
+             * (set_velocity_from_dir speed 1 at spawn). u8 wrap-cull
+             * Y>=0xD0 / X>=0xD1 (s32 X lived past 0xD1; wrap re-entered). */
             stealth_step(e);
-            {
-                s32 xpos = ((s32)e->x << 8) | (u8)e->script;
-                s32 ypos = ((s32)e->y << 8) | (u8)e->timer;
-
-                xpos += (s16)e->dest;
-                ypos += (s16)e->bind;
-                e->script = (u8)xpos;
-                e->timer = (u8)ypos;
-                e->x = (s16)(xpos >> 8);
-                e->y = (s16)(ypos >> 8);
-                e->vx = 0;
-                e->vy = 0;
-            }
+            if (step_88_4898(e))
+                continue;
         }
         else if (e->kind == KIND_DESCEND)
             descender_step(e);
@@ -4065,35 +4211,23 @@ static void update_enemies(void)
         {
             /* +0c=0x0B: Y_homing + Y_motion + X_motion (no X_homing bit4).
              * Y_homing_sub 0x4942: tgt +13=0xFF, accel +15=0x0C, B=+17=1.
-             * Y 8.8: frac=timer, vel=bind. X 8.8: frac=script, vel=dest
-             * (parity with apply_dir_88 leads). vx/vy 0 -> shared pass inert. */
-            u16 yvel = e->bind;
-            u16 ypos;
-            s32 xpos;
-
+             * Then 4898 u8 8.8 wrap-cull Y>=0xD0 / X>=0xD1 (type45 extra-threat
+             * hole: s32 X lived past 0xD1; Y wrap re-entered). */
             if ((u8)e->y != 0xFF)
-                yvel = (u16)(yvel + 0x000C);
-            e->bind = yvel;
-            ypos = (u16)(((u16)((u8)e->y) << 8) | (u16)e->timer);
-            ypos = (u16)(ypos + yvel);
-            e->timer = (u8)ypos;
-            e->y = (s16)(u8)(ypos >> 8);
-
-            xpos = ((s32)e->x << 8) | (u8)e->script;
-            xpos += (s16)e->dest;
-            e->script = (u8)xpos;
-            e->x = (s16)(xpos >> 8);
-            e->vx = 0;
-            e->vy = 0;
+                e->bind = (u16)(e->bind + 0x000C);
+            if (step_88_4898(e))
+                continue;
         }
         else if (e->kind == KIND_EBULLET
             && (e->variant == 21 || e->variant == 37 || e->variant == 38
                 || e->variant == 42 || e->variant == 43 || e->variant == 45))
         {
             /* 8.8 vels (37/38/21/45 clean; 42/43 XOR'd at spawn): dest=Xvel,
-             * bind=Yvel, script/timer fracs. vx/vy 0; shared pass inert.
-             * Type 45 (0x8608): DEC clock/+0x1c; on 0: R bit0 ?
-             * dir += (R&8)-4 + apply_dir_88(speed) : reload 0x28. */
+             * bind=Yvel, script/timer fracs. Keep apply_dir_88.
+             * u8 wrap + 4898 Y>=0xD0 / X>=0xD1 (same as luster 17/18).
+             * Type 45 (0x8608): DEC clock/+0x1c before 4898; on 0: R bit0 ?
+             * dir += (R&8)-4 + apply_dir_88(speed) : reload 0x28 then DEC (0x27).
+             * 8625: SAT +03 = 0x18 + ((clock&1)<<3) every active frame. */
             if (e->variant == 45)
             {
                 if (e->clock)
@@ -4108,22 +4242,14 @@ static void update_enemies(void)
                         e->aux = (u8)((speed << 4) | (d & 15));
                         apply_dir_88(e, (u8)(d & 15), speed);
                     }
-                    e->clock = 0x28;
+                    /* 8604 LD 0x28 then 8608 DEC => SAT sees 0x27 (odd/med). */
+                    e->clock = 0x27;
                 }
+                /* clock LSB 0: FRAME_LIGHT_BAR SAT 0x18; 1: FRAME_MED_CIRCLE 0x20 */
+                spr_place(e, (e->clock & 1) ? FRAME_MED_CIRCLE : FRAME_LIGHT_BAR);
             }
-            {
-                s32 xpos = ((s32)e->x << 8) | (u8)e->script;
-                s32 ypos = ((s32)e->y << 8) | (u8)e->timer;
-
-                xpos += (s16)e->dest;
-                ypos += (s16)e->bind;
-                e->script = (u8)xpos;
-                e->timer = (u8)ypos;
-                e->x = (s16)(xpos >> 8);
-                e->y = (s16)(ypos >> 8);
-                e->vx = 0;
-                e->vy = 0;
-            }
+            if (step_88_4898(e))
+                continue;
         }
         else if (e->kind == KIND_EBULLET && e->variant == 41)
         {
@@ -4203,9 +4329,20 @@ static void update_enemies(void)
             continue;
         }
         /* Type 69 retires on count==0 only (7abc entity_clear); u8 X wrap
-         * at bounce must not trip playfield cull. */
+         * at bounce must not trip playfield cull. Luster 16-18, duster/teruzo/sig,
+         * stealth 34/65/66, and 8.8 leads/bars 20/21/37/38/42/43/45 use 4898
+         * unsigned Y>=0xD0 / X>=0xD1 in MSX coords (letterbox is draw-only). */
         if (e->kind != KIND_SPAWNER
             && e->kind != KIND_HUSK
+            && e->kind != KIND_LUSTER
+            && e->kind != KIND_DUSTER
+            && e->kind != KIND_TERUZO
+            && e->kind != KIND_SIG
+            && e->kind != KIND_STEALTH
+            && !(e->kind == KIND_EBULLET
+                && (e->variant == 20 || e->variant == 21 || e->variant == 37
+                    || e->variant == 38 || e->variant == 42 || e->variant == 43
+                    || e->variant == 45))
             && (e->x < -16 || e->x > max_x + 16
                 || (e->kind != KIND_GSWOOP && e->y > max_y)
                 || e->y < -24))
@@ -4500,6 +4637,10 @@ static void collide_player(void)
         u8 cls;
         if (!e->alive)
             continue;
+        if (e->kind == KIND_BOX && !e->clock)
+            continue;          /* 782c: no entity_post / SAT is countdown */
+        if (e->kind == KIND_CIRCLE && !(e->aux & 0x40))
+            continue;          /* 83ee: idle XOR only, no 44BA */
         /* 0x453E path: only types on a ship leg (44BA/44B0/44A6) count.
          * Shots-only structures (44CA) and no-post types are ignored. */
         et = slot_msx_type(e);
@@ -4601,7 +4742,6 @@ void entity_init(void)
     s_stream_slot = 0;
     s_e124 = 6;
     s_e125 = 0;
-    s_box_seq = 0;
     s_fireup_seq = 0;
     s_base_left = 0;
     s_e150 = 0;

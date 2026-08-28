@@ -32,6 +32,9 @@ void player_add_shot_level(void);
 void player_grant_life(void);
 /* E103 BCD score_lo for type61 gate (alc_shots&0x3F). */
 u8   player_score_lo(void);
+/* E104 / E105 BCD bytes (proto_box 77ea / 7808 index). */
+u8   player_score_mid(void);
+u8   player_score_hi(void);
 /* E148 chip-overflow counter (type61 -> fire83 if >=5). */
 u8   player_e148(void);
 void player_e148_sub5(void);

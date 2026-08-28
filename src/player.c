@@ -239,6 +239,20 @@ u8 player_score_lo(void)
     return (u8)(((n / 10u) << 4) | (n % 10u));
 }
 
+u8 player_score_mid(void)
+{
+    /* E104 BCD middle byte. */
+    u8 n = (u8)((s_score / 100UL) % 100UL);
+    return (u8)(((n / 10u) << 4) | (n % 10u));
+}
+
+u8 player_score_hi(void)
+{
+    /* E105 BCD high byte. */
+    u8 n = (u8)((s_score / 10000UL) % 100UL);
+    return (u8)(((n / 10u) << 4) | (n % 10u));
+}
+
 u8 player_e148(void)
 {
     return s_e148;
