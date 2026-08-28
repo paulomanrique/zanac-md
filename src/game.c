@@ -98,6 +98,8 @@ static void game_boot(GameMode mode)
 {
     mode_set(mode);
     mode_apply_video();
+    if (mode == MODE_ORIGINAL)
+        VDP_setEnable(FALSE);
 
     VDP_clearPlane(BG_A, TRUE);
     VDP_clearPlane(BG_B, TRUE);

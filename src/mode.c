@@ -70,6 +70,25 @@ s16 mode_draw_x(s16 x, u8 sat_col)
     return x;
 }
 
+u16 mode_letter_attr(void)
+{
+    return TILE_ATTR_FULL(PAL0, TRUE, FALSE, FALSE, LETTER_TILE);
+}
+
+int mode_hud_overlap(s16 draw_x, u16 width)
+{
+    s16 bar;
+    s16 right;
+
+    if (s_mode != MODE_ORIGINAL)
+        return 0;
+    bar = (s16)MODE_BAR_PX;
+    if (draw_x >= bar)
+        return 1;
+    right = (s16)(draw_x + (s16)width);
+    return (right > bar);
+}
+
 u16 mode_y_off(void)
 {
     return s_cur->y_off;
@@ -106,7 +125,7 @@ void mode_draw_letterbox(void)
     if (s_mode != MODE_ORIGINAL)
         return;
 
-    attr = TILE_ATTR_FULL(PAL0, TRUE, FALSE, FALSE, LETTER_TILE);
+    attr = mode_letter_attr();
     /* Screen rows 0-1 and 26-27: 16px letterbox. Leave cols 24-31 to WINDOW. */
     VDP_fillTileMapRect(BG_A, attr, 0, 0, MODE_BAR_COL, 2);
     VDP_fillTileMapRect(BG_A, attr, 0, 26, MODE_BAR_COL, 2);
