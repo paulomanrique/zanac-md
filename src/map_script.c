@@ -649,24 +649,28 @@ static void nt_put(u8 col, u8 row, u8 tid)
 
 /*
  * MSX 8948: VRAM row = Y/8 on the 24-row nametable (top of 192 = row 0).
- * MD: NT pixel Y = simY - scroll_px with VSCROLL = -scroll_px - y_off.
+ * MD: NT pixel Y = simY - scroll_px (8-bit wrap, 32-row plane) with
+ * VSCROLL = -scroll_px - y_off. x is already nametable pixel X (SAT-32).
  */
 static int sat_to_nt(s16 x, s16 y, u8 *col, u8 *row)
 {
-    u8 c = (u8)((u8)x >> 3);
-    s16 nty;
-    u8 vis;
+    u8 c;
+    u16 ntpix;
 
+    if (x < 0)
+        return 0;
+    c = (u8)((u16)x >> 3);
     if (c >= PF_COLS)
         return 0;
+    /* 88ed: C = Y/8 on the 192; C>=0x18 → no punch. Y is the 8948 L
+     * (aligned punch origin), unsigned like MSX SUB on SAT Y. */
     if (y < 0)
         return 0;
-    vis = (u8)((u16)y >> 3);
-    if (vis >= BOOT_ROWS)
+    if ((u8)((u16)y >> 3) >= BOOT_ROWS)
         return 0;
-    nty = (s16)(y - (s16)s_scroll_px);
+    ntpix = (u16)((u16)y - s_scroll_px);
     *col = c;
-    *row = (u8)((nty >> 3) & 31);
+    *row = (u8)((ntpix >> 3) & 31);
     return 1;
 }
 
@@ -753,10 +757,13 @@ static void punch_bind(s16 x, s16 y, u8 variant)
     u8 r;
     u8 c;
     u8 i;
+    u8 ysub;
 
-    /* 8ca2: live SAT X-0x20 / Y-0x10, then 88ed into E800+VRAM.
-     * Same SUB on both modes (MSX 8ca2); Original 4560 still uses SAT X. */
-    if (!sat_to_nt((s16)(x - 0x20), (s16)(y - 0x10), &col, &row))
+    /* 8ca2: live SAT X-0x20 / Y-0x10 (u8), then 88ed into E800+VRAM. */
+    ysub = (u8)((u8)y - 0x10);
+    if ((u8)(ysub >> 3) >= 0x18)
+        return;
+    if (!sat_to_nt((s16)(x - 0x20), (s16)(ysub & 0xF8), &col, &row))
         return;
     w = 1;
     h = 1;
@@ -818,24 +825,25 @@ static const u8 k_88d8[] = {
     4, 0x3E, 0x3E, 0x3E, 0x3E, 4, 0x3A, 0x3E, 0x3E, 0x3D
 };
 
-/* 88ed: desc at (x+xadj, y+yadj). Baseline 8854 is SAT_X-0x20 / Y-0x10. */
+/* 88ed: desc at (x+xadj, y+yadj). Baseline 8854 is SAT_X-0x20 / Y-0x10.
+ * Callers pass live SAT X/Y; nt_from_sat_x does the 8948 nametable bind. */
 static void punch_88ed(s16 x, s16 y, const u8 *d, s16 xadj, s16 yadj)
 {
-    u16 yaln;
     u8 col0;
     u8 row0;
     u8 rows;
     u8 r;
     u8 w;
     u8 c;
+    u8 ysub;
     s16 px = nt_from_sat_x((s16)(x + xadj));
     s16 py = (s16)(y + yadj);
 
-    yaln = (u16)(py - 0x10) & 0xF8;
-    /* 88ed: C = (Y-sub)/8; C>=0x18 -> no punch (below 192). */
-    if ((u8)((u16)(py - 0x10) >> 3) >= 0x18)
+    /* MSX 8854: L = SAT_Y-0x10 (u8), then 88ed CP 0x18 on Y/8. */
+    ysub = (u8)((u8)py - 0x10);
+    if ((u8)(ysub >> 3) >= 0x18)
         return;
-    if (!sat_to_nt(px, (s16)yaln, &col0, &row0))
+    if (!sat_to_nt(px, (s16)(ysub & 0xF8), &col0, &row0))
         return;
 
     rows = *d++;
@@ -889,17 +897,16 @@ void map_script_punch_88d8(s16 x, s16 y)
  * MSX sat_color stays 0 — digit is nametable-only. */
 void map_script_stamp_82_digit(s16 x, s16 y, u8 fire_num)
 {
-    u16 yaln;
     u8 col0;
     u8 row0;
+    u8 ysub;
     s16 px = (s16)(nt_from_sat_x(x) - 8);
-    s16 py = y;
 
-    yaln = (u16)(py - 0x10) & 0xF8;
-    /* Same off-bottom gate as 88ed. */
-    if ((u8)((u16)(py - 0x10) >> 3) >= 0x18)
+    /* 87e2: H=SAT_X-0x28 L=SAT_Y-0x10, then 8948. */
+    ysub = (u8)((u8)y - 0x10);
+    if ((u8)(ysub >> 3) >= 0x18)
         return;
-    if (!sat_to_nt(px, (s16)yaln, &col0, &row0))
+    if (!sat_to_nt(px, (s16)(ysub & 0xF8), &col0, &row0))
         return;
     nt_put(col0, row0, (u8)(0x30 + fire_num));
 }
