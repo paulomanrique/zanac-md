@@ -196,7 +196,8 @@ void game_update(void)
         return;
     }
 
-    /* pause_handler 0x4DA5: MSX STOP -> START in play only. */
+    /* pause_handler 0x4DA5: MSX STOP -> START in play only.
+     * SELECT resume latch (E118 bit7 / SNSMAT row 7 bit 4) has no MD key. */
     if (s_paused)
     {
         if (pressed & BUTTON_START)

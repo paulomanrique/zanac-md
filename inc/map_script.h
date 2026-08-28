@@ -62,7 +62,8 @@ void map_script_draw_hud(void);
 void map_script_reset_scroll(void);
 const MapScript *map_script_state(void);
 
-/* Pixels the nametable advanced this frame (E710 acc). Ground sprites lock to it. */
+/* Pixels the nametable advanced this frame (E711>>5 + row*8). SAT Y for
+ * 8f25-class ground is +8 per E700.1, not this value. */
 u8   map_script_scroll_delta(void);
 /* E700 bit 1 this frame: map_script_step ran scroll_precompute (row carry). */
 u8   map_script_row_carry(void);
