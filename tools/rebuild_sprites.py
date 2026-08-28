@@ -117,6 +117,7 @@ FRAMES = [
     (58, 1, True),     # UMBER_B_C
     (20, 1, True),     # LOGA_B SAT 0x50
     (21, 1, True),     # LOGA_D SAT 0x54
+    (4, 15, False),    # SNOW pat 4 SAT 0x10 fire 3
 ]
 
 
