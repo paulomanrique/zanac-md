@@ -85,6 +85,7 @@ src/boot/rom_head.c     game name "ZANAC MD"
 res/resources.res
 res/map_blob.bin        level data MSX 0x9B64-0xBE26 (generated)
 res/charset_tiles.bin   256 SCREEN2 tiles as MD 4bpp (generated)
+res/charset_ct.bin      SCREEN2 CT bank, gfx_charset_colors 0x64D3 / 0x5CCF
 res/sprites/ship.png    MSX pattern 14 (player ship)
 res/sprites/objs.png    MSX pats + type39 compl (+veybar/spinner/sart/loga18+compl/plane16+compl/bolt13/light_bar6/sig26+27/med_circle8)
 inc/*.h

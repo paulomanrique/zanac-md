@@ -12,6 +12,9 @@
 #define MAP_DEFAULT_ROUND  1
 #define MAP_HAS_CHARSET    1
 #define TILE_TABLES_MSX    0xA444
+/* gfx_charset_colors 0x64D3 / decompress_block 0x5CCF, one bank. */
+#define CHARSET_CT_MSX     0x64D3
+#define CHARSET_CT_LEN     2048
 
 /* LAB_92af ending stream pointer (round 0 credits). */
 #define MAP_ENDING_STREAM  0xA6F4

@@ -21,7 +21,7 @@ SCRIPTS_HI = 0xB7A5  # inclusive terminal byte
 BLOB_LO = 0x9B64     # tile-col region1 through region2
 BLOB_HI = 0xBE26     # inclusive
 CHARSET_BMP = (0x5EFC, 0x64D2)
-CHARSET_COL = (0x64D3, 0x666E)
+CHARSET_COL = (0x64D3, 0x666E)  # gfx_charset_colors, 412-byte RLE -> 2048
 SPRITE_RLE = (0x6976, 0x70B8)
 SPAWN_TIMERS = 0xBE76
 SPAWN_PAIRS = 0xBE7C
@@ -302,9 +302,14 @@ def emit(out_root: Path, rom: bytearray, report: list):
         if len(bmp) >= 2048 and len(col) >= 2048:
             tiles = screen2_to_md4(bmp[:2048], col[:2048])
             (res / "charset_tiles.bin").write_bytes(tiles)
+            # One SCREEN2 bank. load_charset_sprites 0x5CA5 unpacks this
+            # same stream to VRAM 0x2000, 0x2800, 0x3000 (identical).
+            (res / "charset_ct.bin").write_bytes(col[:2048])
             charset_ok = True
             report.append("wrote %s  %d bytes (256 MD 4bpp tiles)" %
                           (res / "charset_tiles.bin", len(tiles)))
+            report.append("wrote %s  %d bytes (one CT bank, 0x64D3 / 0x5CCF)" %
+                          (res / "charset_ct.bin", 2048))
         else:
             report.append("charset size mismatch — MD will use dummy tiles")
     except Exception as e:
@@ -326,6 +331,9 @@ def emit(out_root: Path, rom: bytearray, report: list):
     h.append("#define MAP_DEFAULT_ROUND  1")
     h.append("#define MAP_HAS_CHARSET    %d" % (1 if charset_ok else 0))
     h.append("#define TILE_TABLES_MSX    0xA444")
+    h.append("/* gfx_charset_colors 0x64D3 / decompress_block 0x5CCF, one bank. */")
+    h.append("#define CHARSET_CT_MSX     0x64D3")
+    h.append("#define CHARSET_CT_LEN     2048")
     h.append("")
     h.append("/* LAB_92af ending stream pointer (round 0 credits). */")
     h.append("#define MAP_ENDING_STREAM  0xA6F4")

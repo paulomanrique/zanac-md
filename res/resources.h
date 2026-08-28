@@ -5,6 +5,7 @@
 
 extern const u8 map_blob[8900];
 extern const u8 charset_tiles[8192];
+extern const u8 charset_ct[2048];
 extern const u8 logo_tiles[1952];
 extern const u8 sound_blob[2014];
 extern const SpriteDefinition spr_ship;
