@@ -822,6 +822,8 @@ static const u8 k_79_8d07[] = {
     3, 3, 0x82, 0x1E, 0x83, 3, 0xA4, 0x1E, 0xA3, 3, 0x83, 0x1E, 0x82
 };
 
+static void punch_88ed(s16 x, s16 y, const u8 *d, s16 xadj, s16 yadj);
+
 void map_script_punch_79_hp(s16 x, s16 y, u8 hp)
 {
     const u8 *d = k_79_8d07;
