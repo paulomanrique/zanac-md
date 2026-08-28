@@ -161,13 +161,19 @@
  *           4898 u8 wrap-cull like 38.
  *   21      light_bar 863b: +0x17=4, dir=+0x1a&0x0F, set_vel 8.8, SFX ev0x16;
  *           SAT 0x18 pat 6. Port: spr FRAME_LIGHT_BAR; 4898 u8 wrap-cull.
+ *           Child of guns 46-55 / type 85-86. Not in spawn_type_list 0xBECC;
+ *           stream path (is_port_type) uses 71c5 + leftover +0x1a=0.
  *   38      burst_fragment 8507: +0x17=3, dir=+0x1a&0x0F, set_vel 8.8 (42/43 path sans XOR)
  *           Port: 4898 u8 wrap-cull.
+ *   41      pair_fragment 852f: child of umber-8 / swoop-29. Not in 0xBECC.
+ *           Stream path: 71c5 Y=0 then 852f leftover +0x1a=0 (heading 4).
  *   45      light_bar_var 85ee/8608: 3 HP, speed (R&1)+2 via apply_dir_88,
  *           re-aim every 40f (+0x1a += (R&8)-4); aux packs speed|dir, clock=+0x1c;
  *           8625 SAT +03 = 0x18+((clock&1)<<3) bar/med pulse. Port: FRAME_LIGHT_BAR
  *           <-> FRAME_MED_CIRCLE on clock LSB (hitbox 16x6 <-> 14x14); sat_col 0x8F.
  *           4898 u8 wrap-cull so it cannot re-aim past X=0xD1.
+ *           Child of base type 79. Not in spawn_type_list 0xBECC;
+ *           stream path (is_port_type) uses 71c5 + leftover +0x1a=0.
  *
  * Round 1's map-script never fires cmd 0; the MSX main loop still
  * runs ground_struct_spawn_ctrl with E12D bit1 set at game start.
@@ -719,6 +725,15 @@ static Slot *free_enemy(void)
         if (!s_en[i].alive)
             return &s_en[i];
     return NULL;
+}
+
+/* random_x_pos 0x71C5: X=(H&0x7F)+(L&0x1F)+0x28, Y written 0 by the caller. */
+static u8 random_x_71c5(void)
+{
+    u8 r1 = rnd();
+    u8 r2 = rnd();
+
+    return (u8)((r1 & 0x7f) + (r2 & 0x1f) + 0x28);
 }
 
 /* type 0x23 / handler_type35: +0x18=0; first frame arms 84d1 + SFX/score. */
@@ -2360,6 +2375,7 @@ static const u8 k_pat_off[8] = { 0, 4, 11, 18, 22, 26, 33, 37 };
 
 static int spawn_from_type(u8 t);
 static void spawn_frag(s16 x, s16 y, u8 dir, u8 variant);
+static void init_frag(Slot *e, s16 x, s16 y, u8 dir, u8 variant);
 static void entity_inc_encounter_a(void);
 
 /* set_velocity_from_dir 4cf7 (+0x17 = speed) into screen-space 8.8.
@@ -2392,11 +2408,8 @@ static void apply_dir_88_xor(Slot *e, u8 dir)
     e->bind = (u16)((e->bind & 0xFF00) | ((u8)e->bind ^ ry));
 }
 
-static void spawn_frag(s16 x, s16 y, u8 dir, u8 variant)
+static void init_frag(Slot *e, s16 x, s16 y, u8 dir, u8 variant)
 {
-    Slot *e = free_enemy();
-    if (!e)
-        return;
     e->kind = KIND_EBULLET;
     e->variant = variant;
     e->hp = 1;
@@ -2477,6 +2490,14 @@ static void spawn_frag(s16 x, s16 y, u8 dir, u8 variant)
     e->alive = 1;
     /* 21: SAT 0x18 pat 6. 45: 850b writes 0x1C then 8625 pulses 0x18/0x20. */
     spr_place(e, (variant == 21 || variant == 45) ? FRAME_LIGHT_BAR : FRAME_LEAD);
+}
+
+static void spawn_frag(s16 x, s16 y, u8 dir, u8 variant)
+{
+    Slot *e = free_enemy();
+    if (!e)
+        return;
+    init_frag(e, x, y, dir, variant);
 }
 
 static void spawn_umber(Slot *e, u8 type)
@@ -3562,9 +3583,12 @@ static int is_port_type(u8 t)
 {
     if (t >= 4 && t <= 18) return 1;
     if (t == 20) return 1;          /* lead_homing 0x14 */
+    if (t == 21) return 1;          /* light_bar 0x15; child + stream leftover */
     if (t >= 22 && t <= 30) return 1;
     if (t == 31 || t == 32 || t == 33 || t == 34 || t == 36) return 1;
+    if (t == 41) return 1;          /* pair_fragment 0x29; child + stream leftover */
     if (t == 44) return 1;
+    if (t == 45) return 1;          /* light_bar_var 0x2D; child + stream leftover */
     if (t >= 46 && t <= 55) return 1;
     if (t >= 56 && t <= 59) return 1;
     if (t == 61 || t == 62) return 1;
@@ -3691,6 +3715,14 @@ static int spawn_from_type(u8 t)
         /* Bare table spawn: +0x1a unset -> dir 4 like type56 E=4 sibling. */
         const ModeAssets *a = mode_assets();
         init_type59(e, 8, (s16)(16 + (rnd() % (a->playfield_h / 2))), 4);
+    }
+    else if (t == 21 || t == 41 || t == 45)
+    {
+        /* Stream first frame: alloc writes type only (BF79). Handlers 8635 /
+         * 852f / 85ee do not CALL 71c5; leftover XY is slot RAM. Port slots
+         * are zeroed, so match type20's stream convention: 71c5 Y=0 then
+         * the type init with leftover +0x1a = 0. */
+        init_frag(e, (s16)random_x_71c5(), 0, 0, t);
     }
     else
         return 0;
@@ -4689,7 +4721,8 @@ static void collide_bolt_enemies(Slot *bolt, u8 persist)
             }
             else if (kind == KIND_GROUND)
             {
-                /* 44 → type 35 (k_death_trans). Airborne; no 88ed stamp. */
+                /* type 44 handler 0x82D0 is airborne (4898, not 8f25).
+                 * Death → type 35. Must not 88ed-stamp ground wreck tiles. */
                 become_expl(e, slot_msx_type(e));
             }
             else if (kind == KIND_BASE)

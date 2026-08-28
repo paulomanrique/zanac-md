@@ -1,34 +1,39 @@
 #include "title.h"
-#include "title_md.h"
+#include "title_logo.h"
 #include "game.h"
 #include "map_script.h"
 #include "sound.h"
 #include "resources.h"
+#include "player.h"
+#include "mode.h"
+
+/*
+ * Original boot is MSX title_intro_seq 0x5A11:
+ *   ev3, load_logo_tiles, wait_frames B=2, SCORE/TOP, 5-row swirl along
+ *   logo_swirl_path 0x5B59, draw_title_text, wait fire_edge 0x46BC.
+ * Fire during the swirl RET C skips the rest of the intro (logo settles).
+ *
+ * Mode pick is port-only and stays small: FIRE/START = Original, a dim
+ * "ZANAC MD" row can be highlighted. Do not open an SGDK START/OPTIONS menu.
+ */
 
 #define TITLE_TILE_BASE     (TILE_USER_INDEX + 32)
-#define TITLE_ZANAC_VDP     (TITLE_TILE_BASE + 256)
 #define BG_TILE             TILE_USER_INDEX
+#define TITLE_NT0           2               /* 16px letterbox → MSX row 0 */
+#define TITLE_COLS          32
+#define LOGO_SRC_STRIDE     19              /* draw_logo_row 0x5BCD A*19 */
+#define LOGO_ERASE_ROW      5
+#define SWIRL_WAIT          2               /* wait_frames B=2 at 0x5AA9 */
 
-#define PHASE_ATTRACT       0
-#define PHASE_MAIN          1
-#define PHASE_MODE          2
-
-#define MENU_ROW0           TITLE_MD_PRESS_ROW
-#define MENU_ROW1           (TITLE_MD_PRESS_ROW + 2)
-
-#define PLANE_COLS          40
-#define PLANE_ROWS          28
-
-/* 1.5 s for the wordmark to clear the groove, on either video standard. */
-#define INTRO_FRAMES_NTSC   90
-#define INTRO_FRAMES_PAL    75
+#define PHASE_PREWAIT       0
+#define PHASE_SWIRL         1
+#define PHASE_WAIT          2
 
 static u8 s_phase;
-static u8 s_sel;
+static u8 s_sel;            /* 0 Original, 1 Zanac MD */
 static u16 s_prev;
-static u16 s_intro_t;
-static u16 s_intro_len;
-static u16 s_mdmark_vdp;
+static u8 s_wait;
+static u8 s_swirl[5];       /* E1FA..E1FE */
 
 static const u16 k_tms[16] = {
     RGB24_TO_VDPCOLOR(0x000000),
@@ -68,26 +73,30 @@ static const u16 k_tms_dim[16] = {
     RGB24_TO_VDPCOLOR(0x737373)
 };
 
-/* The MSX charset only holds space, digits, uppercase letters and '.'; every
- * other code point maps to a terrain tile. */
 static u8 charset_tile(char c)
 {
     u8 t = (u8)c;
 
     if (t >= 'a' && t <= 'z')
         t = (u8)(t - 'a' + 'A');
-    if (t == ' ' || t == '.' || (t >= '0' && t <= '9') || (t >= 'A' && t <= 'Z'))
+    if (t == ' ' || t == '.' || t == '@'
+        || (t >= '0' && t <= '9') || (t >= 'A' && t <= 'Z'))
         return t;
     return ' ';
+}
+
+static void put_tile(u16 x, u16 y, u8 tid, u16 pal)
+{
+    u16 tile = (u16)(TITLE_TILE_BASE + tid);
+
+    VDP_setTileMapXY(BG_A, TILE_ATTR_FULL(pal, FALSE, FALSE, FALSE, tile), x, y);
 }
 
 static void draw_str_pal(const char *s, u16 x, u16 y, u16 pal)
 {
     while (*s)
     {
-        u16 tile = (u16)(TITLE_TILE_BASE + charset_tile(*s));
-
-        VDP_setTileMapXY(BG_A, TILE_ATTR_FULL(pal, FALSE, FALSE, FALSE, tile), x, y);
+        put_tile(x, y, charset_tile(*s), pal);
         x++;
         s++;
     }
@@ -96,13 +105,21 @@ static void draw_str_pal(const char *s, u16 x, u16 y, u16 pal)
 static void draw_str_cx_pal(const char *s, u16 y, u16 pal)
 {
     u16 len = (u16)strlen(s);
-    u16 x = (len < 32) ? (u16)((32 - len) / 2) : 0;
+    u16 x = (len < TITLE_COLS) ? (u16)((TITLE_COLS - len) / 2) : 0;
 
     draw_str_pal(s, x, y, pal);
 }
 
-/* Color 0 is transparent on both planes, so an all-zero tile would let the
- * backdrop through. Index 1 is black in every text palette. */
+static u16 fire_mask(void)
+{
+    return (u16)(BUTTON_A | BUTTON_C | BUTTON_START);
+}
+
+static int fire_edge(u16 pressed)
+{
+    return (pressed & fire_mask()) != 0;
+}
+
 static void load_bg_tile(void)
 {
     static const u32 black[8] = {
@@ -113,114 +130,251 @@ static void load_bg_tile(void)
     VDP_loadTileData(black, BG_TILE, 1, CPU);
 }
 
-/* BG_A is the lid of the groove: see-through above the slot so the blue rising
- * on BG_B shows against the backdrop, opaque black from the slot down so the
- * part of the wordmark that has not emerged yet stays buried. */
-static void fill_bg(void)
+static void fill_letterbox(void)
 {
     u16 attr = TILE_ATTR_FULL(PAL0, FALSE, FALSE, FALSE, BG_TILE);
 
-    VDP_fillTileMapRect(BG_A, 0, 0, 0, PLANE_COLS, TITLE_GROOVE_ROW);
-    VDP_fillTileMapRect(BG_A, attr, 0, TITLE_GROOVE_ROW,
-                        PLANE_COLS, PLANE_ROWS - TITLE_GROOVE_ROW);
+    VDP_fillTileMapRect(BG_A, attr, 0, 0, TITLE_COLS, TITLE_NT0);
+    VDP_fillTileMapRect(BG_A, attr, 0, 26, TITLE_COLS, 2);
 }
 
-static void clear_rows(u16 from, u16 to)
+static void fill_playfield(void)
 {
     u16 attr = TILE_ATTR_FULL(PAL0, FALSE, FALSE, FALSE, BG_TILE);
 
-    VDP_fillTileMapRect(BG_A, attr, 0, from, PLANE_COLS, (u16)(to - from + 1));
-}
-
-/* Blue wordmark on BG_B so it can be scrolled as a whole and pass behind the
- * MD mark, which lives on BG_A and never moves. */
-static void draw_logo(void)
-{
-    VDP_waitDMACompletion();
-
-    s_mdmark_vdp = TITLE_ZANAC_VDP + title_zanac.tileset->numTile;
-
-    VDP_loadTileSet(title_zanac.tileset, TITLE_ZANAC_VDP, CPU);
-    VDP_loadTileSet(title_mdmark.tileset, s_mdmark_vdp, CPU);
-
-    VDP_setTileMapEx(BG_B, title_zanac.tilemap,
-                     TILE_ATTR_FULL(PAL1, FALSE, FALSE, FALSE, TITLE_ZANAC_VDP),
-                     TITLE_ZANAC_TILE_X, TITLE_ZANAC_TILE_Y,
-                     0, 0, TITLE_ZANAC_TILE_W, TITLE_ZANAC_TILE_H, CPU);
-
-    VDP_setTileMapEx(BG_A, title_mdmark.tilemap,
-                     TILE_ATTR_FULL(PAL1, FALSE, FALSE, FALSE, s_mdmark_vdp),
-                     TITLE_MDMARK_TILE_X, TITLE_MDMARK_TILE_Y,
-                     0, 0, TITLE_MDMARK_TILE_W, TITLE_MDMARK_TILE_H, CPU);
-}
-
-/* t counts frames into the intro; at t == 0 the wordmark sits a full height
- * below its resting place, fully swallowed by the groove. */
-static void intro_seek(u16 t)
-{
-    s16 off;
-
-    s_intro_t = (t > s_intro_len) ? s_intro_len : t;
-    off = (s16)(((u32)TITLE_ZANAC_TRAVEL * (s_intro_len - s_intro_t)) / s_intro_len);
-    VDP_setVerticalScroll(BG_B, (s16)-off);
-}
-
-static bool intro_done(void)
-{
-    return s_intro_t >= s_intro_len;
-}
-
-static void draw_press_start(void)
-{
-    draw_str_cx_pal("PRESS START", TITLE_MD_PRESS_ROW, PAL3);
-}
-
-static void draw_menu(const char *first, const char *second)
-{
-    clear_rows(MENU_ROW0, MENU_ROW1);
-    draw_str_cx_pal(first, MENU_ROW0, (s_sel == 0) ? PAL3 : PAL2);
-    draw_str_cx_pal(second, MENU_ROW1, (s_sel == 0) ? PAL2 : PAL3);
-}
-
-static void draw_main_menu(void)
-{
-    draw_menu("START", "OPTIONS");
-}
-
-static void draw_mode_menu(void)
-{
-    draw_menu("ZANAC MSX ORIGINAL", "ZANAC MD");
+    VDP_fillTileMapRect(BG_A, attr, 0, TITLE_NT0, TITLE_COLS, 24);
 }
 
 static void load_title_tiles(void)
 {
     VDP_loadTileData((const u32 *)charset_tiles, TITLE_TILE_BASE, 256, CPU);
+    /* load_logo_tiles 0x5C3C: overlay SCREEN2 tiles 0xB0.. into the charset. */
+    VDP_loadTileData((const u32 *)logo_tiles,
+                     (u16)(TITLE_TILE_BASE + LOGO_TILE_MSX_FIRST),
+                     LOGO_TILE_COUNT, CPU);
 }
 
 static void setup_title_palettes(void)
 {
     PAL_setPalette(PAL0, k_tms, CPU);
-    PAL_setPalette(PAL1, title_md_palette, CPU);
+    PAL_setPalette(PAL1, k_tms, CPU);
     PAL_setPalette(PAL2, k_tms_dim, CPU);
     PAL_setPalette(PAL3, k_tms, CPU);
     VDP_setBackgroundColor(0);
 }
 
-static void draw_title_screen(void)
+/* 0x3803 SCORE / 0x3811 TOP, then render_lives_score 0x4996. */
+static void draw_score_top(void)
 {
-    fill_bg();
-    draw_logo();
-    intro_seek(0);
+    char buf[8];
+    u32 n;
+    u8 i;
+    u8 nz;
+    u32 div;
+    u8 d;
+    u16 row = TITLE_NT0;
+
+    draw_str_pal("SCORE", 3, row, PAL3);
+    draw_str_pal("TOP", 17, row, PAL3);
+
+    n = player_score();
+    if (n > 999999UL)
+        n = 999999UL;
+    nz = 0;
+    for (i = 0; i < 6; i++)
+    {
+        u8 k;
+
+        div = 1;
+        for (k = 0; k < (u8)(5 - i); k++)
+            div *= 10;
+        d = (u8)((n / div) % 10);
+        if (d || nz || i == 5)
+        {
+            buf[i] = (char)('0' + d);
+            nz = 1;
+        }
+        else
+            buf[i] = ' ';
+    }
+    buf[6] = 0;
+    draw_str_pal(buf, 9, row, PAL3);
+
+    n = player_hiscore();
+    if (n > 999999UL)
+        n = 999999UL;
+    nz = 0;
+    for (i = 0; i < 6; i++)
+    {
+        u8 k;
+
+        div = 1;
+        for (k = 0; k < (u8)(5 - i); k++)
+            div *= 10;
+        d = (u8)((n / div) % 10);
+        if (d || nz || i == 5)
+        {
+            buf[i] = (char)('0' + d);
+            nz = 1;
+        }
+        else
+            buf[i] = ' ';
+    }
+    buf[6] = 0;
+    draw_str_pal(buf, 21, row, PAL3);
+}
+
+/* draw_logo_row 0x5BA0. src_row 5 is the blank strip used to erase. */
+static void draw_logo_row(u8 src_row, u8 col, u8 row)
+{
+    u8 n = LOGO_DRAW_COLS;
+    u8 i;
+    const u8 *src;
+    u16 nt_row;
+
+    if (row >= 24)
+        return;
+    if (col >= 32)
+        return;
+    if (col >= 0x0E)
+        n = (u8)((u8)~col + 0x21);
+    nt_row = (u16)(TITLE_NT0 + row);
+    src = logo_tile_rows + (u16)src_row * LOGO_SRC_STRIDE;
+    for (i = 0; i < n; i++)
+        put_tile((u16)(col + i), nt_row, src[i], PAL3);
+}
+
+static void lookup_swirl(u8 a, u8 *col, u8 *row)
+{
+    u8 i = (u8)(a << 1);
+
+    *col = logo_swirl_path[i];
+    *row = logo_swirl_path[i + 1];
+}
+
+/* draw_title_text 0x5AC8. Nametable rows + letterbox. */
+static void draw_title_text(void)
+{
+    static const u8 k_mark0[3] = { 0xE7, 0xE9, 0xEB };
+    static const u8 k_mark1[3] = { 0xE8, 0xEA, 0xEC };
+    u8 i;
+
+    draw_str_pal("GAME DESIGNED BY COMPILE", 3, (u16)(TITLE_NT0 + 15), PAL3);
+    draw_str_pal("PRODUCED      BY AII", 3, (u16)(TITLE_NT0 + 16), PAL3);
+    draw_str_pal("PRESENTED     BY PONY INC.", 3, (u16)(TITLE_NT0 + 17), PAL3);
+    draw_str_pal("COPYRIGHT @ 1986 PONY INC.", 3, (u16)(TITLE_NT0 + 18), PAL3);
+    for (i = 0; i < 3; i++)
+    {
+        put_tile((u16)(14 + i), (u16)(TITLE_NT0 + 20), k_mark0[i], PAL3);
+        put_tile((u16)(14 + i), (u16)(TITLE_NT0 + 21), k_mark1[i], PAL3);
+    }
+}
+
+static void swirl_init(void)
+{
+    u8 i;
+    u8 a = 0x1C;
+
+    for (i = 0; i < 5; i++)
+    {
+        s_swirl[i] = a;
+        a = (u8)(a + 4);
+    }
+}
+
+/* One body of LAB_ram_5a4a. Returns 1 when all 5 rows have reached 0. */
+static int swirl_step(void)
+{
+    u8 i;
+    u8 done = 0;
+    u8 col;
+    u8 row;
+    u8 a;
+
+    for (i = 0; i < 5; i++)
+    {
+        a = s_swirl[i];
+        if (!a || a >= 0x1C)
+            continue;
+        lookup_swirl(a, &col, &row);
+        draw_logo_row(LOGO_ERASE_ROW, col, (u8)(row + i));
+    }
+
+    draw_title_text();
+
+    for (i = 0; i < 5; i++)
+    {
+        a = s_swirl[i];
+        a--;
+        if ((s8)a < 0)
+        {
+            done++;
+            a++;
+        }
+        s_swirl[i] = a;
+        if (a >= 0x1C)
+            continue;
+        lookup_swirl(a, &col, &row);
+        draw_logo_row(i, col, (u8)(row + i));
+    }
+    return (done >= 5);
+}
+
+static void swirl_settle(void)
+{
+    u8 i;
+    u8 col;
+    u8 row;
+
+    lookup_swirl(0, &col, &row);
+    for (i = 0; i < 5; i++)
+        draw_logo_row(i, col, (u8)(row + i));
+    draw_title_text();
+}
+
+static void draw_mode_hint(void)
+{
+    /* Small, not a full menu. Default Original; MD is the dim second line. */
+    draw_str_cx_pal("FIRE START", (u16)(TITLE_NT0 + 22), PAL3);
+    draw_str_cx_pal("ORIGINAL", (u16)(TITLE_NT0 + 23),
+                    (s_sel == 0) ? PAL3 : PAL2);
+    draw_str_cx_pal("ZANAC MD", (u16)(TITLE_NT0 + 24),
+                    (s_sel == 0) ? PAL2 : PAL3);
+}
+
+static void enter_wait(void)
+{
+    s_phase = PHASE_WAIT;
+    s_sel = 0;
+    swirl_settle();
+    draw_mode_hint();
+}
+
+static void confirm_start(void)
+{
+    GameMode mode = (s_sel == 0) ? MODE_ORIGINAL : MODE_ZANAC_MD;
+    u16 joy = JOY_readJoypad(JOY_1);
+
+    /* Debug warps stay START-held modifiers so fire (A/C) starts the game. */
+    if ((joy & BUTTON_START) && (joy & BUTTON_C))
+        game_start_round(mode, map_script_continue_round());
+    else if ((joy & BUTTON_START) && (joy & BUTTON_B))
+        game_start_ending(mode);
+    else if ((joy & BUTTON_START) && (joy & BUTTON_A))
+        game_start_round(mode, 8);
+    else
+        game_start(mode);
 }
 
 void title_enter(void)
 {
-    s_phase = PHASE_ATTRACT;
+    s_phase = PHASE_PREWAIT;
     s_sel = 0;
     s_prev = JOY_readJoypad(JOY_1);
-    s_intro_t = 0;
-    s_intro_len = IS_PAL_SYSTEM ? INTRO_FRAMES_PAL : INTRO_FRAMES_NTSC;
+    s_wait = SWIRL_WAIT;
+    swirl_init();
 
+    VDP_setEnable(FALSE);
     VDP_setWindowOff();
     VDP_setScreenWidth256();
 
@@ -238,53 +392,60 @@ void title_enter(void)
     load_bg_tile();
     setup_title_palettes();
     load_title_tiles();
-    draw_title_screen();
+    fill_playfield();
+    fill_letterbox();
     sound_play_title();
 }
 
 void title_update(void)
 {
     u16 joy = JOY_readJoypad(JOY_1);
-    u16 pressed = joy & ~s_prev;
+    u16 pressed = (u16)(joy & ~s_prev);
 
-    if (s_phase == PHASE_ATTRACT)
+    if (s_phase == PHASE_PREWAIT)
     {
-        if (!intro_done())
+        /* 0x5A11 fire_edge before load still applies: skip straight to wait. */
+        if (fire_edge(pressed))
         {
-            /* START during the intro snaps it to the end rather than being
-             * swallowed; the player still presses again to open the menu. */
-            intro_seek((pressed & BUTTON_START) ? s_intro_len : (u16)(s_intro_t + 1));
-            if (intro_done())
-                draw_press_start();
+            VDP_setEnable(TRUE);
+            draw_score_top();
+            enter_wait();
             s_prev = joy;
             return;
         }
-
-        if (pressed & BUTTON_START)
+        if (s_wait)
         {
-            s_phase = PHASE_MAIN;
-            s_sel = 0;
-            draw_main_menu();
+            s_wait--;
+            if (!s_wait)
+            {
+                VDP_setEnable(TRUE);
+                draw_score_top();
+                s_phase = PHASE_SWIRL;
+                s_wait = 0;
+            }
         }
         s_prev = joy;
         return;
     }
 
-    if (s_phase == PHASE_MAIN)
+    if (s_phase == PHASE_SWIRL)
     {
-        if (pressed & (BUTTON_UP | BUTTON_DOWN))
+        if (fire_edge(pressed))
         {
-            s_sel ^= 1;
-            draw_main_menu();
+            enter_wait();
+            s_prev = joy;
+            return;
         }
-
-        if (pressed & BUTTON_START && s_sel == 0)
+        if (s_wait)
         {
-            s_phase = PHASE_MODE;
-            s_sel = 0;
-            draw_mode_menu();
+            s_wait--;
+            s_prev = joy;
+            return;
         }
-
+        if (swirl_step())
+            enter_wait();
+        else
+            s_wait = SWIRL_WAIT;
         s_prev = joy;
         return;
     }
@@ -292,27 +453,14 @@ void title_update(void)
     if (pressed & (BUTTON_UP | BUTTON_DOWN))
     {
         s_sel ^= 1;
-        draw_mode_menu();
+        draw_mode_hint();
     }
 
-    if (pressed & BUTTON_START)
+    if (fire_edge(pressed))
     {
-        GameMode mode = (s_sel == 0) ? MODE_ORIGINAL : MODE_ZANAC_MD;
-
-        /* Continue: title_screen_init 0x4254 skips the E701 := 1 at 0x4256 when
-         * check_esc_key (0x43D2) reports ESC held, so the run resumes at the
-         * last round reached instead of restarting at 1. C is the Mega Drive
-         * stand-in; on a cold boot the saved round is still 1, which makes this
-         * identical to a normal start.
-         * B and A stay as the debug warps this screen replaced. */
-        if (joy & BUTTON_C)
-            game_start_round(mode, map_script_continue_round());
-        else if (joy & BUTTON_B)
-            game_start_ending(mode);
-        else if (joy & BUTTON_A)
-            game_start_round(mode, 8);
-        else
-            game_start(mode);
+        if (joy & BUTTON_DOWN)
+            s_sel = 1;
+        confirm_start();
     }
 
     s_prev = joy;
