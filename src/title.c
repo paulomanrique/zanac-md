@@ -1,4 +1,5 @@
 #include "title.h"
+#include "title_md.h"
 #include "title_logo.h"
 #include "game.h"
 #include "map_script.h"
@@ -9,20 +10,27 @@
 
 /*
  * Original boot is MSX title_intro_seq 0x5A11:
- *   ev3, load_logo_tiles, wait_frames B=2, SCORE/TOP, 5-row swirl along
- *   logo_swirl_path 0x5B59, draw_title_text, wait fire_edge 0x46BC.
+ *   ev3, wait_frames B=2, SCORE/TOP, 5-bar swirl along logo_swirl_path
+ *   0x5B59, draw_title_text, wait fire_edge 0x46BC.
  * Fire during the swirl RET C skips the rest of the intro (logo settles).
  *
- * Mode pick is port-only and stays small: FIRE/START = Original, a dim
- * "ZANAC MD" row can be highlighted. Do not open an SGDK START/OPTIONS menu.
+ * HIS art, same motion:
+ *   BG_B  - blue title_zanac wordmark, 5 staggered strips on the MSX path
+ *           (deltas from path[0] mapped onto TITLE_ZANAC_TILE_X/Y).
+ *   BG_A  - opaque groove lip + STATIC title_mdmark in front + SCORE/credits.
+ * The MD mark is drawn once at rest and never moves. Color 0 on both planes
+ * is transparent, so the blue settles behind the mark.
+ *
+ * Mode pick stays small: FIRE/START = Original, a dim "ZANAC MD" row can
+ * be highlighted. Do not open an SGDK START/OPTIONS menu.
  */
 
 #define TITLE_TILE_BASE     (TILE_USER_INDEX + 32)
+#define TITLE_ZANAC_VDP     (TITLE_TILE_BASE + 256)
 #define BG_TILE             TILE_USER_INDEX
 #define TITLE_NT0           2               /* 16px letterbox → MSX row 0 */
 #define TITLE_COLS          32
-#define LOGO_SRC_STRIDE     19              /* draw_logo_row 0x5BCD A*19 */
-#define LOGO_ERASE_ROW      5
+#define PLANE_TH            32
 #define SWIRL_WAIT          2               /* wait_frames B=2 at 0x5AA9 */
 
 #define PHASE_PREWAIT       0
@@ -34,6 +42,13 @@ static u8 s_sel;            /* 0 Original, 1 Zanac MD */
 static u16 s_prev;
 static u8 s_wait;
 static u8 s_swirl[5];       /* E1FA..E1FE */
+static u16 s_mdmark_vdp;
+
+/* 7-tile-tall wordmark → 5 swirl bars. MSX used 5×1; the HIS underline is
+ * 3 tiles so it travels as the last bar. dest Y = path_row + src_y, the
+ * same stagger as draw_logo_row's (row + i). */
+static const u8 k_bar_src_y[5] = { 0, 1, 2, 3, 4 };
+static const u8 k_bar_h[5]     = { 1, 1, 1, 1, 3 };
 
 static const u16 k_tms[16] = {
     RGB24_TO_VDPCOLOR(0x000000),
@@ -130,6 +145,17 @@ static void load_bg_tile(void)
     VDP_loadTileData(black, BG_TILE, 1, CPU);
 }
 
+/* BG_A lid: tile 0 (transparent) above the slot so BG_B blue shows against
+ * the backdrop; opaque black from TITLE_GROOVE_ROW down buries the rest. */
+static void fill_groove(void)
+{
+    u16 attr = TILE_ATTR_FULL(PAL0, FALSE, FALSE, FALSE, BG_TILE);
+
+    VDP_fillTileMapRect(BG_A, 0, 0, 0, TITLE_COLS, TITLE_GROOVE_ROW);
+    VDP_fillTileMapRect(BG_A, attr, 0, TITLE_GROOVE_ROW,
+                        TITLE_COLS, (u16)(28 - TITLE_GROOVE_ROW));
+}
+
 static void fill_letterbox(void)
 {
     u16 attr = TILE_ATTR_FULL(PAL0, FALSE, FALSE, FALSE, BG_TILE);
@@ -138,26 +164,32 @@ static void fill_letterbox(void)
     VDP_fillTileMapRect(BG_A, attr, 0, 26, TITLE_COLS, 2);
 }
 
-static void fill_playfield(void)
-{
-    u16 attr = TILE_ATTR_FULL(PAL0, FALSE, FALSE, FALSE, BG_TILE);
-
-    VDP_fillTileMapRect(BG_A, attr, 0, TITLE_NT0, TITLE_COLS, 24);
-}
-
 static void load_title_tiles(void)
 {
     VDP_loadTileData((const u32 *)charset_tiles, TITLE_TILE_BASE, 256, CPU);
-    /* load_logo_tiles 0x5C3C: overlay SCREEN2 tiles 0xB0.. into the charset. */
+    /* Credit AII marks still live in the MSX overlay (tiles 0xE7..0xEC). */
     VDP_loadTileData((const u32 *)logo_tiles,
                      (u16)(TITLE_TILE_BASE + LOGO_TILE_MSX_FIRST),
                      LOGO_TILE_COUNT, CPU);
+
+    VDP_waitDMACompletion();
+    s_mdmark_vdp = TITLE_ZANAC_VDP + title_zanac.tileset->numTile;
+    VDP_loadTileSet(title_zanac.tileset, TITLE_ZANAC_VDP, CPU);
+    VDP_loadTileSet(title_mdmark.tileset, s_mdmark_vdp, CPU);
+}
+
+static void draw_mdmark(void)
+{
+    VDP_setTileMapEx(BG_A, title_mdmark.tilemap,
+                     TILE_ATTR_FULL(PAL1, FALSE, FALSE, FALSE, s_mdmark_vdp),
+                     TITLE_MDMARK_TILE_X, TITLE_MDMARK_TILE_Y,
+                     0, 0, TITLE_MDMARK_TILE_W, TITLE_MDMARK_TILE_H, CPU);
 }
 
 static void setup_title_palettes(void)
 {
     PAL_setPalette(PAL0, k_tms, CPU);
-    PAL_setPalette(PAL1, k_tms, CPU);
+    PAL_setPalette(PAL1, title_md_palette, CPU);
     PAL_setPalette(PAL2, k_tms_dim, CPU);
     PAL_setPalette(PAL3, k_tms, CPU);
     VDP_setBackgroundColor(0);
@@ -224,32 +256,72 @@ static void draw_score_top(void)
     draw_str_pal(buf, 21, row, PAL3);
 }
 
-/* draw_logo_row 0x5BA0. src_row 5 is the blank strip used to erase. */
-static void draw_logo_row(u8 src_row, u8 col, u8 row)
-{
-    u8 n = LOGO_DRAW_COLS;
-    u8 i;
-    const u8 *src;
-    u16 nt_row;
-
-    if (row >= 24)
-        return;
-    if (col >= 32)
-        return;
-    if (col >= 0x0E)
-        n = (u8)((u8)~col + 0x21);
-    nt_row = (u16)(TITLE_NT0 + row);
-    src = logo_tile_rows + (u16)src_row * LOGO_SRC_STRIDE;
-    for (i = 0; i < n; i++)
-        put_tile((u16)(col + i), nt_row, src[i], PAL3);
-}
-
-static void lookup_swirl(u8 a, u8 *col, u8 *row)
+/* Path 0x5B59 is MSX nametable cells. Index 0 is rest (7,5); map the delta
+ * onto Filipe's HIS rest pose so the chase shape is unchanged. */
+static void lookup_swirl(u8 a, s16 *col, s16 *row)
 {
     u8 i = (u8)(a << 1);
 
-    *col = logo_swirl_path[i];
-    *row = logo_swirl_path[i + 1];
+    *col = (s16)((s16)logo_swirl_path[i]
+                 - (s16)logo_swirl_path[0]
+                 + TITLE_ZANAC_TILE_X);
+    *row = (s16)((s16)logo_swirl_path[i + 1]
+                 - (s16)logo_swirl_path[1]
+                 + TITLE_ZANAC_TILE_Y);
+}
+
+/* Clip to the 32-wide H32 view so the wordmark falls off the edge instead
+ * of wrapping, the way draw_logo_row 0x5BA0 clipped n = 32-col. */
+static void blit_zanac_bar(s16 dest_x, s16 dest_y, u8 src_y, u8 h, int draw)
+{
+    s16 x = dest_x;
+    s16 y = dest_y;
+    u8 sx = 0;
+    u8 sy = src_y;
+    u8 w = TITLE_ZANAC_TILE_W;
+
+    if (!h)
+        return;
+    if (x >= (s16)TITLE_COLS || y >= (s16)PLANE_TH)
+        return;
+    if (x < 0)
+    {
+        if ((s16)(-x) >= (s16)w)
+            return;
+        sx = (u8)(-x);
+        w = (u8)(w - sx);
+        x = 0;
+    }
+    if ((u16)x + w > TITLE_COLS)
+        w = (u8)(TITLE_COLS - (u16)x);
+    if (y < 0)
+    {
+        u8 skip;
+
+        if ((s16)(-y) >= (s16)h)
+            return;
+        skip = (u8)(-y);
+        sy = (u8)(sy + skip);
+        h = (u8)(h - skip);
+        y = 0;
+    }
+    if ((u16)y + h > PLANE_TH)
+        h = (u8)(PLANE_TH - (u16)y);
+    if (!w || !h)
+        return;
+
+    if (draw)
+        VDP_setTileMapEx(BG_B, title_zanac.tilemap,
+                         TILE_ATTR_FULL(PAL1, FALSE, FALSE, FALSE, TITLE_ZANAC_VDP),
+                         (u16)x, (u16)y, sx, sy, w, h, CPU);
+    else
+        VDP_fillTileMapRect(BG_B, 0, (u16)x, (u16)y, w, h);
+}
+
+static void draw_zanac_bar(u8 i, s16 col, s16 row, int draw)
+{
+    blit_zanac_bar(col, (s16)(row + k_bar_src_y[i]),
+                   k_bar_src_y[i], k_bar_h[i], draw);
 }
 
 /* draw_title_text 0x5AC8. Nametable rows + letterbox. */
@@ -282,13 +354,13 @@ static void swirl_init(void)
     }
 }
 
-/* One body of LAB_ram_5a4a. Returns 1 when all 5 rows have reached 0. */
+/* One body of LAB_ram_5a4a. Returns 1 when all 5 bars have reached 0. */
 static int swirl_step(void)
 {
     u8 i;
     u8 done = 0;
-    u8 col;
-    u8 row;
+    s16 col;
+    s16 row;
     u8 a;
 
     for (i = 0; i < 5; i++)
@@ -297,10 +369,8 @@ static int swirl_step(void)
         if (!a || a >= 0x1C)
             continue;
         lookup_swirl(a, &col, &row);
-        draw_logo_row(LOGO_ERASE_ROW, col, (u8)(row + i));
+        draw_zanac_bar(i, col, row, 0);
     }
-
-    draw_title_text();
 
     for (i = 0; i < 5; i++)
     {
@@ -315,7 +385,7 @@ static int swirl_step(void)
         if (a >= 0x1C)
             continue;
         lookup_swirl(a, &col, &row);
-        draw_logo_row(i, col, (u8)(row + i));
+        draw_zanac_bar(i, col, row, 1);
     }
     return (done >= 5);
 }
@@ -323,13 +393,23 @@ static int swirl_step(void)
 static void swirl_settle(void)
 {
     u8 i;
-    u8 col;
-    u8 row;
+    s16 col;
+    s16 row;
+    u8 a;
 
+    /* Erase whatever is still in flight, then park every bar at rest.
+     * a == 0 is already home (skip erase); a >= 0x1C has not entered. */
+    for (i = 0; i < 5; i++)
+    {
+        a = s_swirl[i];
+        if (!a || a >= 0x1C)
+            continue;
+        lookup_swirl(a, &col, &row);
+        draw_zanac_bar(i, col, row, 0);
+    }
     lookup_swirl(0, &col, &row);
     for (i = 0; i < 5; i++)
-        draw_logo_row(i, col, (u8)(row + i));
-    draw_title_text();
+        draw_zanac_bar(i, col, row, 1);
 }
 
 static void draw_mode_hint(void)
@@ -347,6 +427,7 @@ static void enter_wait(void)
     s_phase = PHASE_WAIT;
     s_sel = 0;
     swirl_settle();
+    draw_title_text();
     draw_mode_hint();
 }
 
@@ -392,8 +473,10 @@ void title_enter(void)
     load_bg_tile();
     setup_title_palettes();
     load_title_tiles();
-    fill_playfield();
+    fill_groove();
     fill_letterbox();
+    /* MD mark is the front layer from frame 0; it does not swirl. */
+    draw_mdmark();
     sound_play_title();
 }
 
@@ -420,6 +503,7 @@ void title_update(void)
             {
                 VDP_setEnable(TRUE);
                 draw_score_top();
+                draw_title_text();
                 s_phase = PHASE_SWIRL;
                 s_wait = 0;
             }
