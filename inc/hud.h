@@ -6,8 +6,9 @@
 /*
  * Original-mode right panel. MSX nametable cols 24-31 (WINDOW here).
  * Glyphs are SCREEN2 charset tiles (0x30+digit, 0x20 space), not the
- * SGDK system font. Layout decoded from draw_hud_labels 0x4BD4 inline
- * strings after CALL 0x5C28 / 0x5C25 (trust the bytes, not the comments).
+ * SGDK system font. Colors are the 8-byte-per-tile CT at gfx_charset_colors
+ * 0x64D3 (decompress_block 0x5CCF; PAL3 TMS). Layout from draw_hud_labels
+ * 0x4BD4 inline strings after CALL 0x5C28 / 0x5C25.
  */
 #define HUD_TILE_BASE   (TILE_USER_INDEX + 32)
 

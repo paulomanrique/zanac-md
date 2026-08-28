@@ -122,6 +122,11 @@ static void base_hold(void);
 static void base_clear_tick(void);
 static void script_boot(u8 round, u16 pc);
 static void warp_jingle_tick(void);
+static void recolor_charset_tile(u8 tid, const u8 *ct8);
+static void recolor_charset_tile_fill(u8 tid, u8 ct);
+#if MAP_HAS_CHARSET
+static void apply_hud_charset_ct(void);
+#endif
 
 /* credits_control_table 0x4775 + length-prefixed strings 0x47AA (ASCII only). */
 #define CRED_ROW0       5
@@ -1060,7 +1065,11 @@ static void bg_load_tiles(void)
     s_bg_base = BG_TILE_BASE;
 
 #if MAP_HAS_CHARSET
+    /* charset_tiles.bin is screen2_to_md4 of 1bpp PGT + this CT bank. HUD
+     * WINDOW ids are then recolored from charset_ct so bars 01/02 keep
+     * per-row F then E (one CT byte for all 8 rows would flatten them). */
     VDP_loadTileData((const u32 *)charset_tiles, s_bg_base, 256, CPU);
+    apply_hud_charset_ct();
 #else
     {
         static u32 dummy[256 * 8];
@@ -1646,20 +1655,25 @@ static void cmd_script_jump(u8 cmd, const u8 *ops)
     s_scroll_base = (u16)(s_ms.row - (s_scroll_px >> 3));
 }
 
-/* Rebuild one charset tile from 1bpp occupancy + a TMS CT byte (FG|BG). */
-static void recolor_charset_tile(u8 tid, u8 ct)
+/* Rebuild one charset tile from occupancy + 8 SCREEN2 CT bytes (FG<<4|BG). */
+static void recolor_charset_tile(u8 tid, const u8 *ct8)
 {
-    u8 fg = (u8)(ct >> 4);
-    u8 bg = (u8)(ct & 0x0F);
     const u32 *src;
     u32 dst[8];
     u8 r, px;
+    u8 ct, fg, bg;
 
     src = (const u32 *)charset_tiles + (u16)tid * 8;
     for (r = 0; r < 8; r++)
     {
-        u32 row = src[r];
-        u32 out = 0;
+        u32 row;
+        u32 out;
+
+        ct = ct8[r];
+        fg = (u8)(ct >> 4);
+        bg = (u8)(ct & 0x0F);
+        row = src[r];
+        out = 0;
         for (px = 0; px < 8; px++)
         {
             u8 n = (u8)((row >> ((7 - px) * 4)) & 0x0F);
@@ -1670,10 +1684,40 @@ static void recolor_charset_tile(u8 tid, u8 ct)
     VDP_loadTileData(dst, (u16)(s_bg_base + tid), 1, CPU);
 }
 
+static void recolor_charset_tile_fill(u8 tid, u8 ct)
+{
+    u8 ct8[8];
+    u8 r;
+
+    for (r = 0; r < 8; r++)
+        ct8[r] = ct;
+    recolor_charset_tile(tid, ct8);
+}
+
+#if MAP_HAS_CHARSET
+static void apply_hud_charset_ct(void)
+{
+    u8 tid;
+
+    /* gfx_charset_colors 0x64D3, decompress_block 0x5CCF, one 2048-byte bank.
+     * load_charset_sprites 0x5CA5 writes that stream to VRAM 0x2000/0x2800/0x3000
+     * (three identical banks). WINDOW HUD uses charset ids on PAL3. */
+    recolor_charset_tile(0x01, charset_ct + 0x01 * 8);
+    recolor_charset_tile(0x02, charset_ct + 0x02 * 8);
+    recolor_charset_tile(0x03, charset_ct + 0x03 * 8);
+    recolor_charset_tile(0x20, charset_ct + 0x20 * 8);
+    for (tid = 0x30; tid <= 0x39; tid++)
+        recolor_charset_tile(tid, charset_ct + (u16)tid * 8);
+    for (tid = 0x41; tid <= 0x5A; tid++)
+        recolor_charset_tile(tid, charset_ct + (u16)tid * 8);
+}
+#endif
+
 static void cmd_vram_glyph(u8 cmd, const u8 *ops)
 {
     /* 0x96E5: operand -> E723 fill. Solid 5-col CT @0x21D0 (tiles 0x3A-0x3E),
-     * 4-col glyph 00 00 70 50 | fill_nibble @0x2538 (tiles 0xA7-0xAA). */
+     * 4-col glyph 00 00 70 50 | fill_nibble @0x2538 (tiles 0xA7-0xAA).
+     * Do not touch HUD 01-03 / space / digits / A-Z. */
     u8 fill = ops[0];
     u8 i;
     static const u8 k_glyph[4] = { 0x00, 0x00, 0x70, 0x50 };
@@ -1681,10 +1725,10 @@ static void cmd_vram_glyph(u8 cmd, const u8 *ops)
     (void)cmd;
 #if MAP_HAS_CHARSET
     for (i = 0; i < 5; i++)
-        recolor_charset_tile((u8)(0x3A + i), fill);
+        recolor_charset_tile_fill((u8)(0x3A + i), fill);
     for (i = 0; i < 4; i++)
-        recolor_charset_tile((u8)(0xA7 + i),
-                             (u8)(k_glyph[i] | (fill & 0x0F)));
+        recolor_charset_tile_fill((u8)(0xA7 + i),
+                                  (u8)(k_glyph[i] | (fill & 0x0F)));
 #else
     (void)fill;
     (void)i;
