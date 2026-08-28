@@ -9,19 +9,24 @@
 /*
  * Entity slots + spawn ticker.
  *
- * Shots: type 2, Y-only. vy/cap from shot_power_table[shot_level].
+ * Shots: type 2, Y-only. 7243 CPL E10E -> Yvel high = ~(n) = -(n+1),
+ *           +0c=1 then 4898. Port: bind=(u8)~n<<8, step_88_y_4898.
  * Fire:  type 3, E380.
  *   0 All-Range  - xvel_table[E10C] dir, 4cf7 speed 0xC2 8.8
  *           (bit6*3 * bit7*4 * count2 = *24 -> 12 px cardinal),
  *           +0c=3 then 72de + 4898. Port: apply_dir_4cf7(..., 0xC2).
- *   1 Straight   - Y-only vy=-2, fire_dec_ammo per spawn, die+E14D==0 -> reset
+ *   1 Straight   - +0c=1 Y-only, Yvel 0xFE00, fire_dec_ammo per spawn,
+ *           72ea -> 72de + 4898. Port: bind=0xFE00, step_88_y_4898.
  *   2 Field      - auto (fire_select writes E380=3), Y=player_Y-8, persist hits
- *   3 Circular   - snowflake/orb, 16-dir orbit around clamped ship, fire_life_timer
+ *   3 Circular   - snowflake/orb, 16-dir orbit, +17=0xC3 4cf7 every frame,
+ *           fire_life_timer. Port: apply_dir_4cf7(..., 0xC3) into off 8.8.
  *   4 Vibrator   - lg_circle, rise + X bang-bang around anchor, persist hit->ev24
  *   5 Rewinder   - SAT 0x0C, Yvel 8.8 0xFE00 then +4/frame, X=player_X,
  *           Y>=0x10, die if Y > player_Y+0x10, 4898 Y-only. Ammo shots.
  *   6 Plasma     - no persistent entity (explode_enemies + ev19)
- *   7 High Speed - comet, fire0_dir_table, 0xC3 8.8 (x4*3 = 6px), fire_life_timer
+ *   7 High Speed - comet, fire0_dir_table, +17=0xC3 4cf7
+ *           (bit6*3 * bit7*4 * count3 = *36 -> 18 px cardinal),
+ *           728f spawn 4cf7 then 7306 -> 72de + 4898. Port: apply_dir_4cf7.
  * Enemies: G group-1 airborne + round-1 pickups that the spawn_table emits
  *   4-6     box     - 7826: DEC +03 SAT countdown (0 wraps 255f) then
  *           reveal SAT 0xD4 color 0x8F HP5 Yvel 8.8 01C0; not vis/hit
@@ -355,7 +360,8 @@ static u8  s_e142;          /* 8457 rate-table index; cleared on type35 init */
 static u8  s_alc_shots;     /* E140: INC on successful shot spawn (76e5) */
 static u8  s_alc_events;
 
-/* shot_power_table 0x778F: vy, cap, sprite-frame (pats 10/11/12). */
+/* shot_power_table 0x778F: E10E vy, E10D cap, E10F SAT name.
+ * Spawn CPL E10E into Yvel high (level 0: ~4 = 0xFB = -5). */
 static const u8 k_shot_power[6][3] = {
     { 4, 2, FRAME_SHOT },
     { 6, 3, FRAME_SHOT },
@@ -2722,7 +2728,8 @@ static void apply_dir_88(Slot *e, u8 dir, u8 speed)
 }
 
 /* 4cf7 speed byte: BIT 6 => *3, BIT 7 => *4, then DJNZ *(A&0x3F).
- * 0xC2 = *24 (12 px/frame cardinal). Do not drop bit6 (that is 4 px). */
+ * 0xC2 = *24 (12 px/frame cardinal). 0xC3 = *36 (18 px). Do not
+ * drop bit6 (0xC2 would be 4 px, 0xC3 would be 6 px). */
 static void apply_dir_4cf7(Slot *e, u8 dir, u8 speed)
 {
     u8 mul = 1;
@@ -4213,12 +4220,9 @@ static void update_shots(void)
         Slot *s = &s_shot[i];
         if (!s->alive)
             continue;
-        s->y += s->vy;
-        if (s->y < -16)
-        {
-            spr_kill(s);
+        /* 7225 -> 4898: +0c=1 Y-only, unsigned Y>=0xD0. */
+        if (step_88_y_4898(s))
             continue;
-        }
         if (s->spr)
             spr_sync(s);
     }
@@ -4253,16 +4257,16 @@ static void update_fire(void)
     }
     else if (fn == 3)
     {
-        /* Circular 0x735D: dir++ each frame, offset += vel (speed 0xC3 = *12). */
+        /* Circular 0x735D: dir++ each frame, 4cf7 +17=0xC3 (*36),
+         * offset += vel (IX+08 Y / IX+0a X). Share apply_dir_4cf7. */
         s16 cy;
         s16 cx;
         s16 max_x;
 
         s_fdir = (u8)((s_fdir + 1) & 0x0F);
-        s_fvy = (s16)(k_unit_x[s_fdir] * 12);
-        s_fvx = (s16)(k_unit_y[s_fdir] * 12);
-        s_fyoff = (s16)(s_fyoff + s_fvy);
-        s_fxoff = (s16)(s_fxoff + s_fvx);
+        apply_dir_4cf7(f, s_fdir, 0xC3);
+        s_fyoff = (s16)(s_fyoff + (s16)f->bind);
+        s_fxoff = (s16)(s_fxoff + (s16)f->dest);
         cy = clamp16(player_y(), 0x38, 0xA7);
         max_x = (s16)(a->playfield_w - (256 - 0xA7));
         if (max_x < 0xA7)
@@ -4321,6 +4325,15 @@ static void update_fire(void)
             return;
         }
     }
+    else if (fn == 1)
+    {
+        /* 72ea -> 72de -> 4898: +0c=1 Y-only, Yvel 0xFE00. */
+        if (step_88_y_4898(f))
+        {
+            fire_offscreen_reset(1);
+            return;
+        }
+    }
     else if (fn == 0 || fn == 7)
     {
         /* 72de -> 4898: +0c=3 X|Y 8.8, unsigned Y>=0xD0 / X>=0xD1.
@@ -4337,9 +4350,10 @@ static void update_fire(void)
         f->y += f->vy;
     }
 
-    /* Fire 0/7 script is 4898 X frac (apply_dir_88); do not use it as a
-     * blink tick. 72de is color INC only; SAT write every frame. */
-    if (fn != 0 && fn != 7)
+    /* Fire 0/7 script is 4898 X frac; fire 1 timer is Y frac. Do not
+     * use those as a blink tick. 72de is color INC only; SAT write
+     * every frame. */
+    if (fn != 0 && fn != 1 && fn != 7)
         f->script++;
     /* fire 0/1/2/7 run: INC sat_color, keep TMS EC bit7 so SAT overlap
      * stays graphic overlap. 3/4/5 stay 0x8F. */
@@ -4357,12 +4371,12 @@ static void update_fire(void)
             SPR_setVisibility(f->spr, HIDDEN);
         else if (cycle)
             spr_vis_playfield(f->spr, fdx, mode_draw_y(f->y),
-                              (fn == 0 || fn == 7) ? 1 : (f->script & 1));
+                              (fn == 0 || fn == 1 || fn == 7) ? 1 : (f->script & 1));
         else
             spr_vis_playfield(f->spr, fdx, mode_draw_y(f->y), 1);
     }
 
-    if (fn != 0 && fn != 2 && fn != 3 && fn != 7)
+    if (fn != 0 && fn != 1 && fn != 2 && fn != 3 && fn != 7)
     {
         if (f->x < -16 || f->x > (s16)(a->playfield_w + 8)
             || f->y < -24 || f->y > (s16)(a->playfield_h + 8))
@@ -5592,14 +5606,14 @@ bool entity_spawn_shot(s16 x, s16 y)
     u8 lvl;
     u8 cap;
     u8 frame;
-    s8 vy;
+    u8 n;
     Slot *free = NULL;
 
     lvl = player_shot_level();
     if (lvl > 5)
         lvl = 5;
     cap = k_shot_power[lvl][1];
-    vy = (s8)(-(s8)k_shot_power[lvl][0]);
+    n = k_shot_power[lvl][0];
     frame = k_shot_power[lvl][2];
 
     for (i = 0; i < SHOT_SLOTS; i++)
@@ -5617,7 +5631,12 @@ bool entity_spawn_shot(s16 x, s16 y)
     free->x = x;
     free->y = y;
     free->vx = 0;
-    free->vy = vy;
+    free->vy = 0;
+    /* 7246 CPL E10E: Yvel high = ~n = -(n+1). 8.8 00|(~n)<<8, +0c=1. */
+    free->dest = 0;
+    free->bind = (u16)((u16)(u8)(~n) << 8);
+    free->script = 0;
+    free->timer = 0;
     free->spr = NULL;
     free->mspr = NULL;
     /* shot_handler 0x7237: SAT colour 0x8F (EC) before the sprite is
@@ -5679,9 +5698,12 @@ void entity_try_spawn_fire(s16 x, s16 y, u8 xvel_sel)
 
     if (fn == 1)
     {
-        /* Straight 0x72A8: fire_dec_ammo, +0x0C=1 Y-only, vy=0xFE, pat 2. */
+        /* Straight 0x72A8: fire_dec_ammo, +0x0C=1 Y-only, Yvel 0xFE00,
+         * pat 2. 4cf7 skipped (C=0); 72ea -> 4898. */
         s_fire.vx = 0;
-        s_fire.vy = -2;
+        s_fire.vy = 0;
+        s_fire.dest = 0;
+        s_fire.bind = 0xFE00;
         frame = FRAME_COMET;
         player_fire_dec_ammo();
     }
@@ -5738,9 +5760,10 @@ void entity_try_spawn_fire(s16 x, s16 y, u8 xvel_sel)
     else if (fn == 7)
     {
         /* High Speed 0x728F: SAT 0x08 comet, fire0_dir_table, +17=0xC3.
-         * 4cf7: bit7 x4, count 3, unit 128 -> 6 px/frame cardinal 8.8. */
+         * 4cf7 at 72db (not 7306): bit6*3, bit7*4, count 3 -> *36
+         * = 18 px/frame cardinal 8.8. Do not drop bit6 (that is 6 px). */
         dir = k_fire7_dir[xvel_sel];
-        apply_dir_88(&s_fire, dir, 12);
+        apply_dir_4cf7(&s_fire, dir, 0xC3);
         frame = FRAME_COMET;
     }
     else
