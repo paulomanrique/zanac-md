@@ -56,7 +56,7 @@
  *   44      ground  - 82d0: 71c5 (Y=0, X=(H&7F)+(L&1F)+0x28), then
  *           aim_4c91+set_vel 8.8 speed (R&3)+1, +0c=3, 3 hp;
  *           SAT 0x40 plane / col-marker 0x44 plane_compl (cyan 0x83);
- *           spr FRAME_PLANE (compl folded; marker occupancy).
+ *           spr FRAME_PLANE + FRAME_PLANE_C (type39, unfolded).
  *   64      proto   - table-driven converter (spawn_type_list[E130/2+R&3])
  *   70/71   idol    - nametable totem (no SAT); HP 6; -> type 72 orb + bfc8 + type-81 child
  *           8f25: unsigned Y+=8 per E700.1 until wrap, SET 7, Y+=0x10; then 8f45
@@ -76,7 +76,7 @@
  *           fire 38/21 via 816d/8ddb. SAT 0x48 loga_A / fire 0x4c compl;
  *           spawn_col_marker. Port: dest/bind/script/timer 8.8;
  *           aux=ang|side|latch, clock=+0x18 period. Osc bit5 pauses bind=0;
- *           spr FRAME_LOGA (compl folded); fire flash -> LOGA_C on primary.
+ *           spr FRAME_LOGA + FRAME_LOGA_B (pats 18/20); fire 0x4C/0x54.
  *   61      descender - 8302: X=0x40/0xB0, Y leftover 0 (no +01 write);
  *           Yvel 8.8 0200 (+0c=1), halt Y=0x60
  *           (+1e=0x20, +0c=0), then rise Yvel FC00. Port: dest/bind/
@@ -115,7 +115,7 @@
  *           Morph SAT telegraph 7d73: when clock<0x40 and (RRCA x2) only
  *           bits 2-3 set, (IX+03)=0x94-E and marker +0x14; fire @0xa0.
  *           Port: dest/bind/script/timer 8.8; clock=+1d; aux=flags(22/23)
- *           or X-tgt(24/25); spr FRAME_VEYBAR_0..4 (compl folded; marker occupancy).
+ *           or X-tgt(24/25); spr FRAME_VEYBAR_0..4 + FRAME_VEYBAR_C*.
  *   26-29   swooper 7de2/7e78: 8.8 Xvel (FF40/00C0/FE00/0200), Yvel 0280,
  *           +0c=0x0F (Y|X motion|anim|Y_homing), accel +15=07 iters +17=1,
  *           Y tgt +13 unset (0); fire +1e (18/18/04/04)->20; child +1d 37/20/59/41
@@ -125,7 +125,7 @@
  *           SAT=parent+0x10 (pats 47-50).
  *           +04 body: A 0x8E (7e68), B 0x87 (7e70) via sat_col remap.
  *           Port: dest/bind/script/timer 8.8; aux=child, clock=fire;
- *           spr FRAME_SPINNER_0..3 (compl folded; marker occupancy).
+ *           spr FRAME_SPINNER_0..3 + FRAME_SPINNER_C* (71f6 dual-SAT).
  *   30/32   gswoop 7e9c: 8.8 Yvel 0180 (32: FF00 + Y=D0 sense), Xvel 0180
  *           (32 flip 0100); +0c=1 Y then 2 X; pair child type+1 at X=C0
  *           Xvel FE80 (32: FF00). Port: dest/bind/script/timer 8.8; aux=sib,
@@ -247,7 +247,9 @@
 #define FRAME_LUSTER_A_C 54 /* pat 31 luster_A_compl SAT 0x7C */
 #define FRAME_UMBER_B    55 /* pat 56 umber_B SAT 0xE0 type 9 */
 #define FRAME_UMBER_B_C  56 /* pat 58 umber_B_compl SAT 0xE8 */
-
+#define FRAME_LOGA_B    57  /* pat 20 loga_B SAT 0x50 type39 */
+#define FRAME_LOGA_D    58  /* pat 21 loga_B fire SAT 0x54 */
+#define FRAME_N         59
 
 #define KIND_SHOT       2
 #define KIND_FIRE       3
@@ -317,7 +319,9 @@ typedef struct {
     u16 dest;       /* idol warp ptr or fire# */
     u16 bind;       /* 8948 nametable VRAM, SET 7 */
     Sprite *spr;
-    u8  marker;     /* type39 sibling count (71da); occupancy only, no 2nd MD spr */
+    Sprite *mspr;   /* type39 complement SAT (71f6); NULL if occupancy-only */
+    u8  marker;     /* type39 sibling count (71da); 0x27 occupancy */
+    u8  mframe;     /* FRAME_* for mspr; 0 if occupancy-only / none */
 } Slot;
 
 static Slot s_shot[SHOT_SLOTS];
@@ -455,6 +459,10 @@ static const u8 k_box_sat[30] = {
 
 /* WINDOW does not occlude MD sprites. Never VISIBLE over cols 24-31
  * (that flicker). Occupancy: draw_x + width > 192, not only draw_x >= 192. */
+static s16 slot_draw_y(const Slot *s);
+static void marker_place(Slot *s, u16 frame);
+static void marker_kill(Slot *s);
+
 static void spr_vis_playfield(Sprite *sp, s16 dx, s16 dy, int want_vis)
 {
     if (!sp)
@@ -472,17 +480,46 @@ static void spr_vis_playfield(Sprite *sp, s16 dx, s16 dy, int want_vis)
     SPR_setVisibility(sp, want_vis ? VISIBLE : HIDDEN);
 }
 
+/*
+ * 8f25/8a5a/8f45 SAT Y is +8 per E700.1 (IX+01). TMS nametable has no
+ * VSCROLL, so that Y and the tiles stay aligned. MD VSCROLL also has
+ * E711>>5 (s_scroll_px & 7). Draw-only: add the remainder so 8f45-class
+ * sprites track the sliding tiles. Collision / SAT stay on the 8px grid.
+ * Do not add scroll_delta to SAT Y (rejected vs 8f45).
+ */
+static s16 slot_draw_y(const Slot *s)
+{
+    s16 y = mode_draw_y(s->y);
+
+    if (s->ground)
+        y = (s16)(y + (s16)map_script_scroll_frac());
+    return y;
+}
+
 static void spr_sync(Slot *s)
 {
     s16 dx;
     s16 dy;
+    s16 mdx;
+    s16 mdy;
 
     if (!s->spr)
         return;
     dx = mode_draw_x(s->x, s->sat_col);
-    dy = mode_draw_y(s->y);
+    dy = slot_draw_y(s);
     SPR_setPosition(s->spr, dx, dy);
     spr_vis_playfield(s->spr, dx, dy, 1);
+    /* 71f6: SAT Y = parentY-0x11, X = parent X, color 0x81. Same SUB as
+     * sprite_sat_write 0x48C0, so MD draw Y matches the primary (both skip
+     * the hardware SAT offset). Later SAT index draws behind on TMS. */
+    if (!s->mspr)
+        return;
+    mdx = mode_draw_x(s->x, 0x81);
+    mdy = dy;
+    SPR_setPosition(s->mspr, mdx, mdy);
+    SPR_setDepth(s->mspr, (s16)(mdy - 1));
+    SPR_setDepth(s->spr, mdy);
+    spr_vis_playfield(s->mspr, mdx, mdy, 1);
 }
 
 /* MSX spawn_col_marker (0x71da): type 0x27 slot, +04=0x81, HL left at +03.
@@ -497,31 +534,60 @@ static void spr_sync(Slot *s)
  *  26-29      7e5f SAT=parent+0x10  pats 47-50 FRAME_SPINNER_C0..3
  *  34/65/66   LD (HL),0xD0   pat 52 FRAME_STEALTH_C
  *  44 plane   LD (HL),0x44   pat 17 FRAME_PLANE_C
- *  46-55 gun  LD (HL),0x50   pat 20 (loga_B) -- no objs.png frame
- *             fire 0x8162/817a 0x50/0x54 pats 20/21 -- no frame
+ *  46-55 gun  LD (HL),0x50   pat 20 FRAME_LOGA_B
+ *             fire 0x8162/817a 0x50/0x54 pats 20/21 FRAME_LOGA_B/D
  *  61 sart    LD (HL),0xFC   pat 63 FRAME_SART_C
  *  57         71da, no LD (HL) -- leftover name 0, occupancy only
  *  58         two 71da; first sibling ptr, second unnamed; occupancy x2
  *  30         71da then LDIR sibling as type 31 -- not a marker
- * MD cannot add a second hardware sprite: rebuild_sprites.py fold_frame
- * already composites complement bits into the primary 4bpp cell. Overlaying
- * FRAME_*_C at the same SAT X/Y would paint black on bits the fold kept as
- * body color. Unfolding objs.png needs the Zanac ROM (not in this tree).
- * Guns 0x50/0x54 have no extracted frame at all. Occupancy still counts
- * each marker as virtual 0x27. frame arg is call-site morph symmetry. */
+ * gfx_sprite_patterns 0x6976 in zanac.asm (DB, decompress_block 0x5CCF)
+ * is enough to unfold: primary_only + FRAME_*_C at the same MD draw
+ * (71f6 SUB 0x11 == 48C0). Overlaying a folded primary with FRAME_*_C
+ * would paint black. Pairdesc 57/58 stay occupancy-only (no SAT name). */
 static void marker_place(Slot *s, u16 frame)
 {
-    (void)frame;
-    s->marker = 1;
+    s16 mdx;
+    s16 mdy;
+
+    if (!s->marker)
+        s->marker = 1;
+    if (frame >= FRAME_N)
+        return;
+    s->mframe = (u8)frame;
+    mdx = mode_draw_x(s->x, 0x81);
+    mdy = slot_draw_y(s);
+    if (!s->mspr)
+    {
+        s->mspr = SPR_addSpriteEx(&spr_objs, mdx, mdy,
+                                  TILE_ATTR(PAL2, TRUE, FALSE, FALSE),
+                                  SPR_FLAG_AUTO_VRAM_ALLOC);
+        if (!s->mspr)
+            return;
+        SPR_setAnimAndFrame(s->mspr, 0, (s16)frame);
+        SPR_setDepth(s->mspr, (s16)(mdy - 1));
+        if (s->spr)
+            SPR_setDepth(s->spr, mdy);
+        spr_vis_playfield(s->mspr, mdx, mdy, 1);
+        return;
+    }
+    SPR_setAnimAndFrame(s->mspr, 0, (s16)frame);
+    SPR_setPosition(s->mspr, mdx, mdy);
+    spr_vis_playfield(s->mspr, mdx, mdy, 1);
 }
 
 static void marker_kill(Slot *s)
 {
+    if (s->mspr)
+    {
+        SPR_releaseSprite(s->mspr);
+        s->mspr = NULL;
+    }
     s->marker = 0;
+    s->mframe = 0;
 }
 
-/* spr_objs frame -> MSX SAT_NAME (primary). Complements folded into primary. */
-static const u8 k_frame_sat[57] = {
+/* spr_objs frame -> MSX SAT_NAME (primary). Complements are separate frames. */
+static const u8 k_frame_sat[FRAME_N] = {
     0x28, /* 0  FRAME_SHOT */
     0x58, /* 1  FRAME_DUSTER */
     0x60, /* 2  FRAME_TERUZO */
@@ -578,12 +644,14 @@ static const u8 k_frame_sat[57] = {
     0x74, /* 53 FRAME_LUSTER_A */
     0x7C, /* 54 FRAME_LUSTER_A_C  pat31 SAT 0x7C */
     0xE0, /* 55 FRAME_UMBER_B */
-    0xE8  /* 56 FRAME_UMBER_B_C */
+    0xE8, /* 56 FRAME_UMBER_B_C */
+    0x50, /* 57 FRAME_LOGA_B  pat20 SAT 0x50 */
+    0x54  /* 58 FRAME_LOGA_D  pat21 SAT 0x54 */
 };
 
 
 /* Frame -> baked TMS body index in objs.png (rebuild_sprites.py). */
-static const u8 k_frame_color[57] = {
+static const u8 k_frame_color[FRAME_N] = {
     15, 9, 10, 14, 15, 11, 15, 15, 15, 15, 15, 15, 15,
     15, 15, 15,
     7, 7, 7, 7, 7,
@@ -592,7 +660,8 @@ static const u8 k_frame_color[57] = {
     15, 1, 8, 1,
     14, 14, 14, 14, 1, 1, 1, 1,
     7, 1, 15, 1, 7, 1, 15, 4, 15, 15, 6,
-    11, 1, 7, 1
+    11, 1, 7, 1,
+    1, 1
 };
 
 static void remap_tiles(u8 *dst, const u8 *src, u16 nbytes, u8 from, u8 to)
@@ -626,7 +695,7 @@ static void spr_upload_color(Slot *s)
     const u8 *src;
     u8 *buf;
 
-    if (!sp || !sp->frame || s->frame >= 57)
+    if (!sp || !sp->frame || s->frame >= FRAME_N)
         return;
     ts = sp->frame->tileset;
     if (!ts || !ts->numTile)
@@ -691,7 +760,7 @@ static void spr_place(Slot *s, u16 frame)
 {
     s16 prev;
 
-    if (frame < 57)
+    if (frame < FRAME_N)
         s->sat = k_frame_sat[frame];
     s->frame = (u8)frame;
     if (!s->spr)
@@ -699,7 +768,7 @@ static void spr_place(Slot *s, u16 frame)
         s->vram_fr = 0xFF;
         s->vram_nib = 0xFF;
         s->spr = SPR_addSpriteEx(&spr_objs, mode_draw_x(s->x, s->sat_col),
-                                 mode_draw_y(s->y),
+                                 slot_draw_y(s),
                                  TILE_ATTR(PAL2, TRUE, FALSE, FALSE),
                                  SPR_FLAG_AUTO_VRAM_ALLOC);
         if (s->spr)
@@ -746,6 +815,7 @@ static void spr_kill(Slot *s)
     s->vram_nib = 0xFF;
     s->dest = 0;
     s->bind = 0;
+    s->mspr = NULL;
 }
 
 static u8 rnd(void)
@@ -795,6 +865,7 @@ static void spawn_expl(s16 x, s16 y)
     e->vx = 0;
     e->vy = 0;
     e->spr = NULL;
+    e->mspr = NULL;
     e->marker = 0;
     spr_place(e, FRAME_LEAD);
 }
@@ -894,6 +965,7 @@ void entity_spawn_pdeath(s16 x, s16 y)
     e->vx = 0;
     e->vy = 0;
     e->spr = NULL;
+    e->mspr = NULL;
     e->marker = 0;
     e->sat = 0;
     e->sat_col = 0;
@@ -1338,6 +1410,7 @@ static void spawn_box(Slot *e, u8 type, s16 x, s16 y, u8 sat_cd)
     e->sat_col = 0;
     e->aux = 0;
     e->spr = NULL;
+    e->mspr = NULL;
     e->marker = 0;
 }
 
@@ -1778,6 +1851,7 @@ static void spawn_wide_at(Slot *e, u8 type, s16 x, s16 y, u16 dest)
         || type == 87 || type == 88 || type == 89)
     {
         e->spr = NULL;
+        e->mspr = NULL;
         if (type == 82)
             e->script = 0;      /* 87e2 after 8f25 BIT 7 */
     }
@@ -1964,7 +2038,7 @@ static void spawn_gun(Slot *e, u8 type)
         e->aux = right ? 8 : 0;
     e->sat_col = k_gun[pair][1];    /* +04 from gun pair table */
     spr_place(e, FRAME_LOGA);       /* +03=0x48 pat 18 */
-    marker_place(e, FRAME_LOGA_C);  /* spawn_col_marker; fire uses 0x4C */
+    marker_place(e, FRAME_LOGA_B);  /* spawn_col_marker SAT 0x50 pat 20 */
 }
 
 static void gun_fire(Slot *e)
@@ -1976,8 +2050,10 @@ static void gun_fire(Slot *e)
     if (pair > 4)
         pair = 4;
     stype = k_gun[pair][3];
-    /* 816d: +03=0x4c loga_compl while firing (black flash; no body tint) */
+    /* 816d: +03=0x4c loga_compl while firing (black flash; no body tint).
+     * Marker +03 := 0x54 (pat 21). */
     spr_place(e, FRAME_LOGA_C);
+    marker_place(e, FRAME_LOGA_D);
     /* 816d -> 8ddb: copy parent Y/X (IX+01/+02), no SAT centering offset. */
     spawn_child_dir(e->x, e->y, stype, dir);
 }
@@ -2034,7 +2110,8 @@ static void gun_step(Slot *e)
                     e->aux = (u8)((e->aux & 0x70) | 12);
                     e->bind = 0x0150;
                     e->clock = period ? period : 32;
-                    spr_place(e, FRAME_LOGA);  /* restore +04 tint */
+                    spr_place(e, FRAME_LOGA);  /* restore +03=0x48 */
+                    marker_place(e, FRAME_LOGA_B); /* 8162 marker 0x50 */
                 }
                 else
                 {
@@ -3759,6 +3836,7 @@ static void spawn_base_seg(Slot *e, u8 type, s16 x, s16 y)
     e->bind = 0;
     e->alive = 1;
     e->spr = NULL;
+    e->mspr = NULL;
     e->marker = 0;
 }
 
@@ -4130,9 +4208,9 @@ static void update_fire(void)
     }
 }
 
-/* 4898 Y_motion_sub / X_motion_sub: u8 8.8 ADD HL,DE then unsigned
+/ * 4898 Y_motion_sub / X_motion_sub: u8 8.8 ADD HL,DE then unsigned
  * Y>=0xD0 / X>=0xD1 -> entity_clear. Sim stays MSX; letterbox is
- * mode_draw_y at spr_sync only (do not cull in screen Y). */
+ * slot_draw_y at spr_sync only (do not cull in screen Y). */
 static int step_88_4898(Slot *e)
 {
     u16 xpos = (u16)(((u16)((u8)e->x) << 8) | (u8)e->script);
@@ -5342,6 +5420,7 @@ bool entity_spawn_shot(s16 x, s16 y)
     free->vx = 0;
     free->vy = vy;
     free->spr = NULL;
+    free->mspr = NULL;
     /* shot_handler 0x7237: SAT colour 0x8F (EC) before the sprite is
      * placed, copied from ship SAT X at 0x76e1. */
     free->sat_col = 0x8F;
@@ -5512,8 +5591,9 @@ u8 entity_enemy_count(void)
  * Phase 1: any type==0 -> NC. Phase 2: type in {0x14,0x25,0x26} -> NC
  * (overwrite). Phase 3: type 0x27 or >=0x46 are blocking; any other -> NC;
  * if all blocking -> SCF.
- * MD: complements folded into primary 4bpp (see marker_place); count each
- * marker as virtual 0x27 so dual-SAT rows pressure the 21-entry window. */
+ * MD: type39 is a second hardware sprite (primary_only + FRAME_*_C from
+ * gfx_sprite_patterns). Count each marker as virtual 0x27 so dual-SAT
+ * rows pressure the 21-entry window. Pairdesc 57/58 occupy without art. */
 u8 entity_check_col_clear(void)
 {
     u8 occ[ENEMY_SLOTS * 2];

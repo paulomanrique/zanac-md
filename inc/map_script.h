@@ -65,6 +65,8 @@ const MapScript *map_script_state(void);
 /* Pixels the nametable advanced this frame (E711>>5 + row*8). SAT Y for
  * 8f25-class ground is +8 per E700.1, not this value. */
 u8   map_script_scroll_delta(void);
+/* E711>>5 subpixel of MD VSCROLL (0-7). TMS nametable has none. */
+u8   map_script_scroll_frac(void);
 /* E700 bit 1 this frame: 97e3 ran, or 980e SET bit1. */
 u8   map_script_row_carry(void);
 /* E710 current_scroll_speed. Type 85 8efc: NZ -> dir C, Z -> dir B. */
