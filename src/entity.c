@@ -4208,7 +4208,7 @@ static void update_fire(void)
     }
 }
 
-/ * 4898 Y_motion_sub / X_motion_sub: u8 8.8 ADD HL,DE then unsigned
+/* 4898 Y_motion_sub / X_motion_sub: u8 8.8 ADD HL,DE then unsigned
  * Y>=0xD0 / X>=0xD1 -> entity_clear. Sim stays MSX; letterbox is
  * slot_draw_y at spr_sync only (do not cull in screen Y). */
 static int step_88_4898(Slot *e)
