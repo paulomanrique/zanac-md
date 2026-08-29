@@ -44,7 +44,10 @@ static void hud_wipe_window(void)
 
     blank = mode_letter_attr();
     trans = TILE_ATTR_FULL(PAL3, TRUE, FALSE, FALSE, HUD_TILE_BASE);
-    VDP_fillTileMapRect(WINDOW, trans, 0, 0, MODE_H32_COLS, 28);
+    /* WPV=2: rows 0-1 are the 16px letterbox. Charset 0 here is an extra
+     * nametable write into the wrap (VSCROLL parks 97e3/peek in Y 8-15).
+     * Leave those cells; mode_draw_letterbox restamps opaque PAL0. */
+    VDP_fillTileMapRect(WINDOW, trans, 0, 2, MODE_H32_COLS, 26);
     VDP_fillTileMapRect(WINDOW, blank, HUD_COL, 0, MODE_BAR_W, 28);
     VDP_fillTileMapRect(BG_A, blank, HUD_COL, 0, MODE_BAR_W, 28);
     VDP_fillTileMapRect(BG_B, blank, HUD_COL, 0, MODE_BAR_W, 32);
