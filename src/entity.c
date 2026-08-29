@@ -44,7 +44,7 @@
  *           Type19 expire 7306 (update): piercing.
  * Enemies: G group-1 airborne + round-1 pickups that the spawn_table emits
  *   4-6     box     - 7826: DEC +03 SAT countdown (0 wraps 255f) then
- *           reveal SAT 0xD4 color 0x8F HP5 Yvel 8.8 01C0; not vis/hit
+ *           reveal SAT 0xD4 color 0x8F HP5 Yvel 8.8 00C0; not vis/hit
  *           until SET 7. 7878 (7904 Z): no 4a6a. type 5 RET (stay 0x23,
  *           849c next tick); type 4 in-place 38 + 2x8ddb; else type 63.
  *           proto_box 77a1: X=(H&3F)+0x38 +0x20/child; types 77ea;
@@ -1703,7 +1703,8 @@ static void spawn_box(Slot *e, u8 type, s16 x, s16 y, u8 sat_cd)
 {
     /* handler_type4_box 0x7826 (types 4/5/6 share): +03 is SAT countdown
      * until DEC hits 0, then spawn_col_marker, HP5, SAT 0xD4/0x8F,
-     * Yvel 8.8 01C0, SET 7. Hidden/unhitable until then (no entity_post).
+     * Yvel 8.8 00C0 (7841 writes +08 only; +09 leftover 0), SET 7.
+     * Hidden/unhitable until then (no entity_post).
      * Stream leftover SAT=0 wraps 255 on first DEC. */
     e->kind = KIND_BOX;
     e->variant = type;
@@ -1740,7 +1741,7 @@ static u8 proto_box_off(u8 bcd)
 static void spawn_chip_at(s16 x, s16 y)
 {
     /* Free-spawn chip: Y-only 8.8 at 1.0 px/frame (prior integer vy=1).
-     * Box-6 death converts in-place and keeps the box bind=0x01C0. */
+     * Box-6 death converts in-place and keeps the box bind=0x00C0. */
     Slot *e = free_enemy();
     if (!e)
         return;
@@ -2289,7 +2290,7 @@ static void box_step(Slot *e)
         if (e->sat)
             return;
         e->hp = 5;                  /* +0x19 = 5 */
-        e->bind = 0x01C0;           /* Yvel 8.8: vy=1 vy_frac=0xC0 */
+        e->bind = 0x00C0;           /* 7841 +08=0xC0; +09 leftover 0 */
         e->clock = 1;
         e->sat_col = 0x8F;          /* +04 */
         spr_place(e, FRAME_BOX);    /* +03=0xD4 */
