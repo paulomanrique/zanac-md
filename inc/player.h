@@ -28,6 +28,9 @@ u8   player_over_ready(void);
 
 void player_hit(void);
 void player_add_shot_level(void);
+/* handler_type63 78d0: LD (IY+0x1B),0x40. Type 60 86a4 cancels death
+ * while +05 bit7 is set; player_ship_update 771f DECs the timer. */
+void player_grant_iframes(void);
 /* Type62 clear 875a: INC E10A + ev8 + status (no E102 mute). */
 void player_grant_life(void);
 /* E103 BCD score_lo for type61 gate (alc_shots&0x3F). */
