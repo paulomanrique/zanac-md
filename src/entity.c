@@ -80,7 +80,8 @@
  *   68      proto_box -> 3 boxes (types 4/5/6)
  *   80      husk    - 8e14: bfb3+ev18+849c first frame (84d1 + 4912), then 8f45 / clear
  *   83      fire-up - 8e3a: Yvel FFE0 8.8; SAT 0x24/0x81 blank vs 0x04/8eaf[+1c];
- *           4898 +0c=1 unsigned Y>=0xD0; collect fire_select
+ *           4898 +0c=1 unsigned Y>=0xD0; collect: +1B=0 + SET 7 +05
+ *           (86a4 cancel; 7710 DEC wraps 0→255), fire_select, bfc8
  *   44      ground  - 82d0: 71c5 (Y=0, X=(H&7F)+(L&1F)+0x28), then
  *           aim_4c91+set_vel 8.8 speed (R&3)+1, +0c=3, 3 hp;
  *           SAT 0x40 plane / col-marker 0x44 plane_compl (cyan 0x83);
@@ -5578,8 +5579,10 @@ static void collide_player(void)
             if (e->kind == KIND_FIREUP)
             {
                 /* 8e89: player type 0x81, +0x1b=0, E148-=5, SET 7 +5,
-                 * 48d0, bfc8, fire_select(+0x1c). */
+                 * 48d0, bfc8, fire_select(+0x1c). +1B=0 is not 0x40;
+                 * 8e9f latch is the 86a4 cancel (7710 DEC wraps 0→255). */
                 player_e148_sub5();
+                player_fireup_latch();
                 player_fire_select(e->variant);
                 entity_inc_encounter_b();
                 spr_kill(e);
