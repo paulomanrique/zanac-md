@@ -72,7 +72,7 @@
  *           4898 u8 wrap-cull Y>=0xD0 / X>=0xD1.
  *   63      chip    - pickup, raises shot_level
  *   68      proto_box -> 3 boxes (types 4/5/6)
- *   80      husk    - 8e14: bfb3+ev18+849c first frame (84d1 anim), then 8f45 / clear
+ *   80      husk    - 8e14: bfb3+ev18+849c first frame (84d1 + 4912), then 8f45 / clear
  *   83      fire-up - 8e3a: Yvel FFE0 8.8; SAT 0x24/0x81 blank vs 0x04/8eaf[+1c];
  *           4898 +0c=1 unsigned Y>=0xD0; collect fire_select
  *   44      ground  - 82d0: 71c5 (Y=0, X=(H&7F)+(L&1F)+0x28), then
@@ -840,6 +840,25 @@ static const u8 k_frame_sat[FRAME_N] = {
     0x10  /* 59 FRAME_SNOW    pat 4 SAT 0x10 */
 };
 
+static u16 frame_from_sat(u8 sat);
+static void anim_sub_4912(Slot *e, const u8 *sats, const u8 *cols,
+                         u8 nframes, u8 reload);
+
+/* SAT name -> FRAME_*. SAT 0 is empty (pat 0). Do not return FRAME_CHIP
+ * (k_frame_sat[5] is 0) or FRAME_SHOT -- leftover name 0 is occupancy. */
+static u16 frame_from_sat(u8 sat)
+{
+    u16 i;
+
+    if (!sat)
+        return FRAME_N;
+    for (i = 0; i < FRAME_N; i++)
+    {
+        if (k_frame_sat[i] == sat)
+            return i;
+    }
+    return FRAME_N;
+}
 
 /* Frame -> baked TMS body index in objs.png (rebuild_sprites.py). */
 static const u8 k_frame_color[FRAME_N] = {
@@ -1074,7 +1093,11 @@ static void spawn_expl(s16 x, s16 y)
     e->spr = NULL;
     e->mspr = NULL;
     e->marker = 0;
-    spr_place(e, FRAME_LEAD);
+    e->sat = 0;
+    e->sat_col = 0;
+    e->frame = 0;
+    /* 8446 bit7 clear: first expl_step arms 84d1 and 4912 writes
+     * table[1]. Do not spr_place FRAME_LEAD/SHOT here. */
 }
 
 /* 0x8BCA: first R -> Y (C), second R -> X (B). 8bc1 BC=0x1F1F; 9251 BC=0x7F07. */
@@ -1100,24 +1123,56 @@ static void scatter_expl(s16 x, s16 y)
     entity_scatter_8bca(x, y, 0x1F, 0x1F, 1);
 }
 
-/* 0x84D1 type35 anim: (sat_name,sat_color) pairs; init +0F=1 skips frame 0. */
-static const u8 k_t35_frame[6] = {
-    FRAME_LEAD, FRAME_LEAD, FRAME_MED_CIRCLE, FRAME_CIRCLE, FRAME_MED_CIRCLE, FRAME_LEAD
-};
+/* 0x84D1 type35/80: (sat_name, sat_color) x6. Frame 0 is JP 0x48D0
+ * bytes (SAT 0xD0 stealth_compl, 0x48). Init +0F=1 skips it. After
+ * frame 5, +0F wraps to 0 and the next 84c9/8e30 clears (no write). */
+static const u8 k_t35_sat[6] = { 0xD0, 0x1C, 0x20, 0x24, 0x20, 0x1C };
 static const u8 k_t35_col[6] = {
     0x48, 0x8A, 0x8E, 0x8F, 0x8D, 0x89
 };
 
-/* 0x86F3 type60 death: 11 (sat_name,sat_color); +0F=1 skips empty frame 0.
- * expand lead->med->lg then contract; tick_rate=4; +0C=4 bit2-only. */
-static const u8 k_t60_frame[11] = {
-    0, FRAME_LEAD, FRAME_LEAD, FRAME_MED_CIRCLE, FRAME_MED_CIRCLE,
-    FRAME_CIRCLE, FRAME_CIRCLE, FRAME_MED_CIRCLE, FRAME_MED_CIRCLE,
-    FRAME_LEAD, FRAME_LEAD
+/* 0x86F3 type60 death: 11 pairs. Frame 0 SAT 0x00 empty (RET overlap).
+ * +0D=4 so first three 4898 ticks keep leftover SAT; +0F=1 skips 0. */
+static const u8 k_t60_sat[11] = {
+    0x00, 0x1C, 0x1C, 0x20, 0x20, 0x24, 0x24, 0x20, 0x20, 0x1C, 0x1C
 };
 static const u8 k_t60_col[11] = {
     0xC9, 0x86, 0x8F, 0x88, 0x8F, 0x89, 0x8F, 0x88, 0x89, 0x86, 0x8F
 };
+
+/* anim_sub 0x4912: DEC +0D; NZ keep SAT. Else +0D=+0E, write
+ * table[+0F], INC +0F, wrap +0F>=+10 to 0.
+ * Port: clock=+0D, aux=+0F. Do not increment before the write
+ * (that skipped 84d1[1] lead and landed on med / frame 0 shot). */
+static void anim_sub_4912(Slot *e, const u8 *sats, const u8 *cols,
+                         u8 nframes, u8 reload)
+{
+    u16 fr;
+    u8 sat;
+
+    if (e->clock)
+        e->clock--;
+    if (e->clock)
+        return;
+    e->clock = reload;
+    if (e->aux < nframes)
+    {
+        sat = sats[e->aux];
+        e->sat = sat;
+        fr = frame_from_sat(sat);
+        if (fr < FRAME_N)
+        {
+            spr_place(e, fr);
+            e->sat = sat;
+            spr_set_sat_col(e, cols[e->aux]);
+        }
+        else if (e->spr)
+            SPR_setVisibility(e->spr, HIDDEN);
+    }
+    e->aux++;
+    if (e->aux >= nframes)
+        e->aux = 0;
+}
 
 /* Remap living slot -> type 0x23. score_t is +0x18 for 4a6a (0 = scatter). */
 static void become_expl(Slot *e, u8 score_t)
@@ -1133,10 +1188,8 @@ static void become_expl(Slot *e, u8 score_t)
     e->clock = 0;
     e->vx = 0;
     e->vy = 0;
-    if (e->spr)
-        SPR_setAnimAndFrame(e->spr, 0, FRAME_LEAD);
-    else
-        spr_place(e, FRAME_LEAD);
+    /* Keep leftover SAT until 8446+84c9 4912 writes 84d1[1].
+     * setAnimAndFrame(FRAME_LEAD) without spr_place flashed shot. */
 }
 
 /* handler_type60 0x869E: fire_reset + SRL E132/E12E + ev16 + arm 86F3.
@@ -1817,8 +1870,7 @@ static void become_husk(Slot *e, u8 orig)
     e->dest = orig;
     e->vx = 0;
     e->vy = 0;
-    if (e->spr)
-        SPR_setAnimAndFrame(e->spr, 0, FRAME_BOX);
+    /* 8e14 next tick: 849c arms 84d1. Do not invent FRAME_BOX. */
 }
 
 /*
@@ -1844,13 +1896,13 @@ static void husk_step(Slot *e)
         e->ground = 1;
         e->vx = 0;
         e->vy = 0;
-        /* 849c: +0D=1, +0E=4, +0F=1, +10=6, table 84d1 (same as type35). */
+        /* 849c: +0D=1, +0E=4, +0F=1, +10=6, table 84d1, then 84c9 4898. */
         e->clock = 1;
         e->aux = 1;
-        spr_place(e, k_t35_frame[1]);
-        spr_set_sat_col(e, k_t35_col[1]);
+        anim_sub_4912(e, k_t35_sat, k_t35_col, 6, 4);
+        return;
     }
-    else if (step_8f45(e))
+    if (step_8f45(e))
         return;
 
     /* 8e30: +0x0f NZ -> 4898 anim_sub; else 48d0. Wrap +0f>=+10 -> 0. */
@@ -1859,22 +1911,7 @@ static void husk_step(Slot *e)
         spr_kill(e);
         return;
     }
-    if (e->clock)
-        e->clock--;
-    if (!e->clock)
-    {
-        e->clock = 4;
-        e->aux++;
-        if (e->aux >= 6)
-            e->aux = 0;
-    }
-    if (!e->aux)
-    {
-        spr_kill(e);
-        return;
-    }
-    spr_place(e, k_t35_frame[e->aux]);
-    spr_set_sat_col(e, k_t35_col[e->aux]);
+    anim_sub_4912(e, k_t35_sat, k_t35_col, 6, 4);
 }
 
 /* LAB_ram_8f45: E700.1 then unsigned Y+=8; CP 0xD0 NC -> bfab + 48d0.
@@ -2694,10 +2731,7 @@ static int descender_on_death(Slot *e)
         e->bind = 0;
         e->vx = 0;
         e->vy = 0;
-        if (e->spr)
-            SPR_setAnimAndFrame(e->spr, 0, FRAME_CIRCLE);
-        else
-            spr_place(e, FRAME_CIRCLE);
+        spr_place(e, FRAME_CIRCLE);
         return 1;
     }
     return 0;
@@ -4682,12 +4716,11 @@ static void update_enemies(void)
             if (!e->script)
             {
                 sound_play_event(SND_EV_DEATH);
-                /* 86c3-86dc: +0F=1,+10=0x0B,+0D=4,+0E=4,+0C=4. */
+                /* 86c3-86dc: +0F=1,+10=0x0B,+0D=4,+0E=4,+0C=4.
+                 * +0D=4: first three 4898 ticks write nothing. */
                 e->clock = 4;
                 e->aux = 1;
                 e->script = 1;
-                spr_place(e, k_t60_frame[1]);
-                spr_set_sat_col(e, k_t60_col[1]);
             }
             if (!e->aux)
             {
@@ -4696,23 +4729,7 @@ static void update_enemies(void)
                 spr_kill(e);
                 continue;
             }
-            if (e->clock)
-                e->clock--;
-            if (!e->clock)
-            {
-                e->clock = 4;
-                e->aux++;
-                if (e->aux >= 11)
-                    e->aux = 0;
-            }
-            if (!e->aux)
-            {
-                player_e102_set(0x01);
-                spr_kill(e);
-                continue;
-            }
-            spr_place(e, k_t60_frame[e->aux]);
-            spr_set_sat_col(e, k_t60_col[e->aux]);
+            anim_sub_4912(e, k_t60_sat, k_t60_col, 11, 4);
             if (e->spr)
                 spr_sync(e);
             continue;               /* bit2-only; no shared motion/cull */
@@ -4763,12 +4780,11 @@ static void update_enemies(void)
                     s_e124 = 0x10;
                     s_e125 = 1;
                 }
-                /* 84a3-84b9: +0D=1,+0E=4,+0F=1,+10=6, table 84d1. */
+                /* 84a3-84b9: +0D=1,+0E=4,+0F=1,+10=6, table 84d1.
+                 * 84c9 JP 4898 same frame: 4912 writes table[1]. */
                 e->clock = 1;
                 e->aux = 1;
                 e->script = 1;
-                spr_place(e, k_t35_frame[1]);
-                spr_set_sat_col(e, k_t35_col[1]);
             }
             /* 84c9: +0F==0 -> clear; else entity_update bit2 anim. */
             if (!e->aux)
@@ -4776,22 +4792,7 @@ static void update_enemies(void)
                 spr_kill(e);
                 continue;
             }
-            if (e->clock)
-                e->clock--;
-            if (!e->clock)
-            {
-                e->clock = 4;
-                e->aux++;
-                if (e->aux >= 6)
-                    e->aux = 0;
-            }
-            if (!e->aux)
-            {
-                spr_kill(e);
-                continue;
-            }
-            spr_place(e, k_t35_frame[e->aux]);
-            spr_set_sat_col(e, k_t35_col[e->aux]);
+            anim_sub_4912(e, k_t35_sat, k_t35_col, 6, 4);
             if (e->spr)
                 spr_sync(e);
             continue;               /* 84c9: +0c bit2 anim only, no Y cull */
@@ -5251,10 +5252,7 @@ static void collide_bolt_enemies(Slot *bolt, u8 persist)
                     e->vx = 0;
                     e->vy = 0;
                     /* Firebox was nametable-only; fire-up needs visible pat 9. */
-                    if (e->spr)
-                        SPR_setAnimAndFrame(e->spr, 0, FRAME_CIRCLE);
-                    else
-                        spr_place(e, FRAME_CIRCLE);
+                    spr_place(e, FRAME_CIRCLE);
                     return;
                 }
                 if (drop >= 87)
@@ -5286,10 +5284,7 @@ static void collide_bolt_enemies(Slot *bolt, u8 persist)
                     e->vx = 0;
                     e->vy = 0;
                     /* Was nametable-only; fire-up needs visible pat 9. */
-                    if (e->spr)
-                        SPR_setAnimAndFrame(e->spr, 0, FRAME_CIRCLE);
-                    else
-                        spr_place(e, FRAME_CIRCLE);
+                    spr_place(e, FRAME_CIRCLE);
                     return;
                 }
                 if (drop >= 84 && drop <= 86)
