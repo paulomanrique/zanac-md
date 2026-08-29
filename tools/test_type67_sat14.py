@@ -72,7 +72,8 @@ def main() -> int:
     if not m:
         print("FAIL: k_frame_sat not found", file=sys.stderr)
         return 1
-    vals = re.findall(r"0x[0-9A-Fa-f]+", m.group(1))
+    body = re.sub(r"/\*.*?\*/", "", m.group(1), flags=re.S)
+    vals = re.findall(r"0x[0-9A-Fa-f]+", body)
     if len(vals) < 61 or int(vals[52], 16) != 0x20:
         print("FAIL: k_frame_sat[52] must stay 0x20", file=sys.stderr)
         fails += 1
