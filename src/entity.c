@@ -5518,7 +5518,12 @@ static void collide_player(void)
     s16 px;
     s16 py;
 
-    if (player_invincible())
+    /* 44ea: LD A,(E300) / CP 0x81 / JR NZ,453c. I-frames keep type 0x81
+     * (7710 XOR +04 / DEC +1B only). Death is type 60, so 44B0/44A6 do
+     * not run. Do not gate the whole loop on s_invuln — that blocked
+     * 44B0 pickups and 453E enemy remap. player_hit() still no-ops on
+     * s_invuln (type 60 86a4 cancel). */
+    if (player_dead() || player_is_over())
         return;
 
     px = player_x();

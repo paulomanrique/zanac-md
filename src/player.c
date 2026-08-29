@@ -319,7 +319,8 @@ void player_add_shot_level(void)
 void player_grant_iframes(void)
 {
     /* 78d0 LD (IY+0x1B),0x40 — assign, do not add. 78cc SET 7,(IY+0x05)
-     * is the same latch: port gates hostiles on s_invuln != 0. */
+     * is the type60 86a4 cancel latch: player_hit() no-ops while set.
+     * 44ea still CP 0x81, so collide_player must not skip 44B0/453E. */
     s_invuln = PLAYER_IFRAMES;
 }
 
