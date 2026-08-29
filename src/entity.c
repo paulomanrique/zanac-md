@@ -27,7 +27,10 @@
  *           Port: apply_dir_4cf7(..., 0xC3) into off 8.8.
  *           7396/73be ADD A,H is u8 (seed 0xC000/0xF600); not signed s16.
  *           Type19 expire 735d (update): piercing.
- *   4 Vibrator   - lg_circle, rise + X bang-bang around anchor, persist hit->ev24
+ *   4 Vibrator   - lg_circle, rise + X bang-bang around anchor.
+ *           +1b=0x3C at 7435. Type19 expire 74e2 DECs +1b per hit
+ *           (not per frame); SAT 0x20 at 0x1E, color 0x81 at 0x0F;
+ *           Z -> 7507. ev24 every 74e2 is AY leave-alone (one-shot).
  *   5 Rewinder   - SAT 0x0C, Yvel 8.8 0xFE00 then +4/frame, X=player_X,
  *           Y>=0x10, die if Y > player_Y+0x10, 4898 Y-only. Ammo shots.
  *           Type19 expire 7464 (update): piercing.
@@ -446,7 +449,7 @@ static s16 s_fvx;
 static s16 s_faccel;
 static s16 s_fanchor;
 static u8  s_fdir;
-static u8  s_fexpire;
+static u8  s_fexpire;       /* fire 4: IX+0x1b hits left (7435 / 74e2) */
 
 /* vel_dir_table integer approx (legacy apply_dir); 8.8 uses k_unit_*. */
 static const s8 k_dir_vx[16] = {
@@ -518,6 +521,7 @@ static void apply_dir_4cf7(Slot *e, u8 dir, u8 speed);
 static void base_8c15(const Slot *e);
 static void flash_begin(void);
 static void flash_tick(void);
+static void fire4_expire_hit(Slot *f);
 
 static void spr_vis_playfield(Sprite *sp, s16 dx, s16 dy, int want_vis)
 {
@@ -4411,21 +4415,7 @@ static void update_fire(void)
             f->timer--;
             f->y = (s16)(f->y + f->vy);
         }
-        if (s_fexpire)
-        {
-            /* 74e2: DEC +1b; 0x1e SAT 0x20; 0x0f color 0x81; Z -> 7507. */
-            s_fexpire--;
-            if (s_fexpire == 0x1E)
-                spr_place(f, FRAME_MED_CIRCLE);
-            if (s_fexpire == 0x0F)
-                spr_set_sat_col(f, 0x81);
-            if (!s_fexpire)
-            {
-                spr_kill(f);
-                fire_offscreen_reset(4);
-                return;
-            }
-        }
+        /* 74e2 DEC +1b is type19 expire (per hit), not 7439. */
     }
     else if (fn == 5)
     {
@@ -5128,6 +5118,29 @@ static void box_kill_7878(Slot *e)
     become_chip(e);
 }
 
+/* 74e2: type19 expire for fire 4. 74a4 remaps 3->19 on 453E, then
+ * 74e2 DEC +1b (one hit), SAT 0x20 at 0x1E, color 0x81 at 0x0F,
+ * Z -> 7507 (ammo 0 fire_reset else 48d0). ev24 (A=0x18) every 74e2
+ * is AY leave-alone; play once when +1b is still the 7435 seed. */
+static void fire4_expire_hit(Slot *f)
+{
+    if (!f->alive)
+        return;
+    if (s_fexpire == 0x3C)
+        sound_play_event(SND_EV_FIRE_EXPIRE);
+    if (s_fexpire)
+        s_fexpire--;
+    if (s_fexpire == 0x1E)
+        spr_place(f, FRAME_MED_CIRCLE);
+    if (s_fexpire == 0x0F)
+        spr_set_sat_col(f, 0x81);
+    if (!s_fexpire)
+    {
+        spr_kill(f);
+        fire_offscreen_reset(4);
+    }
+}
+
 static void collide_bolt_enemies(Slot *bolt, u8 persist)
 {
     u8 j;
@@ -5151,12 +5164,8 @@ static void collide_bolt_enemies(Slot *bolt, u8 persist)
             spr_kill(bolt);
         else if (persist == 2)
         {
-            /* fire 4 expire 0x74E2: ev24, 60-frame shrink, then clear. */
-            if (!s_fexpire)
-            {
-                s_fexpire = 0x3C;
-                sound_play_event(SND_EV_FIRE_EXPIRE);
-            }
+            /* 74e2 type19 expire: DEC +1b once per hit, then 7439. */
+            fire4_expire_hit(bolt);
         }
         else if (persist == 4)
         {
@@ -5873,6 +5882,7 @@ void entity_try_spawn_fire(s16 x, s16 y, u8 xvel_sel)
         s_fvx = (s16)0xF400;
         s_faccel = (s16)0x0400;
         s_fire.timer = 0x46;
+        s_fexpire = 0x3C;           /* 7435 +1b; 74e2 DECs per hit */
         frame = FRAME_CIRCLE;
     }
     else if (fn == 5)
