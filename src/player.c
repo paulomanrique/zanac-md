@@ -6,6 +6,10 @@
 #include "hud.h"
 #include "vel_dir.h"
 
+#ifndef SPR_FLAG_AUTO_DEPTH
+#define SPR_FLAG_AUTO_DEPTH 0x0200
+#endif
+
 /* fire_init_table 0x751F: E14D ammo/time, E14E mode. Indexed by fire_num 0-7. */
 static const u8 k_fire_init[8][2] = {
     { 0x00, 0x02 },
@@ -140,7 +144,8 @@ static void show_ship(int vis)
     if (vis)
     {
         SPR_setPosition(s_spr, dx, mode_draw_y(s_y));
-        SPR_setDepth(s_spr, SPR_MIN_DEPTH);
+        s_spr->status &= (u16)~SPR_FLAG_AUTO_DEPTH;
+        SPR_setDepth(s_spr, 0);
     }
 }
 
@@ -219,8 +224,9 @@ void player_init(void)
     {
         SPR_setPriority(s_spr, FALSE);
         /* entity_dispatch 0x445F: E300 writes SAT first (on top).
-         * SPR_MIN_DEPTH is SGDK's always-on-top; Y-sort cannot bury it. */
-        SPR_setDepth(s_spr, SPR_MIN_DEPTH);
+         * Depth 0 beats leftover Y if SGDK still Y-sorts. */
+        s_spr->status &= (u16)~SPR_FLAG_AUTO_DEPTH;
+        SPR_setDepth(s_spr, 0);
     }
 }
 

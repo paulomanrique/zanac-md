@@ -60,8 +60,8 @@ int  mode_hud_overlap(s16 draw_x, u16 width);
  * WINDOW covers rows 0-1 full width plus the right HUD (cols 24-31). */
 void mode_draw_letterbox(void);
 
-/* explode_enemies 0x8A26: WRTVDP R7=0x0F (BD=15 white) then R7=0x01.
- * MD: backdrop index 15 (already PAL0 white) vs index 0. */
+/* explode_enemies 0x8A26 / 90fe: WRTVDP R7=0x0F then R7=0x01.
+ * MD: backdrop index 15 plus PAL0[1] (letterbox / HUD backing). */
 void mode_backdrop_flash(int on);
 
 #endif

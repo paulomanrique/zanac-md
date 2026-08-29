@@ -22,8 +22,13 @@ static void hud_fill_bar_backing(void)
     if (mode_get() != MODE_ORIGINAL)
         return;
     blank = mode_letter_attr();
+    /* WINDOW replaces BG_A in the HUD strip. Charset 01/02/03/20 have
+     * SCREEN2 CT bg=0 (transparent). Punch-through is BG_B, not BG_A.
+     * Tile 0x20 spaces sit in the middle of the 0x4BDF border
+     * (03 20 20 20 03) -- leftover SGDK tile 0 there is a white stripe. */
     VDP_fillTileMapRect(WINDOW, blank, HUD_COL, 2, MODE_BAR_W, 24);
     VDP_fillTileMapRect(BG_A, blank, HUD_COL, 2, MODE_BAR_W, 24);
+    VDP_fillTileMapRect(BG_B, blank, HUD_COL, 0, MODE_BAR_W, 32);
 }
 
 /* Wipe leftover WINDOW VRAM, then an opaque black HUD backing.
@@ -41,6 +46,7 @@ static void hud_wipe_window(void)
     VDP_fillTileMapRect(WINDOW, trans, 0, 0, MODE_H32_COLS, 28);
     VDP_fillTileMapRect(WINDOW, blank, HUD_COL, 0, MODE_BAR_W, 28);
     VDP_fillTileMapRect(BG_A, blank, HUD_COL, 0, MODE_BAR_W, 28);
+    VDP_fillTileMapRect(BG_B, blank, HUD_COL, 0, MODE_BAR_W, 32);
     /* WPV=2 makes rows 0-1 full-width WINDOW. Restore the opaque top bar
      * so charset 0 from the wipe cannot sit in the 16px letterbox. */
     mode_draw_letterbox();

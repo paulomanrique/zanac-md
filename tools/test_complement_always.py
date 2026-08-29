@@ -8,7 +8,7 @@ sits 32px left and can still be on the playfield -- that left colored
 halves.
 
 Clip only the complement's own draw box via spr_vis_playfield.
-marker_place may still withhold at hw_sprite_count() >= 70.
+71f6 always writes -- do not refuse on a port sprite budget.
 
 Usage (from zanac-md):
     python tools/test_complement_always.py
@@ -50,8 +50,8 @@ def main() -> int:
     pbody = place.group(1)
     if "line_budget" in pbody:
         return fail("marker_place must not refuse on a line-budget")
-    if "hw_sprite_count() >= 70" not in pbody:
-        return fail("marker_place may still withhold at 70 hardware sprites")
+    if "hw_sprite_count" in pbody:
+        return fail("marker_place must not refuse on a hardware-sprite budget")
 
     print("ok: complement SAT stays; clip is own box; no line-budget drop")
     return 0
