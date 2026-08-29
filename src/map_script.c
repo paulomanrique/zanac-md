@@ -1603,11 +1603,15 @@ static void stream_stamp_buf(void)
 
 /* ---- command handlers ---- */
 
+static void cmd_place_tiles(u8 cmd, const u8 *ops);
+
 static void cmd_spawn_ctrl(u8 cmd, const u8 *ops)
 {
-    (void)cmd;
+    /* 0x97A8: E12D := op. BIT 2 -> JR NZ 0x97B3 (same body as cmd 1). */
     s_ms.spawn_ctrl = ops[0];
     entity_on_spawn_ctrl(ops[0]);
+    if (ops[0] & 0x04)
+        cmd_place_tiles(cmd, ops + 1);
 }
 
 static void cmd_place_tiles(u8 cmd, const u8 *ops)
