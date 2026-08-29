@@ -205,7 +205,9 @@
  *           74/77 C from +0x13 (vx), 76 DEC+mirror, 79 INC+&3 (ROM cadence).
  *           4898 u8 wrap-cull like 38.
  *   21      light_bar 863b: +0x17=4, dir=+0x1a&0x0F, set_vel 8.8, SFX ev0x16;
- *           SAT 0x18 pat 6. Port: spr FRAME_LIGHT_BAR; 4898 u8 wrap-cull.
+ *           SAT 0x18 pat 6. Init writes no +04. Active 8659: R-nibble|0x80
+ *           then 4898 / 44ba (EC bit7 so mode_draw_x is SAT-32). Port: spr
+ *           FRAME_LIGHT_BAR; 8659 then 4898 u8 wrap-cull.
  *           Child of guns 46-55 / type 85-86. Not in spawn_type_list 0xBECC;
  *           stream path (is_port_type) uses 71c5 + leftover +0x1a=0.
  *   38      burst_fragment 8507: +0x17=3, dir=+0x1a&0x0F, set_vel 8.8 (42/43 path sans XOR)
@@ -5081,9 +5083,15 @@ static void update_enemies(void)
             /* 8.8 vels (37/38/21/45 clean; 42/43 XOR'd at spawn): dest=Xvel,
              * bind=Yvel, script/timer fracs. Keep apply_dir_88.
              * u8 wrap + 4898 Y>=0xD0 / X>=0xD1 (same as luster 17/18).
+             * Type 21 active 8659: LD A,R / AND 0x0F / OR 0x80 / +04 then
+             * 4898 / 44ba. Init 863b still writes no +04. spr_kill zeros
+             * sat_col; without 8659 EC never arms and the bar draws 32px
+             * right of SAT X.
              * Type 45 (0x8608): DEC clock/+0x1c before 4898; on 0: R bit0 ?
              * dir += (R&8)-4 + apply_dir_88(speed) : reload 0x28 then DEC (0x27).
              * 8625: SAT +03 = 0x18 + ((clock&1)<<3) every active frame. */
+            if (e->variant == 21)
+                spr_set_sat_col(e, (u8)(0x80 | (rnd() & 0x0F)));
             if (e->variant == 45)
             {
                 if (e->clock)
