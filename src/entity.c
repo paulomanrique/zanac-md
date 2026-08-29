@@ -514,7 +514,6 @@ static void marker_place(Slot *s, u16 frame);
 static void marker_kill(Slot *s);
 static int complement_frame_ok(u16 frame);
 static void mspr_upload(Slot *s);
-static u8 hw_sprite_count(void);
 static int step_88_4898(Slot *e);
 static int step_88_y_4898(Slot *e);
 static void apply_dir_88(Slot *e, u8 dir, u8 speed);
@@ -531,15 +530,30 @@ static s16 sat_depth_marker(const Slot *s);
  * sprite_sat_write 0x48B8 appends Y-0x11,X,name,color. TMS first SAT
  * index is on top. Slot 0 E300 player, E320+ shots, E380 fire, E3A0+
  * enemies. 71f6 complement appends immediately after its primary.
- * SGDK lower depth = earlier SAT = on top. SPR_MIN_DEPTH is always-on-top
- * so a leftover Y depth cannot weave flyers through shots. Complement
- * stays primary+1 (71f6). Do not sort by draw Y.
+ * SGDK lower depth = earlier SAT = on top. SPR_MIN_DEPTH is -0x8000;
+ * if SPR_update still Y-sorts (AUTO_DEPTH, or unsigned compare of
+ * 0x8000 vs draw Y), flyers at Y=50 beat shots at SPR_MIN_DEPTH.
+ * Slot depths start at 0 so they stay in front of any leftover Y
+ * (16..224) as signed or unsigned. Complement stays primary+1 (71f6).
+ * Do not sort by draw Y.
  */
-/* SPR_MIN_DEPTH stays above any leftover Y depth. Slot walk after that. */
-#define SAT_DEPTH_PLAYER    SPR_MIN_DEPTH
-#define SAT_DEPTH_SHOT      (SPR_MIN_DEPTH + 1)
+#ifndef SPR_FLAG_AUTO_DEPTH
+#define SPR_FLAG_AUTO_DEPTH 0x0200
+#endif
+/* Slot-walk depths. 0 beats leftover Y in both signed and unsigned sorts. */
+#define SAT_DEPTH_PLAYER    0
+#define SAT_DEPTH_SHOT      1
 #define SAT_DEPTH_FIRE      (SAT_DEPTH_SHOT + SHOT_SLOTS)
 #define SAT_DEPTH_ENEMY     (SAT_DEPTH_FIRE + 1)
+
+static void sat_bind_depth(Sprite *sp, s16 depth)
+{
+    if (!sp)
+        return;
+    /* SPR_update reapplies Y if this flag stays set. */
+    sp->status &= (u16)~SPR_FLAG_AUTO_DEPTH;
+    SPR_setDepth(sp, depth);
+}
 
 static s16 sat_depth_primary(const Slot *s)
 {
@@ -607,28 +621,6 @@ static s16 slot_draw_y(const Slot *s)
     return y;
 }
 
-/* Dual type39 SAT doubles MD hardware sprites. Hide extras before the
- * 80-sprite / 20-per-line drop so HUD flicker does not get worse. */
-static u8 hw_sprite_count(void)
-{
-    u8 n = 1;
-    u8 i;
-
-    for (i = 0; i < SHOT_SLOTS; i++)
-        if (s_shot[i].spr)
-            n++;
-    if (s_fire.spr)
-        n++;
-    for (i = 0; i < ENEMY_SLOTS; i++)
-    {
-        if (s_en[i].spr)
-            n++;
-        if (s_en[i].mspr)
-            n++;
-    }
-    return n;
-}
-
 static void spr_sync(Slot *s)
 {
     s16 dx;
@@ -641,7 +633,7 @@ static void spr_sync(Slot *s)
     if (s->spr)
     {
         SPR_setPosition(s->spr, dx, dy);
-        SPR_setDepth(s->spr, sat_depth_primary(s));
+        sat_bind_depth(s->spr, sat_depth_primary(s));
         spr_vis_playfield(s->spr, dx, dy, 1);
     }
     /* 71f6: SAT Y = parentY-0x11, X = parent X, color 0x81. Same SUB as
@@ -652,9 +644,9 @@ static void spr_sync(Slot *s)
     mdx = mode_draw_x(s->x, 0x81);
     mdy = dy;
     SPR_setPosition(s->mspr, mdx, mdy);
-    SPR_setDepth(s->mspr, sat_depth_marker(s));
+    sat_bind_depth(s->mspr, sat_depth_marker(s));
     if (s->spr)
-        SPR_setDepth(s->spr, sat_depth_primary(s));
+        sat_bind_depth(s->spr, sat_depth_primary(s));
     /* 71f6 always writes the complement SAT. Clip only this EC sprite's
      * own draw box. Do not hide it because the primary overlaps the HUD
      * or because a port line-budget is full -- that left colored halves. */
@@ -734,8 +726,8 @@ static void marker_place(Slot *s, u16 frame)
     mdy = slot_draw_y(s);
     if (!s->mspr)
     {
-        if (hw_sprite_count() >= 70)
-            return;
+        /* 71f6 always writes the complement SAT. Do not refuse on a
+         * port hardware-sprite budget -- that left colored halves. */
         s->mspr = SPR_addSpriteEx(&spr_objs, mdx, mdy,
                                   TILE_ATTR(PAL2, FALSE, FALSE, FALSE),
                                   SPR_FLAG_AUTO_VRAM_ALLOC);
@@ -746,8 +738,8 @@ static void marker_place(Slot *s, u16 frame)
         SPR_setPriority(s->mspr, FALSE);
         SPR_setAnimAndFrame(s->mspr, 0, (s16)frame);
         mspr_upload(s);
-        SPR_setDepth(s->mspr, sat_depth_marker(s));
-        SPR_setDepth(s->spr, sat_depth_primary(s));
+        sat_bind_depth(s->mspr, sat_depth_marker(s));
+        sat_bind_depth(s->spr, sat_depth_primary(s));
         spr_sync(s);
         return;
     }

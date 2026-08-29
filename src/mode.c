@@ -142,9 +142,14 @@ void mode_draw_letterbox(void)
 
 void mode_backdrop_flash(int on)
 {
-    /* TMS R7 BD nibble: 0x0F white / 0x01 black. PAL0 index 15 is the
-     * existing game.c white; index 0 stays the black backdrop. */
+    /* 8A26 / 90fe: WRTVDP R7=0x0F (BD=15 white) then R7=0x01 (black).
+     * TMS color 0 is transparent to that backdrop. MD color 0 is always
+     * transparent, so the visible black is PAL0[1] (letterbox tile and
+     * HUD BG_B backing). Flash that index plus the backdrop register.
+     * Do not touch PAL2/PAL3 (half-greens / map stay). */
     if (s_mode != MODE_ORIGINAL)
         return;
     VDP_setBackgroundColor(on ? 15 : 0);
+    PAL_setColor(1, RGB24_TO_VDPCOLOR(on ? 0xFFFFFF : 0x000000));
+    PAL_setColor(15, RGB24_TO_VDPCOLOR(on ? 0xFFFFFF : 0xE0E0E0));
 }

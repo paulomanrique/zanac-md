@@ -149,6 +149,7 @@ static void script_boot(u8 round, u16 pc);
 static void warp_jingle_tick(void);
 static void recolor_charset_tile(u8 tid, const u8 *ct8);
 static void recolor_charset_tile_fill(u8 tid, u8 ct);
+static void recolor_charset_tile_opaque_bg(u8 tid, const u8 *ct8);
 #if MAP_HAS_CHARSET
 static void apply_hud_charset_ct(void);
 #endif
@@ -1211,6 +1212,9 @@ static void bg_init(void)
     memset(s_nt, 0, sizeof(s_nt));
     bg_load_tiles();
     bg_fill_plane();
+    /* Charset load does not touch BG_A, but restamp the 16px bars so a
+     * leftover tile 0 cannot sit under the ship at SAT Y 0xB8. */
+    mode_draw_letterbox();
     if (mode_get() == MODE_ORIGINAL)
         VDP_setEnable(TRUE);
 }
@@ -1807,6 +1811,25 @@ static void recolor_charset_tile_fill(u8 tid, u8 ct)
     recolor_charset_tile(tid, ct8);
 }
 
+/* SCREEN2 CT bg=0 is transparent to R7 (black). MD color 0 is also
+ * transparent, but punch-through is BG_B leftover (often SGDK tile 0
+ * white). Map that nibble to PAL3[1] (opaque black) for HUD chrome. */
+static void recolor_charset_tile_opaque_bg(u8 tid, const u8 *ct8)
+{
+    u8 tmp[8];
+    u8 r;
+
+    for (r = 0; r < 8; r++)
+    {
+        u8 ct = ct8[r];
+
+        if ((ct & 0x0F) == 0)
+            ct = (u8)((ct & 0xF0) | 1);
+        tmp[r] = ct;
+    }
+    recolor_charset_tile(tid, tmp);
+}
+
 #if MAP_HAS_CHARSET
 static void apply_hud_charset_ct(void)
 {
@@ -1815,10 +1838,10 @@ static void apply_hud_charset_ct(void)
     /* gfx_charset_colors 0x64D3, decompress_block 0x5CCF, one 2048-byte bank.
      * load_charset_sprites 0x5CA5 writes that stream to VRAM 0x2000/0x2800/0x3000
      * (three identical banks). WINDOW HUD uses charset ids on PAL3. */
-    recolor_charset_tile(0x01, charset_ct + 0x01 * 8);
-    recolor_charset_tile(0x02, charset_ct + 0x02 * 8);
-    recolor_charset_tile(0x03, charset_ct + 0x03 * 8);
-    recolor_charset_tile(0x20, charset_ct + 0x20 * 8);
+    recolor_charset_tile_opaque_bg(0x01, charset_ct + 0x01 * 8);
+    recolor_charset_tile_opaque_bg(0x02, charset_ct + 0x02 * 8);
+    recolor_charset_tile_opaque_bg(0x03, charset_ct + 0x03 * 8);
+    recolor_charset_tile_opaque_bg(0x20, charset_ct + 0x20 * 8);
     for (tid = 0x30; tid <= 0x39; tid++)
         recolor_charset_tile(tid, charset_ct + (u16)tid * 8);
     for (tid = 0x41; tid <= 0x5A; tid++)
@@ -2492,6 +2515,8 @@ static void base_clear_full(void)
     {
         s_clr_phase = 1;
         s_clr_wait = 3;
+        /* 90fe: WRTVDP R7=0x0F then gameplay_frame_loop B=3. */
+        mode_backdrop_flash(1);
     }
 }
 
