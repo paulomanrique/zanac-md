@@ -23,6 +23,8 @@ static u16 s_prev_joy;
 #define PAUSE_COL   10
 #define PAUSE_LEN   5
 
+static int pause_tick(u16 pressed);
+
 static u16 pause_row(void)
 {
     return mode_text_row(11);
@@ -84,6 +86,36 @@ static void pause_leave(void)
     pause_restore_tiles();
     sound_restore();
     s_paused = 0;
+}
+
+/* pause_handler 0x4DA5 via gameplay_frame_loop 0x9399. START is STOP.
+ * Returns 1 if the frame is paused (skip sim). SELECT latch is hardware. */
+static int pause_tick(u16 pressed)
+{
+    if (s_paused)
+    {
+        if (pressed & BUTTON_START)
+        {
+            pause_leave();
+            return 1;
+        }
+        /* E118 low 5 bits: draw at 0, restore at 16 (16 on / 16 off). */
+        s_pause_ctr = (u8)((s_pause_ctr + 1) & 0x1F);
+        if ((s_pause_ctr & 0x0F) == 0)
+        {
+            if (s_pause_ctr & 0x10)
+                pause_restore_tiles();
+            else
+                pause_draw_text();
+        }
+        return 1;
+    }
+    if (pressed & BUTTON_START)
+    {
+        pause_enter();
+        return 1;
+    }
+    return 0;
 }
 
 static void go_title(void)
@@ -165,8 +197,22 @@ void game_update(void)
             s_over_cleared = 1;
             sound_play_gameover();
         }
-        if (joy & (BUTTON_A | BUTTON_C | BUTTON_START | BUTTON_B))
+        /* wait_fire_or_timeout 0x46A8 calls 9393, so 4DA5 runs here too.
+         * fire_edge_detect 0x46BC is E100 bits 4/5 (A/C), not STOP. */
+        if (pause_tick(pressed))
+        {
+            map_script_draw_hud();
+            player_draw_hud();
+            player_draw_over();
+            return;
+        }
+        if (pressed & (BUTTON_A | BUTTON_C))
             player_skip_over();
+        if (joy & BUTTON_B)
+        {
+            go_title();
+            return;
+        }
 
         map_script_update();
         player_update();
@@ -188,6 +234,7 @@ void game_update(void)
 
     if (map_script_credits_active())
     {
+        /* Credits START is ESC (0x476C), not STOP. Do not steal it for pause. */
         map_script_update();
         player_update();
         map_script_draw_hud();
@@ -198,31 +245,10 @@ void game_update(void)
         return;
     }
 
-    /* pause_handler 0x4DA5: MSX STOP -> START in play only.
+    /* pause_handler 0x4DA5: MSX STOP -> START in play.
      * SELECT resume latch (E118 bit7 / SNSMAT row 7 bit 4) has no MD key. */
-    if (s_paused)
-    {
-        if (pressed & BUTTON_START)
-        {
-            pause_leave();
-            return;
-        }
-        /* E118 low 5 bits: draw at 0, restore at 16 (16 on / 16 off). */
-        s_pause_ctr = (u8)((s_pause_ctr + 1) & 0x1F);
-        if ((s_pause_ctr & 0x0F) == 0)
-        {
-            if (s_pause_ctr & 0x10)
-                pause_restore_tiles();
-            else
-                pause_draw_text();
-        }
+    if (pause_tick(pressed))
         return;
-    }
-    if (pressed & BUTTON_START)
-    {
-        pause_enter();
-        return;
-    }
 
     map_script_update();
     player_update();
