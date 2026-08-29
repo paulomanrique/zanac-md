@@ -349,6 +349,21 @@ u8 player_fire_ammo(void)
     return s_fire_counter;
 }
 
+u8 player_fire_life_tick(void)
+{
+    /* 0x730B: DEC E14C; RET NZ; LD 0x3C; DEC E14D; CP 0xFF; RET NZ;
+     * POP; JP 0x7544. Only CALLed from live type-3 (728f / 7306 / 73c2). */
+    s_fire_timer--;
+    if (s_fire_timer)
+        return 0;
+    s_fire_timer = 0x3C;
+    s_fire_counter--;
+    if (s_fire_counter != 0xFF)
+        return 0;
+    fire_select(0);
+    return 1;
+}
+
 void player_e102_set(u8 bits)
 {
     s_e102 |= bits;
@@ -633,20 +648,6 @@ void player_update(void)
     /* bit5 held AND E380==0 -> spawn type 3. Fire 2 is also forced live on select. */
     if ((joy & (BUTTON_A | BUTTON_C)) || s_fire_num == 2)
         entity_try_spawn_fire(s_x, s_y, s_xvel_sel);
-
-    /* fire_life_timer 0x730B is only CALLed from fire 3/7, not 0-2. */
-    if (s_fire_num == 3 || s_fire_num == 7)
-    {
-        if (s_fire_timer)
-            s_fire_timer--;
-        if (!s_fire_timer)
-        {
-            s_fire_timer = 0x3C;
-            s_fire_counter--;
-            if (s_fire_counter == 0xFF)
-                fire_select(0);
-        }
-    }
 
     if (s_invuln)
     {

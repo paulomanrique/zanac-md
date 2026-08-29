@@ -23,7 +23,8 @@
  *           74c1: DEC E14D, ammo 0x14 SAT 0x20 (pat 8).
  *           fire_select also 97bc type 69 from 0x752F (E10B*3, +3 if round>=5).
  *   3 Circular   - snowflake/orb, 16-dir orbit, +17=0xC3 4cf7 every frame,
- *           fire_life_timer. Port: apply_dir_4cf7(..., 0xC3) into off 8.8.
+ *           fire_life_timer 0x730B from live type-3 only (73c2).
+ *           Port: apply_dir_4cf7(..., 0xC3) into off 8.8.
  *           Type19 expire 735d (update): piercing.
  *   4 Vibrator   - lg_circle, rise + X bang-bang around anchor, persist hit->ev24
  *   5 Rewinder   - SAT 0x0C, Yvel 8.8 0xFE00 then +4/frame, X=player_X,
@@ -34,7 +35,8 @@
  *           Not an instant no-entity nuke (that was invented).
  *   7 High Speed - comet, fire0_dir_table, +17=0xC3 4cf7
  *           (bit6*3 * bit7*4 * count3 = *36 -> 18 px cardinal),
- *           728f spawn 4cf7 then 7306 -> 72de + 4898. Port: apply_dir_4cf7.
+ *           728f CALL 730B then 4cf7; 7306 CALL 730B then 72de + 4898.
+ *           Port: apply_dir_4cf7.
  *           Type19 expire 7306 (update): piercing.
  * Enemies: G group-1 airborne + round-1 pickups that the spawn_table emits
  *   4-6     box     - 7826: DEC +03 SAT countdown (0 wraps 255f) then
@@ -87,7 +89,8 @@
  *   84-86   wide_var - nametable (no SAT); 8EB7 wave-spawner; HP 4; death 8854 type-80 husk + 88ab tiles
  *   87      wide    - nametable (no SAT); HP 3; 880d->8892 type-80 husk + 88b1
  *   88      wide    - nametable (no SAT); HP 3; 880d->8892 type-80 husk + 88cb
- *   89      wide    - nametable (no SAT); HP 3; 880d->8892 then 8874: R&7 fire-up + 88d8
+ *   89      wide    - nametable (no SAT); HP 3; 880d->8892 then 8874:
+ *           4a6a (k_struct_award[89]=8) + ev18 + R&7 fire-up + 88d8
  *   46-55   gun     - 8094 ground-gun pairs; Y leftover 0 (no +01 write),
  *           X=0x30/0xC0; Yvel 8.8 0150 (bflags Y-only),
  *           fire 38/21 via 816d/8ddb. SAT 0x48 loga_A / fire 0x4c compl;
@@ -4303,6 +4306,9 @@ static void update_fire(void)
         cx = clamp16(player_x(), 0x48, max_x);
         f->y = (s16)(cy + (s_fyoff >> 8));
         f->x = (s16)(cx + (s_fxoff >> 8));
+        /* 73c2: CALL 730B after orbit; underflow JP 7544 skips 48b8. */
+        if (player_fire_life_tick())
+            return;
     }
     else if (fn == 4)
     {
@@ -4367,7 +4373,10 @@ static void update_fire(void)
     else if (fn == 0 || fn == 7)
     {
         /* 72de -> 4898: +0c=3 X|Y 8.8, unsigned Y>=0xD0 / X>=0xD1.
-         * Fire 0 speed 0xC2; fire 7 speed 0xC3. */
+         * Fire 0 speed 0xC2; fire 7 speed 0xC3.
+         * 7306: CALL 730B then JR 72de. Underflow skips motion. */
+        if (fn == 7 && player_fire_life_tick())
+            return;
         if (step_88_4898(f))
         {
             fire_offscreen_reset(fn);
@@ -5147,11 +5156,11 @@ static void collide_bolt_enemies(Slot *bolt, u8 persist)
             {
                 /* 880d: A=+0x18 type. Default (IX+0)=0x48, then dispatch.
                  * 81/84-88 become type 80; 8e14 does bfb3+ev18+849c next tick.
-                 * 82/89 8874 score+ev18 and become type 83 (8e3a). */
+                 * 82/89 8874: 4a6a +0x18 + ev18, become type 83 (8e3a). */
                 if (drop == 82)
                 {
-                    /* 8874: score+ev18, 88d8, type 83 in-place. */
-                    award_for(kind);
+                    /* 8874: 4a6a +0x18, ev18, 88d8, type 83 in-place. */
+                    award_subtype(drop);
                     sound_play_explode();
                     map_script_punch_88d8(sx, sy);
                     e->kind = KIND_FIREUP;
@@ -5185,7 +5194,8 @@ static void collide_bolt_enemies(Slot *bolt, u8 persist)
                         map_script_punch_88cb(sx, sy);
                         return;
                     }
-                    award_for(kind);
+                    /* 88a9 -> 8874: 4a6a still reads +0x18 (type 89=8). */
+                    award_subtype(drop);
                     sound_play_explode();
                     map_script_punch_88d8(sx, sy);
                     e->kind = KIND_FIREUP;
@@ -5820,9 +5830,12 @@ void entity_try_spawn_fire(s16 x, s16 y, u8 xvel_sel)
     }
     else if (fn == 7)
     {
-        /* High Speed 0x728F: SAT 0x08 comet, fire0_dir_table, +17=0xC3.
+        /* High Speed 0x728F: CALL 730B first; underflow skips 72bc.
+         * SAT 0x08 comet, fire0_dir_table, +17=0xC3.
          * 4cf7 at 72db (not 7306): bit6*3, bit7*4, count 3 -> *36
          * = 18 px/frame cardinal 8.8. Do not drop bit6 (that is 6 px). */
+        if (player_fire_life_tick())
+            return;
         dir = k_fire7_dir[xvel_sel];
         apply_dir_4cf7(&s_fire, dir, 0xC3);
         frame = FRAME_COMET;
