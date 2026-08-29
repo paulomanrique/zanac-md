@@ -75,6 +75,8 @@
  *           4898 u8 wrap-cull Y>=0xD0 / X>=0xD1.
  *   63      chip    - pickup, raises shot_level. 7882 SAT 0x04 (pat 1),
  *           color 0x8F. 4560 half 3,3 => 10x10 (not SAT 0 / 0x40 14x12).
+ *           Collect 78cc/78d0: +05 bit7 + +1B=0x40 (type60 86a4 cancel);
+ *           78d4 bfc8. Shot INC is 78d7.
  *   68      proto_box -> 3 boxes (types 4/5/6)
  *   80      husk    - 8e14: bfb3+ev18+849c first frame (84d1 + 4912), then 8f45 / clear
  *   83      fire-up - 8e3a: Yvel FFE0 8.8; SAT 0x24/0x81 blank vs 0x04/8eaf[+1c];
@@ -5552,8 +5554,12 @@ static void collide_player(void)
             /* 44B0 + 453E remaps both; pickup handler restores player (0x81). */
             if (e->kind == KIND_CHIP)
             {
+                /* 78bf ev17; 78cc SET 7 +05; 78d0 +1B=0x40; 78d4 bfc8;
+                 * 78d7 INC E10B. Type 60 86a4 restores 0x81 while bit7 set. */
                 player_add_shot_level();
                 sound_play_event(SND_EV_PICKUP);
+                player_grant_iframes();
+                entity_inc_encounter_b();
                 spr_kill(e);
                 return;
             }

@@ -300,7 +300,8 @@ void player_hit(void)
 void player_add_shot_level(void)
 {
     /* handler_type63_power_chip 78d7: INC E10B, CP 6 / JR C -> store.
-     * At max: INC E148 + INC E14F; E14F>=5 -> E14F=0 fire_select(E14B). */
+     * At max: INC E148 + INC E14F; E14F>=5 -> E14F=0 fire_select(E14B).
+     * 78cc/78d0/78d4 (i-frames + bfc8) stay at the KIND_CHIP call site. */
     if (s_shot_level < 5)
     {
         s_shot_level++;
@@ -313,6 +314,13 @@ void player_add_shot_level(void)
         s_e14f = 0;
         fire_select(s_fire_num);
     }
+}
+
+void player_grant_iframes(void)
+{
+    /* 78d0 LD (IY+0x1B),0x40 — assign, do not add. 78cc SET 7,(IY+0x05)
+     * is the same latch: port gates hostiles on s_invuln != 0. */
+    s_invuln = PLAYER_IFRAMES;
 }
 
 void player_grant_life(void)
