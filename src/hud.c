@@ -22,10 +22,11 @@ static void hud_fill_bar_backing(void)
     if (mode_get() != MODE_ORIGINAL)
         return;
     blank = mode_letter_attr();
-    /* WINDOW replaces BG_A in the HUD strip. Charset 01/02/03/20 have
-     * SCREEN2 CT bg=0 (transparent). Punch-through is BG_B, not BG_A.
-     * Tile 0x20 spaces sit in the middle of the 0x4BDF border
-     * (03 20 20 20 03) -- leftover SGDK tile 0 there is a white stripe. */
+    /* WINDOW replaces BG_A in the HUD strip. Charset 01/02/03/20 keep
+     * SCREEN2 CT bg=0 (transparent to R7). Punch-through is BG_B, not
+     * BG_A. Tile 0x20 is also the 0x96c2 " ROUND n " space on BG_A --
+     * do not bake an opaque bg into that shared id. Fill BG_B cols
+     * 24-31 so 0x4BDF (03 20 20 20 03) cannot punch leftover white. */
     VDP_fillTileMapRect(WINDOW, blank, HUD_COL, 2, MODE_BAR_W, 24);
     VDP_fillTileMapRect(BG_A, blank, HUD_COL, 2, MODE_BAR_W, 24);
     VDP_fillTileMapRect(BG_B, blank, HUD_COL, 0, MODE_BAR_W, 32);

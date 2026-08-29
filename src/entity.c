@@ -878,6 +878,28 @@ static void remap_tiles(u8 *dst, const u8 *src, u16 nbytes, u8 from, u8 to)
     }
 }
 
+/* Type 72 discs are body 15 remapped to sat_col. A leftover nibble 4/5
+ * (flyer blue) or 7 (PAL2 cyan) in an empty UL corner is the playtest
+ * speck -- gfx pats 7/8 UL 4x4 are 0 bits; pat 9 UL 4x4 is the disc.
+ * Keep 0 and `keep`; drop everything else. Does not invent pixels. */
+static void orb_keep_body_nibbles(u8 *dst, u16 nbytes, u8 keep)
+{
+    u16 i;
+
+    for (i = 0; i < nbytes; i++)
+    {
+        u8 b = dst[i];
+        u8 hi = (u8)(b >> 4);
+        u8 lo = (u8)(b & 0x0F);
+
+        if (hi && hi != keep)
+            hi = 0;
+        if (lo && lo != keep)
+            lo = 0;
+        dst[i] = (u8)((hi << 4) | lo);
+    }
+}
+
 /* Type 72 8a16 mid is SAT 0x20 / color 0x83 (TMS 3). gfx pat 8 is the
  * 96-bit disc (bake 15). PAL2[3] is half flyer green -- leave that
  * index. Only this SAT upload uses PAL2[7] TMS cyan (light-cyan).
@@ -921,6 +943,37 @@ static void spr_upload_color(Slot *s)
     nbytes = (u16)(ts->numTile * 32);
     vaddr = (u16)((sp->attribut & TILE_INDEX_MASK) * 32);
     src = (const u8 *)FAR_SAFE(ts->tiles, nbytes);
+
+    /* 16x16 SAT is 4 tiles. AUTO_VRAM_ALLOC sizes to the sheet max (4).
+     * A nearly-empty LEAD (pat 7: 14 bits, UL 4x4 empty) can ship fewer
+     * tiles; leftover VRAM in the unused slot is flyer blue / cyan. */
+    if (s->kind == KIND_ORB)
+    {
+        u16 out = 128;
+        u16 n;
+
+        if (nbytes > out)
+            out = nbytes;
+        buf = DMA_allocateAndQueueDma(DMA_VRAM, vaddr, (u16)(out / 2), 2);
+        if (!buf)
+        {
+            DMA_queueDma(DMA_VRAM, (void *)src, vaddr, (u16)(nbytes / 2), 2);
+            return;
+        }
+        for (n = 0; n < out; n++)
+            buf[n] = 0;
+        if (want == baked)
+        {
+            for (n = 0; n < nbytes && n < out; n++)
+                buf[n] = src[n];
+        }
+        else
+            remap_tiles(buf, src, nbytes, baked, want);
+        orb_keep_body_nibbles(buf, out, want);
+        s->vram_fr = s->frame;
+        s->vram_nib = want;
+        return;
+    }
 
     if (want == baked)
     {
