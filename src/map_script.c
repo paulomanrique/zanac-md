@@ -2883,8 +2883,14 @@ void map_script_update(void)
             }
         }
         lab_9251_tick();
-        base_hold();
-        base_clear_tick();
+        /* 8f5e is CALL 0x4077 (main loop), not 0x46A8. GO wait is
+         * 9480 + 9393 only — 90a6 / hold must not keep ticking.
+         * base_clear_tick phase 4/5 sound_stop_all would kill ev4. */
+        if (!player_is_over())
+        {
+            base_hold();
+            base_clear_tick();
+        }
         warp_jingle_tick();
         prev_px = s_scroll_px;
         if (s_end_snapped)

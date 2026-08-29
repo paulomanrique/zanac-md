@@ -1,25 +1,30 @@
 #!/usr/bin/env python3
-"""BG_A playfield must not keep leftover SGDK tile 0.
+"""Do not stamp the letterbox tile across the BG_A playfield.
 
-VDP_clearPlane writes tile 0. SCREEN2 CT bg nibble 0 is transparent to
-R7 black. On MD that punches through BG_B to BG_A. HUD already fills
-BG_B cols 24-31. Playfield cols 0-23 rows 2-25 need the same PAL0[1]
-letter tile so mid-screen holes are black, not leftover white.
+3d1a7b0 reverted the PR #42 fill of BG_A cols 0-23 rows 2-25 with
+mode_letter_attr() (high-pri PAL0[1] letterbox). That stamp left the
+whole 192 opaque black. Do not restore it and do not replace it with
+another playfield-wide fill.
 
 Do not opaque-recolor shared charset 0x20 (ROUND banner spaces).
-Do not fill HUD cols here (hud_fill_bar_backing). hidden_wrap Y 8 stays.
+HUD stripe stays BG_B cols 24-31. hidden_wrap Y 8 stays.
 
 Usage (from zanac-md):
     python tools/test_playfield_tile0.py
 """
 from __future__ import annotations
 
+import re
 import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 MAPC = ROOT / "src" / "map_script.c"
 HUD = ROOT / "src" / "hud.c"
+
+REGRESS_FILL = (
+    "VDP_fillTileMapRect(BG_A, mode_letter_attr(), 0, 2, MODE_BAR_COL, 24)"
+)
 
 
 def fail(msg: str) -> int:
@@ -31,11 +36,23 @@ def main() -> int:
     map_c = MAPC.read_text(encoding="utf-8")
     hud = HUD.read_text(encoding="utf-8")
 
-    fill = "VDP_fillTileMapRect(BG_A, mode_letter_attr(), 0, 2, MODE_BAR_COL, 24)"
-    if fill not in map_c:
-        return fail("bg_init must fill BG_A playfield cols 0-23 rows 2-25")
-    if map_c.find(fill) > map_c.find("bg_fill_plane();"):
-        return fail("playfield fill must run before bg_fill_plane (0x3948 banner)")
+    if REGRESS_FILL in map_c:
+        return fail(
+            "bg_init must not fill BG_A playfield with mode_letter_attr "
+            "(high-pri letterbox tiles the whole 192 black)"
+        )
+    if re.search(
+        r"VDP_fillTileMapRect\(\s*BG_A\s*,\s*mode_letter_attr\(\)",
+        map_c,
+    ):
+        return fail("do not replace the playfield fill with another letter-tile rect")
+
+    bg = re.search(r"static void bg_init\(void\)\s*\{(.*?)^\}", map_c, re.S | re.M)
+    if not bg:
+        return fail("bg_init not found")
+    if "VDP_fillTileMapRect" in bg.group(1):
+        return fail("bg_init must not playfield-wide fill (letterbox is mode_draw_letterbox)")
+
     if "recolor_charset_tile_opaque_bg" in map_c:
         return fail("do not opaque-recolor shared charset 0x20")
     if "recolor_charset_tile(0x20, charset_ct + 0x20 * 8)" not in map_c:
@@ -45,7 +62,7 @@ def main() -> int:
     if "8 - off" not in map_c:
         return fail("hidden_wrap_nt_at must stay screen Y 8")
 
-    print("ok: BG_A playfield letter-tile; no 0x20 opaque; wrap Y 8")
+    print("ok: no BG_A playfield letter-tile fill; 0x20 CT; wrap Y 8")
     return 0
 
 
