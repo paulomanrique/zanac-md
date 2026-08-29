@@ -72,7 +72,8 @@
  *   63      chip    - pickup, raises shot_level
  *   68      proto_box -> 3 boxes (types 4/5/6)
  *   80      husk    - 8e14: bfb3+ev18+849c first frame (84d1 anim), then 8f45 / clear
- *   83      fire-up - 8e3a: Yvel FFE0 8.8; SAT 0x24/0x81 blank vs 0x04/8eaf[+1c]; collect fire_select
+ *   83      fire-up - 8e3a: Yvel FFE0 8.8; SAT 0x24/0x81 blank vs 0x04/8eaf[+1c];
+ *           4898 +0c=1 unsigned Y>=0xD0; collect fire_select
  *   44      ground  - 82d0: 71c5 (Y=0, X=(H&7F)+(L&1F)+0x28), then
  *           aim_4c91+set_vel 8.8 speed (R&3)+1, +0c=3, 3 hp;
  *           SAT 0x40 plane / col-marker 0x44 plane_compl (cyan 0x83);
@@ -82,7 +83,8 @@
  *           8f25: unsigned Y+=8 per E700.1 until wrap, SET 7, Y+=0x10; then 8f45
  *           Y+=8 per E700.1 until Y>=0xD0.
  *   72      orb     - 8983: Yvel 8.8 0xFFF8 (yel) / 0xFFF0 (blk); +0x1e=4;
- *           70 expires; 71 black warp. Port: bind/timer 8.8; clock=+0x1b;
+ *           70 expires; 71 black warp. 4898 +0c=5 Y_motion: unsigned
+ *           Y>=0xD0 clears. Port: bind/timer 8.8; clock=+0x1b;
  *           script=+0x1e; aux=anim. 8a16 SAT 1C/20/24/20 colors 8F/83/8A/8B;
  *           8a1e same names color 81. yellow 8a26+ev19 / black map_script_warp
  *   81      husk-src- nametable (no SAT); HP 4; 880d->8824 type-80 husk + 88c2
@@ -100,8 +102,9 @@
  *           spr FRAME_LOGA + FRAME_LOGA_B (pats 18/20); fire 0x4C/0x54.
  *   61      descender - 8302: X=0x40/0xB0, Y leftover 0 (no +01 write);
  *           Yvel 8.8 0200 (+0c=1), halt Y=0x60
- *           (+1e=0x20, +0c=0), then rise Yvel FC00. Port: dest/bind/
- *           script/timer 8.8; clock=+1e (was integer vy=2/-4).
+ *           (+1e=0x20, +0c=0), then rise Yvel FC00. 4898 unsigned
+ *           Y>=0xD0 clears (rise wrap). Port: dest/bind/script/timer 8.8;
+ *           clock=+1e.
  *   65-66   stealth - 7f99 writes X from 807c, never +01: stream leftover
  *           Y=0 (top). 4/7 hp, +17=1 set_vel 8.8 +0c=3; volley 8084/8087/
  *           808a (20/59). +04 sat_col 0x85 (65) / 0x8b (66); SAT 0xCC solid
@@ -161,8 +164,8 @@
  *           4898 u8 wrap-cull Y>=0xD0 / X>=0xD1.
  *   62      invisible_riser 8709: Yvel 8.8 FF80, every-16f NT poke;
  *           type61 death gate (E140&3F)==(E103&3F) -> 62; else E148>=5
- *           -> 83. Ship touch: INC lives + ev8. Port: bind/timer 8.8;
- *           clock=+0d.
+ *           -> 83. Ship touch: INC lives + ev8. 4898 +0c=1: unsigned
+ *           Y>=0xD0 clears (top wrap). Port: bind/timer 8.8; clock=+0d.
  *   36      flash   - 8296: Yvel 8.8 0080 (+0c=1), attr XOR 0x0e
  *           each frame, then entity_update + 7904 (HP16). SAT 0x34
  *           pat 13. Port: dest/bind/script/timer 8.8; spr FRAME_BOLT;
@@ -1874,7 +1877,6 @@ static const u8 k_orb_blk_col[4] = { 0x81, 0x81, 0x81, 0x81 };
 static void orb_step(Slot *e)
 {
     u8 idx;
-    s32 ypos;
 
     /* 89bb: if +0x1e: DEC +0x1b; on 0 DEC +0x1e; on 0 branch. */
     if (e->script)
@@ -1897,12 +1899,9 @@ static void orb_step(Slot *e)
         }
     }
 
-    /* 4898 Y_motion (+0c bit0): 8.8 via bind/timer.
-     * Yellow 0xFFF8 = -8/256 px/f; black 0xFFF0 = -16/256 px/f. */
-    ypos = ((s32)e->y << 8) | (u8)e->timer;
-    ypos += (s16)e->bind;
-    e->timer = (u8)ypos;
-    e->y = (s16)(ypos >> 8);
+    /* 89df: 4898 Y_motion (+0c bit0). Unsigned wrap, CP 0xD0 clears. */
+    if (step_88_y_4898(e))
+        return;
     e->vx = 0;
     e->vy = 0;
 
@@ -1925,7 +1924,6 @@ static void orb_step(Slot *e)
 static void fireup_step(Slot *e)
 {
     u8 flash;
-    s32 ypos;
 
     if (!e->script)
     {
@@ -1956,11 +1954,9 @@ static void fireup_step(Slot *e)
         spr_set_sat_col(e, e->aux); /* weapon color from 8eaf */
     }
 
-    /* entity_update 4898 Y_motion (+0c=1): 8.8 via bind/timer */
-    ypos = ((s32)e->y << 8) | (u8)e->timer;
-    ypos += (s16)e->bind;
-    e->timer = (u8)ypos;
-    e->y = (s16)(ypos >> 8);
+    /* 8e79: 4898 Y_motion (+0c=1). Unsigned wrap, CP 0xD0 clears. */
+    if (step_88_y_4898(e))
+        return;
     e->vx = 0;
     e->vy = 0;
 }
@@ -2538,11 +2534,10 @@ static void descender_step(Slot *e)
     }
     if (e->bind)
     {
-        s32 ypos = ((s32)e->y << 8) | (u8)e->timer;
-
-        ypos += (s16)e->bind;
-        e->timer = (u8)ypos;
-        e->y = (s16)(ypos >> 8);
+        /* 8362: 4898. Halt keeps +0c=0 (bind=0, no Y_motion). Rise
+         * +0c=1 Yvel FC00; unsigned wrap CP 0xD0 clears. */
+        if (step_88_y_4898(e))
+            return;
     }
     e->vx = 0;
     e->vy = 0;
@@ -2586,17 +2581,15 @@ static void spawn_riser(Slot *e)
 static void riser_step(Slot *e)
 {
     u8 old = e->clock;
-    s32 ypos;
 
     /* 8728: every 16f (old&0x0f)==0 -> LDIRVM row from 876b+(old&0x10?0x20:0). */
     e->clock = (u8)(old + 1);
     if ((old & 0x0F) == 0)
         map_script_type62_poke((u8)((old & 0x10) ? 1 : 0));
 
-    ypos = ((s32)e->y << 8) | (u8)e->timer;
-    ypos += (s16)e->bind;
-    e->timer = (u8)ypos;
-    e->y = (s16)(ypos >> 8);
+    /* 874a: 4898 Y_motion (+0c=1). Unsigned wrap, CP 0xD0 clears. */
+    if (step_88_y_4898(e))
+        return;
     e->vx = 0;
     e->vy = 0;
 }
@@ -4779,7 +4772,11 @@ static void update_enemies(void)
             e->vy = 0;
         }
         else if (e->kind == KIND_FIREUP)
+        {
             fireup_step(e);
+            if (!e->alive)
+                continue;
+        }
         else if (e->kind == KIND_HUSK)
         {
             husk_step(e);
@@ -4808,9 +4805,17 @@ static void update_enemies(void)
                 continue;
         }
         else if (e->kind == KIND_DESCEND)
+        {
             descender_step(e);
+            if (!e->alive)
+                continue;
+        }
         else if (e->kind == KIND_RISER)
+        {
             riser_step(e);
+            if (!e->alive)
+                continue;
+        }
         else if (e->kind == KIND_CIRCLE)
             circle_step(e);
         else if (e->kind == KIND_UMBER)
@@ -4973,22 +4978,11 @@ static void update_enemies(void)
             e->x += e->vx;
             e->y += e->vy;
         }
-        if (e->kind == KIND_FIREUP && e->y < 0)
-        {
-            /* 4898 Y_motion: unsigned Y>=0xD0 clears; rise underflow dies. */
-            spr_kill(e);
-            continue;
-        }
-        else if (e->kind == KIND_RISER && e->y < -16)
-        {
-            /* 874d: entity_update cleared bit7 -> RET, no life. */
-            spr_kill(e);
-            continue;
-        }
         /* Type 69 retires on count==0 only (7abc entity_clear); u8 X wrap
          * at bounce must not trip playfield cull. Luster 16-18, duster/teruzo/sig,
-         * stealth 34/65/66, and 8.8 leads/bars 20/21/37/38/42/43/45 use 4898
-         * unsigned Y>=0xD0 / X>=0xD1 in MSX coords (letterbox is draw-only). */
+         * stealth 34/65/66, 8.8 leads/bars 20/21/37/38/42/43/45, and
+         * 4898 Y-only 61/62/72/83 use unsigned Y>=0xD0 (letterbox is
+         * draw-only). Exclude them so Y=201..207 is not culled 7px early. */
         if (e->kind != KIND_SPAWNER
             && e->kind != KIND_HUSK
             && e->kind != KIND_WIDE
@@ -5000,6 +4994,10 @@ static void update_enemies(void)
             && e->kind != KIND_TERUZO
             && e->kind != KIND_SIG
             && e->kind != KIND_STEALTH
+            && e->kind != KIND_ORB
+            && e->kind != KIND_RISER
+            && e->kind != KIND_DESCEND
+            && e->kind != KIND_FIREUP
             && !(e->kind == KIND_EBULLET
                 && (e->variant == 20 || e->variant == 21 || e->variant == 37
                     || e->variant == 38 || e->variant == 42 || e->variant == 43
