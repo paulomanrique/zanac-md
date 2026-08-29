@@ -149,7 +149,6 @@ static void script_boot(u8 round, u16 pc);
 static void warp_jingle_tick(void);
 static void recolor_charset_tile(u8 tid, const u8 *ct8);
 static void recolor_charset_tile_fill(u8 tid, u8 ct);
-static void recolor_charset_tile_opaque_bg(u8 tid, const u8 *ct8);
 #if MAP_HAS_CHARSET
 static void apply_hud_charset_ct(void);
 #endif
@@ -1811,25 +1810,6 @@ static void recolor_charset_tile_fill(u8 tid, u8 ct)
     recolor_charset_tile(tid, ct8);
 }
 
-/* SCREEN2 CT bg=0 is transparent to R7 (black). MD color 0 is also
- * transparent, but punch-through is BG_B leftover (often SGDK tile 0
- * white). Map that nibble to PAL3[1] (opaque black) for HUD chrome. */
-static void recolor_charset_tile_opaque_bg(u8 tid, const u8 *ct8)
-{
-    u8 tmp[8];
-    u8 r;
-
-    for (r = 0; r < 8; r++)
-    {
-        u8 ct = ct8[r];
-
-        if ((ct & 0x0F) == 0)
-            ct = (u8)((ct & 0xF0) | 1);
-        tmp[r] = ct;
-    }
-    recolor_charset_tile(tid, tmp);
-}
-
 #if MAP_HAS_CHARSET
 static void apply_hud_charset_ct(void)
 {
@@ -1837,11 +1817,16 @@ static void apply_hud_charset_ct(void)
 
     /* gfx_charset_colors 0x64D3, decompress_block 0x5CCF, one 2048-byte bank.
      * load_charset_sprites 0x5CA5 writes that stream to VRAM 0x2000/0x2800/0x3000
-     * (three identical banks). WINDOW HUD uses charset ids on PAL3. */
-    recolor_charset_tile_opaque_bg(0x01, charset_ct + 0x01 * 8);
-    recolor_charset_tile_opaque_bg(0x02, charset_ct + 0x02 * 8);
-    recolor_charset_tile_opaque_bg(0x03, charset_ct + 0x03 * 8);
-    recolor_charset_tile_opaque_bg(0x20, charset_ct + 0x20 * 8);
+     * (three identical banks). WINDOW HUD and the 0x96c2 " ROUND n " banner
+     * (SETWRT 0x3948, BG_A col 8) share these ids. Tile 0x20 CT is 70
+     * (cyan on 0). SCREEN2 bg 0 is transparent to R7 -- keep that.
+     * Do not map bg 0 -> PAL3[1] here: that painted opaque black blocks
+     * in the banner spaces (PR #40 regression). HUD stripe punch-through
+     * is BG_B cols 24-31 (hud_fill_bar_backing), not a global CT change. */
+    recolor_charset_tile(0x01, charset_ct + 0x01 * 8);
+    recolor_charset_tile(0x02, charset_ct + 0x02 * 8);
+    recolor_charset_tile(0x03, charset_ct + 0x03 * 8);
+    recolor_charset_tile(0x20, charset_ct + 0x20 * 8);
     for (tid = 0x30; tid <= 0x39; tid++)
         recolor_charset_tile(tid, charset_ct + (u16)tid * 8);
     for (tid = 0x41; tid <= 0x5A; tid++)

@@ -155,6 +155,13 @@ def main():
             pix = compl_only(P[pat])
         else:
             pix = primary_only(P[pat], color)
+        # LEAD (6, pat 7) and MED_CIRCLE (52, pat 8): zanac-re UL 4x4
+        # is 0 bits. Force 0 so a neighbor 8x8 cannot bake TMS 4/5 into
+        # the displayed corner. CIRCLE (11, pat 9) UL 4x4 is the disc.
+        if fi in (6, 52):
+            for y in range(4):
+                for x in range(4):
+                    pix[y * 16 + x] = 0
         fr = Image.new("P", (16, 16))
         fr.putpalette(pal)
         fr.putdata(pix)
