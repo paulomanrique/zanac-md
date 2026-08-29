@@ -2541,7 +2541,9 @@ static void base_clear_finish(void)
      * DEC Z -> 9251; else 92af. */
     if (mode == 0x0F)
     {
+        /* 91F1: E722=0xB7A5, SET 5,E102 → 40DA → LAB_414d E132+=0x20. */
         script_boot(8, map_script_ptrs[0]);
+        entity_alc_complete();
         return;
     }
     if (mode == 0x10)
@@ -2556,8 +2558,12 @@ static void base_clear_finish(void)
     }
     if (mode >= 0x12)
     {
+        /* LAB_92af: E722=0xA6F4, SET 5+3 → 40DA → LAB_414d. */
         if (!s_cred_on)
+        {
             map_script_start_ending();
+            entity_alc_complete();
+        }
         return;
     }
     /* SUB_ram_4163: ev1, or ev2 if round%8==0. Attract (E102.7) skips.
@@ -3072,6 +3078,8 @@ void map_script_warp(u16 dest)
         s_boot_quiet = 0;
         if (jing)
             arm_warp_jingle(old_round, s_ms.round);
+        /* 8a11 SET 5 → 40DA → LAB_414d E132+=0x20. Not inside alc_reset. */
+        entity_alc_complete();
         return;
     }
     if (blob_ok(dest, 3))
@@ -3080,10 +3088,13 @@ void map_script_warp(u16 dest)
         s_boot_quiet = 0;
         if (jing)
             arm_warp_jingle(old_round, s_ms.round);
+        entity_alc_complete();
         return;
     }
     map_script_init_round(resolve_round_from_ptr(dest));
     s_boot_quiet = 0;
     if (jing)
         arm_warp_jingle(old_round, s_ms.round);
+    /* E722==0 still falls into LAB_414d (same-stage +0x20). */
+    entity_alc_complete();
 }
