@@ -8,6 +8,8 @@ another playfield-wide fill.
 
 Do not opaque-recolor shared charset 0x20 (ROUND banner spaces).
 HUD stripe stays BG_B cols 24-31. hidden_wrap Y 8 stays.
+Tile 0 pattern is loaded empty (not a playfield letter fill).
+hud_wipe must not write charset 0 into WINDOW rows 0-1 (letterbox).
 
 Usage (from zanac-md):
     python tools/test_playfield_tile0.py
@@ -61,6 +63,14 @@ def main() -> int:
         return fail("HUD stripe must stay BG_B cols 24-31 only")
     if "8 - off" not in map_c:
         return fail("hidden_wrap_nt_at must stay screen Y 8")
+    if "VDP_fillTileMapRect(WINDOW, trans, 0, 0, MODE_H32_COLS, 28)" in hud:
+        return fail("do not write charset 0 into WINDOW letterbox rows 0-1")
+    if "VDP_fillTileMapRect(WINDOW, trans, 0, 2, MODE_H32_COLS, 26)" not in hud:
+        return fail("hud_wipe WINDOW charset 0 must start at row 2")
+
+    mode = (ROOT / "src" / "mode.c").read_text(encoding="utf-8")
+    if "VDP_loadTileData(clear0, 0, 1, CPU)" not in mode:
+        return fail("tile 0 must be loaded empty so leftover cannot punch the top")
 
     print("ok: no BG_A playfield letter-tile fill; 0x20 CT; wrap Y 8")
     return 0

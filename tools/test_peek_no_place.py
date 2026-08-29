@@ -1,5 +1,7 @@
 #!/usr/bin/env python3
 """Peek assemble must not place_tile_group-spawn. hidden_wrap stays Y 8.
+97e3 scroll_precompute clears s_assemble_peek before assemble_row so
+a leaked wrap-preview flag cannot skip entity_place_ground.
 
 peek_next_row_at snapshots cols/streams, assembles row+1 for wrap DMA,
 then restores. stream_stamp_buf can expire a delay during that assemble
@@ -51,15 +53,28 @@ def main() -> int:
         return fail("peek must set s_assemble_peek around assemble_row")
     if "s_assemble_peek = 0" not in body:
         return fail("peek must clear s_assemble_peek after assemble_row")
+    if body.find("s_assemble_peek = 1") > body.find("s_assemble_peek = 0"):
+        return fail("peek must clear s_assemble_peek after setting it")
     if "idol_snap" not in body or "s_idol_cur = idol_snap" not in body:
         return fail("peek must restore s_idol_cur (IX+0x1D)")
     if "memcpy(s_stream, s_stream_snap" not in body:
         return fail("peek must still restore stream cursors")
 
-    if "if (s_assemble_peek)" not in map_c:
-        return fail("place_tile_group must skip spawn when peeking")
-    if "nbase && !s_assemble_peek" not in map_c:
-        return fail("peek must not entity_base_open / arm")
+    pre = re.search(
+        r"static void scroll_precompute\(u16 map_row\)\s*\{(.*?)^\}",
+        map_c,
+        re.S | re.M,
+    )
+    if not pre:
+        return fail("scroll_precompute not found")
+    if "s_assemble_peek = 0" not in pre.group(1):
+        return fail("97e3 must clear s_assemble_peek before assemble_row")
+    if pre.group(1).find("s_assemble_peek = 0") > pre.group(1).find("assemble_row"):
+        return fail("97e3 must clear s_assemble_peek before assemble_row")
+    if "entity_place_ground" not in map_c:
+        return fail("real assemble must still call entity_place_ground")
+    if "!s_assemble_peek && entity_check_col_clear()" not in map_c:
+        return fail("peek must skip check_col_clear and place; real 97e3 must not")
 
     # hidden_wrap_nt_at stays screen Y 8
     wrap = re.search(
@@ -90,7 +105,7 @@ def main() -> int:
     if "e->y = (s16)(u8)((u8)e->y + k_base[idx][2])" not in ent:
         return fail("k_base yo applies at arm (8ac7), not at place")
 
-    print("ok: peek assemble does not place; wrap Y 8 / 964C / 8ac7 stay")
+    print("ok: peek no-place; 97e3 clears peek; wrap Y 8 / 964C / 8ac7 stay")
     return 0
 
 

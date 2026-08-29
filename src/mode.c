@@ -15,8 +15,17 @@ static void load_letter_tile(void)
         0x11111111, 0x11111111, 0x11111111, 0x11111111,
         0x11111111, 0x11111111, 0x11111111, 0x11111111
     };
+    /* VDP_clearPlane / title groove index tile 0. Leftover title or
+     * SGDK font pixels punch through SCREEN2 CT bg=0 (empty 0x28 sky)
+     * into the visible top. All color-0 = backdrop (R7 black). Do not
+     * stamp high-pri letter tiles on the playfield. */
+    static const u32 clear0[8] = {
+        0x00000000, 0x00000000, 0x00000000, 0x00000000,
+        0x00000000, 0x00000000, 0x00000000, 0x00000000
+    };
 
     VDP_loadTileData(black, LETTER_TILE, 1, CPU);
+    VDP_loadTileData(clear0, 0, 1, CPU);
     PAL_setColor(1, RGB24_TO_VDPCOLOR(0x000000));
 }
 

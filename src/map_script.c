@@ -657,6 +657,11 @@ static void scroll_precompute(u16 map_row)
 {
     u8 x;
 
+    /* Real 97e3 always places. A leaked s_assemble_peek from wrap
+     * preview would skip entity_place_ground / entity_base_open so
+     * nametable idols/bases appear with no 44CA hitbox. */
+    s_assemble_peek = 0;
+
     if (!s_e714)
         s_e714 = BOOT_ROWS - 1;
     else
@@ -691,7 +696,8 @@ static void peek_next_row_at(u16 map_row, u16 wrap_px)
     idol_snap = s_idol_cur;
     /* Tile preview of row+1 only. place_tile_group / 95ed must not
      * spawn: a delay that hits 0 here would place, then restore the
-     * stream so the next real 97e3 places again (stacked bases). */
+     * stream so the next real 97e3 places again (stacked bases).
+     * Always clear after assemble — 97e3 also forces 0 before place. */
     s_assemble_peek = 1;
     assemble_row(map_row);
     s_assemble_peek = 0;
@@ -1295,15 +1301,11 @@ static void place_tile_group(StreamSlot *st, u16 *pptr)
         }
         /* 0x9607 check_col_clear: CF -> skip place (still consume + idol bump).
          * Peek assemble must still consume the descriptor (count/tiles)
-         * but must not spawn -- restore would leave the entities. */
-        if (entity_check_col_clear())
+         * but must not spawn or scan occupancy -- restore would leave
+         * the entities, and 9B22 during peek is not a real 97e3 place. */
+        if (!s_assemble_peek && entity_check_col_clear())
         {
-            if (s_assemble_peek)
-            {
-                if (ctrl & 0x80)
-                    nbase++;
-            }
-            else if (entity_place_ground(type, x, y, dest))
+            if (entity_place_ground(type, x, y, dest))
             {
                 /* bit7: INC E151 only on successful place (0x9637). */
                 if (ctrl & 0x80)
@@ -1318,7 +1320,7 @@ static void place_tile_group(StreamSlot *st, u16 *pptr)
         }
         ptr = (u16)(ptr + 3);
     }
-    if ((ctrl & 0x80) && nbase && !s_assemble_peek)
+    if ((ctrl & 0x80) && nbase)
     {
         s_e152 = nbase;
         entity_base_open(nbase);
@@ -1384,14 +1386,9 @@ static void place_ctrl_at(u16 ptr)
                 if (wr != 7 && wr != 8)
                     dest = map_script_ptrs[0];
             }
-            if (entity_check_col_clear())
+            if (!s_assemble_peek && entity_check_col_clear())
             {
-                if (s_assemble_peek)
-                {
-                    if (ctrl & 0x80)
-                        nbase++;
-                }
-                else if (entity_place_ground(type, x, y, dest))
+                if (entity_place_ground(type, x, y, dest))
                 {
                     if (ctrl & 0x80)
                         nbase++;
@@ -1405,7 +1402,7 @@ static void place_ctrl_at(u16 ptr)
             }
             q = (u16)(q + 3);
         }
-        if ((ctrl & 0x80) && nbase && !s_assemble_peek)
+        if ((ctrl & 0x80) && nbase)
         {
             s_e152 = nbase;
             entity_base_open(nbase);
@@ -1952,6 +1949,9 @@ static void fire_pending(void)
 {
     u8 fired = 0;
 
+    /* 94C3 command path. Never inherit wrap-peek; cmd 1 / cmd B place. */
+    s_assemble_peek = 0;
+
     while (s_ms.running && fired < MAX_FIRE)
     {
         u8 cmd;
@@ -2347,6 +2347,7 @@ void map_script_start_ending(void)
     for (i = 0; i < STREAM_SLOTS; i++)
         s_stream[i].used = 0;
     s_idol_cur = 0;
+    s_assemble_peek = 0;
     s_cred_on = s_cred_exit = 0;
     entity_clear_enemies();
     scroll_speed_reset(SCROLL_SPEED_CRED);
@@ -2751,6 +2752,7 @@ static void script_boot(u8 round, u16 pc)
     for (i = 0; i < STREAM_SLOTS; i++)
         s_stream[i].used = 0;
     s_idol_cur = 0;
+    s_assemble_peek = 0;
     s_cred_on = s_cred_exit = 0;
     entity_clear_enemies();
 
