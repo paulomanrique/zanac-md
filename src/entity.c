@@ -25,6 +25,7 @@
  *   3 Circular   - snowflake/orb, 16-dir orbit, +17=0xC3 4cf7 every frame,
  *           fire_life_timer 0x730B from live type-3 only (73c2).
  *           Port: apply_dir_4cf7(..., 0xC3) into off 8.8.
+ *           7396/73be ADD A,H is u8 (seed 0xC000/0xF600); not signed s16.
  *           Type19 expire 735d (update): piercing.
  *   4 Vibrator   - lg_circle, rise + X bang-bang around anchor, persist hit->ev24
  *   5 Rewinder   - SAT 0x0C, Yvel 8.8 0xFE00 then +4/frame, X=player_X,
@@ -4350,8 +4351,10 @@ static void update_fire(void)
         if (max_x < 0xA7)
             max_x = 0xA7;
         cx = clamp16(player_x(), 0x48, max_x);
-        f->y = (s16)(cy + (s_fyoff >> 8));
-        f->x = (s16)(cx + (s_fxoff >> 8));
+        /* 7396/73be: ADD A,H is 8-bit. 733d/7349 seed 0xC000/0xF600.
+         * Signed (cy + off>>8) puts 0x38+0xC0 at -8; MSX SAT Y is 0xF8. */
+        f->y = (s16)(u8)((u8)cy + (u8)((u16)s_fyoff >> 8));
+        f->x = (s16)(u8)((u8)cx + (u8)((u16)s_fxoff >> 8));
         /* 73c2: CALL 730B after orbit; underflow JP 7544 skips 48b8. */
         if (player_fire_life_tick())
             return;
