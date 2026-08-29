@@ -130,6 +130,8 @@
  *           8bb6 255-frame countdown + scatter, then 8baa. HP 0x32/0x14 stamp 8c80.
  *   7-9     umber   - 791d: X=0x78, Y leftover 0 (top); Yvel 8.8 0300,
  *           +0c=0x09 (Y|Y-homing), +15=0x10 iters +17=1, tgt +13 unset (0).
+ *           795d types 7/8: Yvel.hi 0 -> SAT 0xE0/0xE8, 0xFF -> 0xDC/0xE4
+ *           (hitbox 0xDC 12x14 vs 0xE0 14x16). Type 9 active is 7a12, no morph.
  *           Burst at Yvel==0: 7x38 / 2x41 at parent XY (7 writes IX+01/+02;
  *           8 copies both; 9 8ddb type20); type9 +1d=8 -> type20.
  *           Port: dest/bind/script/timer 8.8; clock=+1d. Stream Y=0.
@@ -3098,14 +3100,32 @@ static void umber_burst(Slot *e)
 
 static void umber_step(Slot *e)
 {
-    /* Active 0x7954: burst when Yvel word == 0 (before entity_update);
-     * type9 0x7a12: DEC +0x1d, reload 8, 8ddb type20 at parent XY.
+    /* Active 0x7954: 795d SAT morph on Yvel.hi, then burst when the
+     * Yvel word == 0 (before entity_update). Type9 0x7a12: DEC +0x1d,
+     * reload 8, 8ddb type20 at parent XY (no 795d morph).
      * entity_update +0c=0x09: Y_homing_sub (tgt0, accel 0x10, B=1) then Y 8.8. */
     u16 yvel;
     s32 ypos;
 
-    if (e->bind == 0 && (e->variant == 7 || e->variant == 8))
-        umber_burst(e);
+    if (e->variant == 7 || e->variant == 8)
+    {
+        u8 yh = (u8)(e->bind >> 8);
+
+        /* 0x795D: OR A / JR Z -> 0xE0/0xE8; CP 0xFF / JR NZ skip;
+         * else 0xDC/0xE4. Type 9 stays on 7a12 (spawn E0/E8 only). */
+        if (yh == 0)
+        {
+            spr_place(e, FRAME_UMBER_B);      /* +03 = 0xE0 */
+            marker_place(e, FRAME_UMBER_B_C); /* IY+03 = 0xE8 */
+        }
+        else if (yh == 0xFF)
+        {
+            spr_place(e, FRAME_UMBER);        /* +03 = 0xDC */
+            marker_place(e, FRAME_UMBER_C);   /* IY+03 = 0xE4 */
+        }
+        if (e->bind == 0)
+            umber_burst(e);
+    }
 
     if (e->variant == 9)
     {
