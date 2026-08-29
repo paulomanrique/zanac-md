@@ -77,7 +77,9 @@ u8   map_script_scroll_speed(void);
 void map_script_resume_scroll(void);
 /* Last segment: clear-award 0x9302[E157&0x1F] then resume_scroll. */
 void map_script_base_cleared(void);
-/* 8baa/8ca2: DEC E152 and punch destroyed tiles at live SAT x,y. */
+/* 8baa/8ca2: DEC E152 and punch destroyed tiles at live SAT x,y.
+ * 8ca2 origin is per-type (75: X-0x1C Y-0x0C; 76: X-0x20 Y-0x0C;
+ * 77: X-0x1C Y-0x10; 73/74/78: X-0x20 Y-0x10), not a flat -0x20/-0x10. */
 void map_script_base_seg_down(s16 x, s16 y, u8 variant);
 /* Last live KIND_BASE died: E152 := 0 so 8f5e hold can 90a6. */
 void map_script_base_no_segments(void);
