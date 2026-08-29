@@ -110,7 +110,7 @@ FRAMES = [
     (6, 4, False),     # LIGHT_BAR
     (26, 15, False),   # SIG_TRIPLE
     (27, 15, False),   # SIG_DOUBLE
-    (8, 6, False),     # MED_CIRCLE
+    (8, 15, False),    # MED_CIRCLE (pat 8; SAT color from 8a16 / +04, not type67 0x86)
     (29, 11, False),   # LUSTER_A
     (31, 1, True),     # LUSTER_A_C
     (56, 7, False),    # UMBER_B

@@ -131,6 +131,7 @@ static void scroll_speed_reset(u8 target);
 static void fire_pending(void);
 static void scroll_precompute(u16 map_row);
 static void dma_nt_row(u8 nt_y, const u8 *src, TransferMethod tm);
+static void peek_next_row_at(u16 map_row, u16 wrap_px);
 static void peek_next_row(u16 map_row);
 static u8 hidden_wrap_nt_at(u16 scroll_px);
 static void fill_letterbox_b(void);
@@ -677,7 +678,7 @@ static void scroll_precompute(u16 map_row)
  * column/stream cursors so col_step is not advanced twice (PR #1).
  * Commands still run only on the real carry (not during the peek).
  */
-static void peek_next_row(u16 map_row)
+static void peek_next_row_at(u16 map_row, u16 wrap_px)
 {
     u8 x;
     u8 line[PF_COLS];
@@ -689,10 +690,18 @@ static void peek_next_row(u16 map_row)
     assemble_row(map_row);
     for (x = 0; x < PF_COLS; x++)
         line[x] = s_rowbuf[ASM_SKIP + x];
-    /* Next row goes in the letterbox slot after this carry (+8). */
-    dma_nt_row(hidden_wrap_nt_at((u16)(s_scroll_px + 8)), line, s_row_tm);
+    /* wrap_px selects the letterbox NT that the next 1-8px of VSCROLL
+     * will reveal at the top of the 192. */
+    dma_nt_row(hidden_wrap_nt_at(wrap_px), line, s_row_tm);
     memcpy(s_col, s_col_snap, sizeof(s_col));
     memcpy(s_stream, s_stream_snap, sizeof(s_stream));
+}
+
+static void peek_next_row(u16 map_row)
+{
+    /* After 97e3 already filled hidden_wrap_nt_at(scroll_px). +8 is the
+     * next letterbox so the peek does not overwrite the carry row. */
+    peek_next_row_at(map_row, (u16)(s_scroll_px + 8));
 }
 
 /* 8ca2 / 88ed: stamp into circular E800 + the displayed nametable row. */
@@ -1145,9 +1154,12 @@ static void bg_fill_plane(void)
     s_row_tm = DMA;
     flush_boot_playfield();
     fill_letterbox_b();
-    /* Peek row+1 into NT 31 (restore col/stream). First 1-7 px of VSCROLL
-     * show map, not black/0x28. Carry runs the real 97e3. */
-    peek_next_row((u16)(s_ms.row + 1));
+    /* First 1-8px of VSCROLL reveal the letterbox NT at scroll_px=0
+     * (hidden_wrap_nt_at(0) = NT 31). In-game peek uses scroll_px+8 so
+     * it does not overwrite a 97e3 carry; there is no carry here.
+     * Peeking at +8 wrote NT 30 and left NT 31 black -- that black row
+     * then travelled the 192. */
+    peek_next_row_at((u16)(s_ms.row + 1), s_scroll_px);
     s_row_tm = DMA_QUEUE;
     /* NT 0 at the top of the 192 before the first visible line. VSCROLL 0
      * would park NT 0-1 in the 16px bar and NT 24-25 in the 192. */

@@ -523,6 +523,46 @@ static void base_8c15(const Slot *e);
 static void flash_begin(void);
 static void flash_tick(void);
 static void fire4_expire_hit(Slot *f);
+static s16 sat_depth_primary(const Slot *s);
+static s16 sat_depth_marker(const Slot *s);
+
+/*
+ * entity_dispatch 0x445F: SAT ptr E000, walk E300 stride 0x20 (B=0x1A).
+ * sprite_sat_write 0x48B8 appends Y-0x11,X,name,color. TMS first SAT
+ * index is on top. Slot 0 E300 player, E320+ shots, E380 fire, E3A0+
+ * enemies. 71f6 complement appends immediately after its primary.
+ * SGDK lower depth = earlier SAT = on top. Do not sort by draw Y --
+ * that weaves enemies through shots.
+ */
+#define SAT_DEPTH_PLAYER    0
+#define SAT_DEPTH_SHOT      1
+#define SAT_DEPTH_FIRE      (SAT_DEPTH_SHOT + SHOT_SLOTS)
+#define SAT_DEPTH_ENEMY     16
+
+static s16 sat_depth_primary(const Slot *s)
+{
+    u8 i;
+
+    if (s == &s_fire)
+        return SAT_DEPTH_FIRE;
+    for (i = 0; i < SHOT_SLOTS; i++)
+    {
+        if (s == &s_shot[i])
+            return (s16)(SAT_DEPTH_SHOT + i);
+    }
+    for (i = 0; i < ENEMY_SLOTS; i++)
+    {
+        if (s == &s_en[i])
+            return (s16)(SAT_DEPTH_ENEMY + (s16)i * 2);
+    }
+    return (s16)(SAT_DEPTH_ENEMY + (s16)ENEMY_SLOTS * 2);
+}
+
+static s16 sat_depth_marker(const Slot *s)
+{
+    /* 71f6 writes after the primary SAT; later index is behind. */
+    return (s16)(sat_depth_primary(s) + 1);
+}
 
 static void spr_vis_playfield(Sprite *sp, s16 dx, s16 dy, int want_vis)
 {
@@ -639,6 +679,7 @@ static void spr_sync(Slot *s)
     if (s->spr)
     {
         SPR_setPosition(s->spr, dx, dy);
+        SPR_setDepth(s->spr, sat_depth_primary(s));
         spr_vis_playfield(s->spr, dx, dy, 1);
     }
     /* 71f6: SAT Y = parentY-0x11, X = parent X, color 0x81. Same SUB as
@@ -649,9 +690,9 @@ static void spr_sync(Slot *s)
     mdx = mode_draw_x(s->x, 0x81);
     mdy = dy;
     SPR_setPosition(s->mspr, mdx, mdy);
-    SPR_setDepth(s->mspr, (s16)(mdy - 1));
+    SPR_setDepth(s->mspr, sat_depth_marker(s));
     if (s->spr)
-        SPR_setDepth(s->spr, mdy);
+        SPR_setDepth(s->spr, sat_depth_primary(s));
     /* Complement uses the same letterbox/HUD clip as the primary, plus
      * its own draw box (EC 0x81 can sit 32px left of a non-EC body). */
     spr_vis_playfield(s->mspr, mdx, mdy, 1);
@@ -760,8 +801,8 @@ static void marker_place(Slot *s, u16 frame)
         SPR_setPriority(s->mspr, FALSE);
         SPR_setAnimAndFrame(s->mspr, 0, (s16)frame);
         mspr_upload(s);
-        SPR_setDepth(s->mspr, (s16)(mdy - 1));
-        SPR_setDepth(s->spr, mdy);
+        SPR_setDepth(s->mspr, sat_depth_marker(s));
+        SPR_setDepth(s->spr, sat_depth_primary(s));
         spr_sync(s);
         return;
     }
@@ -874,7 +915,7 @@ static const u8 k_frame_color[FRAME_N] = {
     1, 1, 1, 1,
     15, 1, 8, 1,
     14, 14, 14, 14, 1, 1, 1, 1,
-    7, 1, 15, 1, 7, 1, 15, 4, 15, 15, 6,
+    7, 1, 15, 1, 7, 1, 15, 4, 15, 15, 15,
     11, 1, 7, 1,
     1, 1,
     15
@@ -945,9 +986,8 @@ static void spr_upload_color(Slot *s)
     buf = DMA_allocateAndQueueDma(DMA_VRAM, vaddr, (u16)(nbytes / 2), 2);
     if (!buf)
     {
+        /* Raw tiles only. Do not cache want -- retry remap next frame. */
         DMA_queueDma(DMA_VRAM, (void *)src, vaddr, (u16)(nbytes / 2), 2);
-        s->vram_fr = s->frame;
-        s->vram_nib = want;
         return;
     }
     remap_tiles(buf, src, nbytes, baked, want);
@@ -1968,7 +2008,9 @@ static int step_8f25_unarmed(Slot *e)
 /* base_core_anim 0x8a16: (SAT name, color) x4 yellow, then 0x8a1e black.
  * Names 0x1C/0x20/0x24/0x20 = lead / med_circle / lg_circle / med_circle. */
 /* 8a16 SAT names only (lead / med / lg / med). Do not walk into other
- * FRAME_* indices. FRAME_MED_CIRCLE bakes TMS 6 (dark red) in objs.png. */
+ * FRAME_* indices. FRAME_MED_CIRCLE is pat 8 baked TMS 15 (same as
+ * lead/lg). 8a16 colors 8F/83/8A/8B remap from 15; bake 6 was type 67
+ * 0x86 and showed a red mid-pulse when DMA remap missed. */
 static const u8 k_orb_sat[4] = { 0x1C, 0x20, 0x24, 0x20 };
 static const u8 k_orb_frame[4] = {
     FRAME_LEAD, FRAME_MED_CIRCLE, FRAME_CIRCLE, FRAME_MED_CIRCLE
@@ -2022,7 +2064,7 @@ static void orb_step(Slot *e)
 
     /* anim_sub 0x4912: +0E=4, table 8a16 then 8a1e. aux>>2 is that reload.
      * Lock SAT name to 8a16 (0x1C/0x20/0x24/0x20). Dirty VRAM so the
-     * baked-red med-circle remaps to 8F/83/8A/8B or 81 every tick. */
+     * med-circle remaps 15 -> 8F/83/8A/8B or 81 every tick. */
     idx = (u8)((e->aux >> 2) & 3);
     spr_place(e, k_orb_frame[idx]);
     e->sat = k_orb_sat[idx];
