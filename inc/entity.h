@@ -16,8 +16,12 @@ void entity_on_spawn_ctrl(u8 ctrl);
 /* Map-script cmd C: signed spawn-pace nudge into E132/E12E (ALC family 2). */
 void entity_on_spawn_pace(s8 nudge);
 /* First boot / warp / credits: zero E12E/E12F/E131/E132.
- * Cmd 9 (0x96E2 JP 0x9433) does not wipe them. */
+ * Cmd 9 (0x96E2 JP 0x9433) does not wipe them.
+ * Do not bake LAB_414d's E132+=0x20 in here — first boot never enters 40DA. */
 void entity_alc_reset(void);
+/* LAB_414d after reset_entities: E132 += 0x20, sat 0xFF.
+ * Warp / award 0x0F / LAB_92af SET 5, not title script_boot. */
+void entity_alc_complete(void);
 
 /* Per fire-tick ALC family 1: E13F cadence -> E12F/E131/E141 (76a7/76b0/76bc).
  * Runs when E110 expires even if shot pool full; E140 is spawn-only (76e5). */

@@ -5734,6 +5734,15 @@ void entity_alc_reset(void)
     alc_recompute();
 }
 
+void entity_alc_complete(void)
+{
+    /* LAB_414d 0x4152: LD HL,E132 / ADD A,0x20 / JR NC / LD (HL),0xFF.
+     * reset_entities 0x40D6 already zeroed E132, so live result is 0x20. */
+    u16 v = (u16)s_e132 + 0x20;
+
+    s_e132 = (v > 255) ? 0xFF : (u8)v;
+}
+
 void entity_alc_ease(void)
 {
     /* 90a6: E12E -= E12E/4; E132 -= 8, sat 0.
