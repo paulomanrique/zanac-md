@@ -132,6 +132,7 @@ static void fire_pending(void);
 static void scroll_precompute(u16 map_row);
 static void dma_nt_row(u8 nt_y, const u8 *src, TransferMethod tm);
 static void peek_next_row(u16 map_row);
+static u8 hidden_wrap_nt_at(u16 scroll_px);
 static void fill_letterbox_b(void);
 static void bg_set_vscroll(void);
 static void base_mode_11(void);
@@ -561,10 +562,14 @@ static u16 tile_attr(u8 tid)
  * transfer lands in vblank (~24 words, not 576 XY pokes). Boot uses DMA
  * while the display is off.
  */
-static u8 wrap_nt(u16 map_row)
+/* NT row in screen Y 8-15 (top letterbox) at a given scroll_px.
+ * VSCROLL = -(scroll_px + 16); plane_y(8) = 8 - off. */
+static u8 hidden_wrap_nt_at(u16 scroll_px)
 {
-    /* Map row r lives at NT[(base-r)&31]. First carry reveals NT 31. */
-    return (u8)((s_scroll_base - map_row) & 31);
+    u16 off = (u16)((scroll_px + mode_y_off()) & 0xFF);
+    u8 py = (u8)(8 - off);
+
+    return (u8)(py >> 3);
 }
 
 static void dma_nt_row(u8 nt_y, const u8 *src, TransferMethod tm)
@@ -595,9 +600,8 @@ static void dma_nt_row(u8 nt_y, const u8 *src, TransferMethod tm)
     /* DMA_QUEUE keeps the source pointer until vblank -- do not reuse. */
     if (tm == DMA_QUEUE)
         s_dma_flip ^= 1;
-    /* Wrap/peek lives on BG_B. TMS 24-row NT has no pixels above the 192.
-     * Clip with BG_A bars after the transfer; do not wipe NT 24-31. */
-    mode_draw_letterbox();
+    /* Letterbox is clipped once per frame in bg_set_vscroll. Filling
+     * four rects here on every 1-row DMA hitch the 60Hz loop. */
 }
 
 /*
@@ -662,8 +666,9 @@ static void scroll_precompute(u16 map_row)
         s_e800[s_e714][x] = s_rowbuf[ASM_SKIP + x];
     if (s_ram_only)
         return;
-    /* Wrap edge that VSCROLL is about to reveal: NT[(base-row)&31]. */
-    dma_nt_row(wrap_nt(map_row), s_e800[s_e714], s_row_tm);
+    /* This carry's row will sit at the top of the 192 after +8px.
+     * That NT is the letterbox row at the current scroll_px. */
+    dma_nt_row(hidden_wrap_nt_at(s_scroll_px), s_e800[s_e714], s_row_tm);
 }
 
 /*
@@ -684,7 +689,8 @@ static void peek_next_row(u16 map_row)
     assemble_row(map_row);
     for (x = 0; x < PF_COLS; x++)
         line[x] = s_rowbuf[ASM_SKIP + x];
-    dma_nt_row(wrap_nt(map_row), line, s_row_tm);
+    /* Next row goes in the letterbox slot after this carry (+8). */
+    dma_nt_row(hidden_wrap_nt_at((u16)(s_scroll_px + 8)), line, s_row_tm);
     memcpy(s_col, s_col_snap, sizeof(s_col));
     memcpy(s_stream, s_stream_snap, sizeof(s_stream));
 }

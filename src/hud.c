@@ -10,6 +10,22 @@ static u8 s_hud_ready;
 static u8 s_labels_ok;
 static u8 s_time_lbl;
 
+static void hud_fill_bar_backing(void);
+
+/* Opaque PAL0 black on HUD cols 24-31, playfield rows 2-25. Charset 0
+ * and SGDK tile 0 are color-0 / leftover white; WPV=2 letterbox must
+ * not leave those in the dashboard. Layout 0x4BD4 is drawn on top. */
+static void hud_fill_bar_backing(void)
+{
+    u16 blank;
+
+    if (mode_get() != MODE_ORIGINAL)
+        return;
+    blank = mode_letter_attr();
+    VDP_fillTileMapRect(WINDOW, blank, HUD_COL, 2, MODE_BAR_W, 24);
+    VDP_fillTileMapRect(BG_A, blank, HUD_COL, 2, MODE_BAR_W, 24);
+}
+
 /* Wipe leftover WINDOW VRAM, then an opaque black HUD backing.
  * SGDK tile 0 (VDP_clearPlane) is not guaranteed blank; charset 0x00 is
  * all color 0 (MD transparent). Fill cols 0-23 with that so a WHP seam
@@ -28,6 +44,7 @@ static void hud_wipe_window(void)
     /* WPV=2 makes rows 0-1 full-width WINDOW. Restore the opaque top bar
      * so charset 0 from the wipe cannot sit in the 16px letterbox. */
     mode_draw_letterbox();
+    hud_fill_bar_backing();
 }
 
 static u16 hud_y(u16 msx_row)
@@ -181,6 +198,7 @@ static void hud_draw_border(void)
         hud_put_win((u16)(HUD_COL + 2), y, ' ');
         hud_put_win((u16)(HUD_COL + 3), y, ' ');
         hud_put_win((u16)(HUD_COL + 4), y, 0x03);
+        /* 0x4BDF writes 5 tiles. Cols 29-31 stay hud_fill_bar_backing. */
     }
 }
 

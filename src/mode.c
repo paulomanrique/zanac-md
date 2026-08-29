@@ -139,3 +139,12 @@ void mode_draw_letterbox(void)
     VDP_fillTileMapRect(WINDOW, attr, 0, 0, MODE_H32_COLS, 2);
     VDP_fillTileMapRect(WINDOW, attr, MODE_BAR_COL, 26, MODE_BAR_W, 2);
 }
+
+void mode_backdrop_flash(int on)
+{
+    /* TMS R7 BD nibble: 0x0F white / 0x01 black. PAL0 index 15 is the
+     * existing game.c white; index 0 stays the black backdrop. */
+    if (s_mode != MODE_ORIGINAL)
+        return;
+    VDP_setBackgroundColor(on ? 15 : 0);
+}
