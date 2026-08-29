@@ -41,7 +41,8 @@
  * Enemies: G group-1 airborne + round-1 pickups that the spawn_table emits
  *   4-6     box     - 7826: DEC +03 SAT countdown (0 wraps 255f) then
  *           reveal SAT 0xD4 color 0x8F HP5 Yvel 8.8 01C0; not vis/hit
- *           until SET 7. type 4 drops 3x38; type 5 none; type 6 chip.
+ *           until SET 7. 7878 (7904 Z): no 4a6a. type 5 RET (stay 0x23,
+ *           849c next tick); type 4 in-place 38 + 2x8ddb; else type 63.
  *           proto_box 77a1: X=(H&3F)+0x38 +0x20/child; types 77ea;
  *           SAT countdown 7808. Port: dest/bind/script/timer 8.8.
  *   10      duster  - 7a2a: Yvel 8.8 0300, +0c=0x13 (Y|X|X-homing),
@@ -3970,24 +3971,6 @@ static void base_step(Slot *e)
     }
 }
 
-static void award_for(u8 kind)
-{
-    u8 idx = 3;
-    if (kind == KIND_EBULLET) idx = 1;
-    else if (kind == KIND_BOX) idx = 7;
-    else if (kind == KIND_GUN) idx = 4;
-    else if (kind == KIND_FLASH) idx = 9;
-    else if (kind == KIND_BASE) idx = 9;
-    else if (kind == KIND_WIDE) idx = 9;
-    else if (kind == KIND_FIREBOX) idx = 6;
-    else if (kind == KIND_GROUND) idx = 2;
-    else if (kind == KIND_STEALTH || kind == KIND_TRACKER) idx = 6;
-    else if (kind == KIND_CIRCLE) idx = 7;
-    else if (kind == KIND_SPAWNER) idx = 8;
-    player_add_score(idx);
-}
-
-
 static void spawn_base_seg(Slot *e, u8 type, s16 x, s16 y)
 {
     u8 idx = (u8)(type - 73);
@@ -5033,20 +5016,38 @@ static void update_enemies(void)
     }
 }
 
-static void box_death_drop(u8 variant, s16 sx, s16 sy)
+static void box_death_drop(s16 sx, s16 sy);
+static void box_kill_7878(Slot *e);
+
+static void box_death_drop(s16 sx, s16 sy)
 {
-    /* handler_type4_box 0x7878: +0x18 5=RET, 4=3x type 38, else type 63. */
-    if (variant == 5)
-        return;
-    if (variant == 4)
+    /* 788f: in-place type 38 + two 8ddb. Port: three type-38 frags. */
+    spawn_frag(sx, sy, 3, 38);
+    spawn_frag(sx, sy, 5, 38);
+    spawn_frag(sx, sy, 4, 38);
+}
+
+/* 7878 after 7904 Z (shot or 44BA ship). +18 from 453E is the box type.
+ * CP 5 RET Z (stay type 35; 849c next tick). CP 4 -> 788f. Else 7882.
+ * No play_sound_event; ev17 is type35 first frame only. */
+static void box_kill_7878(Slot *e)
+{
+    u8 drop = e->variant;
+    s16 sx = e->x;
+    s16 sy = e->y;
+
+    if (drop == 5)
     {
-        spawn_frag(sx, sy, 3, 38);
-        spawn_frag(sx, sy, 5, 38);
-        spawn_frag(sx, sy, 4, 38);
+        become_expl(e, drop);
         return;
     }
-    if (variant == 6)
-        spawn_chip_at(sx, sy);
+    if (drop == 4)
+    {
+        spr_kill(e);
+        box_death_drop(sx, sy);
+        return;
+    }
+    become_chip(e);
 }
 
 static void collide_bolt_enemies(Slot *bolt, u8 persist)
@@ -5256,20 +5257,10 @@ static void collide_bolt_enemies(Slot *bolt, u8 persist)
                 }
                 return;
             }
-            if (kind == KIND_BOX && drop == 6)
+            if (kind == KIND_BOX)
             {
-                /* 0x7882: in-place type 63; keep Yvel 8.8 (bind/timer). */
-                award_for(kind);
-                sound_play_explode();
-                become_chip(e);
-                return;
-            }
-            if (kind == KIND_BOX && drop == 5)
-            {
-                /* 787b RET Z: type stays 0x23 from 453E (no drop). */
-                award_for(kind);
-                sound_play_explode();
-                become_expl(e, drop);
+                /* 7878: no 4a6a / no ev18. Type 5 scores via 849c. */
+                box_kill_7878(e);
                 return;
             }
             if (kind == KIND_DESCEND)
@@ -5281,14 +5272,7 @@ static void collide_bolt_enemies(Slot *bolt, u8 persist)
                 become_expl(e, 61);
                 return;
             }
-            if (kind == KIND_BOX)
-            {
-                award_for(kind);
-                sound_play_explode();
-                spr_kill(e);
-                box_death_drop(drop, sx, sy);
-            }
-            else if (kind == KIND_GROUND)
+            if (kind == KIND_GROUND)
             {
                 /* type 44 handler 0x82D0 is airborne (4898, not 8f25).
                  * Death -> type 35. Must not 88ed-stamp ground wreck tiles. */
@@ -5435,7 +5419,12 @@ static void collide_player(void)
             sound_play_event(SND_EV_BASEHIT);
             return;
         }
-        if (cls == CLS_EXPL)
+        if (e->kind == KIND_BOX)
+        {
+            /* 44BA -> 453E -> 7904 Z -> 7878 (same as shot kill). */
+            box_kill_7878(e);
+        }
+        else if (cls == CLS_EXPL)
         {
             /* 453E -> 0x23; type35 first frame ALC+ev17+4a6a(+0x18). */
             become_expl(e, slot_msx_type(e));
