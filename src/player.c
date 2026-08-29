@@ -146,9 +146,13 @@ static void fire_select(u8 n)
     /* Switching weapon despawns the live type-3 (E380 := type 40). */
     if (old != n)
         entity_kill_fire();
-    /* fire_select A==2 writes E380=3: Field Shutter is auto, not button-gated. */
+    /* fire_select A==2 writes E380=3: Field Shutter is auto, not button-gated.
+     * Then 97bc type 69 from fire2_special_table (every select, even re-pick). */
     if (n == 2)
+    {
         entity_try_spawn_fire(s_x, s_y, s_xvel_sel);
+        entity_fire2_special();
+    }
 }
 
 static void respawn(void)

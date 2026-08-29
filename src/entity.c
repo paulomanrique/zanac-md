@@ -21,6 +21,7 @@
  *           Type19 expire 72ea (update): piercing.
  *   2 Field      - auto (fire_select writes E380=3), Y=player_Y-8, persist hits
  *           74c1: DEC E14D, ammo 0x14 SAT 0x20 (pat 8).
+ *           fire_select also 97bc type 69 from 0x752F (E10B*3, +3 if round>=5).
  *   3 Circular   - snowflake/orb, 16-dir orbit, +17=0xC3 4cf7 every frame,
  *           fire_life_timer. Port: apply_dir_4cf7(..., 0xC3) into off 8.8.
  *           Type19 expire 735d (update): piercing.
@@ -391,6 +392,18 @@ static const u8 k_shot_rate[18] = {
 /* xvel_table 0x7758: E10C 0-8 -> 16-dir index (fire 0). */
 static const u8 k_xvel_dir[9] = {
     0x06, 0x08, 0x0A, 0x04, 0x0C, 0x0C, 0x02, 0x00, 0x0E
+};
+
+/* fire2_special_table 0x752F: 3B emit/count/interval. Index = E10B*3,
+ * +3 if E701>=5. 97bc writes type 69 then LDIR the 3 bytes. */
+static const u8 k_fire2_special[21] = {
+    0x38, 0x1E, 0x1E,
+    0x42, 0x02, 0x78,
+    0x3A, 0x28, 0x3C,
+    0x1E, 0x1E, 0x1E,
+    0x41, 0x0A, 0xC8,
+    0x0A, 0x64, 0x14,
+    0x43, 0x0A, 0x50
 };
 
 /* fire0_dir_table 0x7321: used by fire 7 (not fire 0). E10C 0-8. */
@@ -5829,6 +5842,30 @@ void entity_try_spawn_fire(s16 x, s16 y, u8 xvel_sel)
 void entity_kill_fire(void)
 {
     spr_kill(&s_fire);
+}
+
+void entity_fire2_special(void)
+{
+    /* fire_select 0x7579: HL = 0x752F + E10B*3; E701>=5 -> +3; CALL 97bc.
+     * 97bc: check_col_clear CF skip; NC type 0x45 + LDIR emit/count/interval. */
+    u8 lvl;
+    u8 idx;
+    const u8 *r;
+    const MapScript *ms;
+
+    lvl = player_shot_level();
+    if (lvl > 5)
+        lvl = 5;
+    idx = (u8)(lvl * 3);
+    ms = map_script_state();
+    if (ms && ms->round >= 5)
+        idx = (u8)(idx + 3);
+    if (idx > 18)
+        idx = 18;
+    r = &k_fire2_special[idx];
+    if (!entity_check_col_clear())
+        return;
+    entity_place_ground(0x45, (s16)r[1], (s16)r[0], r[2]);
 }
 
 u8 entity_shot_count(void)
