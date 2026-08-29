@@ -1765,12 +1765,10 @@ static void cmd_script_jump(u8 cmd, const u8 *ops)
     (void)cmd;
     /* 96de JP 9433 RET: this map_script_step does not 97d5/precompute. */
     s_skip_precompute = 1;
-    /* LAB_92af ending pointer: resolve -> 0, then credits_display. */
-    if (dest == MAP_ENDING_STREAM)
-    {
-        arm_ending_stream();
-        return;
-    }
+    /* dest 0xA6F4 is an in-stream jump (ending self-loop at 0xA74C row
+     * 650). 9433 resolve -> 0, 4C68, JP 941b. LAB_92af (SET 5+3) / R8
+     * 0xFFFF / warp dest 0xA6F4 arm credits separately — cmd 9 never
+     * SET 3 and never alc_reset. */
     /* dest is an MSX address. Halt only if it is outside the loaded blob. */
     if (!blob_ok(dest, 3))
     {
