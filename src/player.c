@@ -172,6 +172,15 @@ static void fire_select(u8 n)
     }
 }
 
+/* 0x7544: SUB A / LD (E14F),A / fall into fire_select with A=0.
+ * 7548 (fire_select) does not touch E14F — chip overflow 78f2 and
+ * type 83 8eaf stay on that path. */
+static void fire_reset(void)
+{
+    s_e14f = 0;
+    fire_select(0);
+}
+
 static void respawn(void)
 {
     place_start();
@@ -184,7 +193,7 @@ static void respawn(void)
     s_alc_cadence = 0;
     s_xvel_sel = 4;
     entity_kill_fire();
-    fire_select(0);         /* fire_reset -> fire_select(0) */
+    fire_reset();           /* 0x75ff CALL 7544 */
     show_ship(1);
 }
 
@@ -296,8 +305,7 @@ void player_hit(void)
     s_dead_timer = 0;
     show_ship(0);
     entity_kill_fire();
-    s_e14f = 0;                 /* fire_reset 0x7544 zeroes E14F */
-    fire_select(0);             /* then fire_select(0) */
+    fire_reset();               /* 0x7544: E14F=0 then fire_select(0) */
     entity_spawn_pdeath(s_x, s_y);  /* SRL E132/E12E + ev16 + 86F3 arm */
 }
 
@@ -384,6 +392,11 @@ void player_fire_select(u8 n)
     fire_select(n);
 }
 
+void player_fire_reset(void)
+{
+    fire_reset();
+}
+
 void player_fire_dec_ammo(void)
 {
     /* fire_dec_ammo 0x732A: DEC E14D. Caller decides expiry. */
@@ -406,7 +419,7 @@ u8 player_fire_life_tick(void)
     s_fire_counter--;
     if (s_fire_counter != 0xFF)
         return 0;
-    fire_select(0);
+    fire_reset();
     return 1;
 }
 
