@@ -41,6 +41,8 @@ void player_e148_sub5(void);
 void player_fire_select(u8 n);
 void player_fire_dec_ammo(void);
 u8   player_fire_ammo(void);
+/* fire_life_timer 0x730B. 1 if E14D underflow -> fire_reset. */
+u8   player_fire_life_tick(void);
 void player_skip_over(void);
 void player_add_score(u8 award_idx);
 /* E106-E108 top score. Persists across title_screen_init. */
