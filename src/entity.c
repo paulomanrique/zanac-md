@@ -198,6 +198,10 @@
  *   38      burst_fragment 8507: +0x17=3, dir=+0x1a&0x0F, set_vel 8.8 (42/43 path sans XOR)
  *           Port: 4898 u8 wrap-cull.
  *   41      pair_fragment 852f: child of umber-8 / swoop-29. Not in 0xBECC.
+ *           Init 4cf7 speed 2, LDIR +08..+0b -> +1c..+1f, +17=4, RET.
+ *           857f: heading +/-1 every 2f, 4cf7 speed 4, ADD HL bias, 4898.
+ *           Port: clock=+0x1a; dest/bind = speed4 + speed2 init heading;
+ *           step_88_4898 (not s32 / invented cull).
  *           Stream path: 71c5 Y=0 then 852f leftover +0x1a=0 (heading 4).
  *   45      light_bar_var 85ee/8608: 3 HP, speed (R&1)+2 via apply_dir_88,
  *           re-aim every 40f (+0x1a += (R&8)-4); aux packs speed|dir, clock=+0x1c;
@@ -330,7 +334,7 @@ typedef struct {
                      * teruzo 12-15: +0x18 script index; off 8.8 fracs
                      * type67: +0x1c phase(low5)|mot 0x40|stop 0x80
                      * type36: SAT attr (XOR 0x0e); 8.8 uses dest/bind/script/timer */
-    u8  clock;      /* type45: re-aim +0x1c (0x28); base: 8fde +0x1c idx; swoop: fire +0x1e;
+    u8  clock;      /* type41: +0x1a spawn dir (bias heading); type45: re-aim +0x1c (0x28); base: 8fde +0x1c idx; swoop: fire +0x1e;
                      * gswoop/tracker: +0c (1/2) | bit2 xor-phase | bit6 sense | bit7 lock;
                      * gun 46-55: fire countdown +0x18; teruzo +0x1f;
                      * pairdesc 57/58: +0x1f descend; descender 61: +0x1e;
@@ -2886,16 +2890,18 @@ static void init_frag(Slot *e, s16 x, s16 y, u8 dir, u8 variant)
     }
     else if (variant == 41)
     {
-        /* handler_type41_pair_fragment 0x852f / 0x857f:
+        /* handler_type41_pair_fragment 0x852f:
          * +0x1a param (low4 base, bit4 curve sense); +0x1b heading = base +/-4;
-         * init speed 2 then 4; per-frame set_velocity_from_dir(heading) @ speed 4.
-         * Port: aux packs count/sense/heading; apply_dir_88(..., 4) + 8.8 step. */
+         * 4cf7 speed 2, LDIR vel -> +1c/+1e, then +17=4 (no 4898 this frame).
+         * Port: clock=+0x1a (bias dir); aux packs count/sense/heading;
+         * dest/bind = the speed-2 seed (LDIR source). */
         u8 base = (u8)(dir & 15);
         u8 heading = (u8)((dir & 0x10)
             ? ((base + 0xFC) & 15)
             : ((base + 4) & 15));
+        e->clock = dir;
         e->aux = (u8)((2 << 5) | (dir & 0x10) | heading);
-        apply_dir_88(e, heading, 4);
+        apply_dir_88(e, heading, 2);
     }
     else if (variant == 38)
     {
@@ -5006,11 +5012,15 @@ static void update_enemies(void)
         }
         else if (e->kind == KIND_EBULLET && e->variant == 41)
         {
-            /* 0x857f: DEC +0x15; on 0 reload 2 and INC/DEC +0x1b by bit4 of +0x1a;
-             * set_velocity_from_dir(+0x1b) every frame at speed 4 (8.8). */
+            /* 0x857f: DEC +0x15; Z -> reload 2 and INC/DEC +0x1b by +0x1a bit4.
+             * 4cf7(+0x1b) speed 4, then ADD HL,(+1c/+1e) speed-2 seed, 4898.
+             * apply_dir_88 would zero script/timer (frac) every frame. */
             u8 meta = e->aux;
             u8 heading = (u8)(meta & 15);
             u8 count = (u8)(meta >> 5);
+            u8 seed = e->clock;
+            u8 ih;
+            u8 hd;
 
             if (count)
                 count--;
@@ -5023,20 +5033,16 @@ static void update_enemies(void)
                     heading = (u8)((heading + 1) & 15);
             }
             e->aux = (u8)((count << 5) | (meta & 0x10) | heading);
-            apply_dir_88(e, heading, 4);
-            {
-                s32 xpos = ((s32)e->x << 8) | (u8)e->script;
-                s32 ypos = ((s32)e->y << 8) | (u8)e->timer;
-
-                xpos += (s16)e->dest;
-                ypos += (s16)e->bind;
-                e->script = (u8)xpos;
-                e->timer = (u8)ypos;
-                e->x = (s16)(xpos >> 8);
-                e->y = (s16)(ypos >> 8);
-                e->vx = 0;
-                e->vy = 0;
-            }
+            hd = (u8)(heading & 15);
+            ih = (u8)((seed & 0x10)
+                ? ((seed + 0xFC) & 15)
+                : ((seed + 4) & 15));
+            e->dest = (u16)((s16)(k_unit_y[hd] * 4) + (s16)(k_unit_y[ih] * 2));
+            e->bind = (u16)((s16)(k_unit_x[hd] * 4) + (s16)(k_unit_x[ih] * 2));
+            e->vx = 0;
+            e->vy = 0;
+            if (step_88_4898(e))
+                continue;
         }
         /* Type 69: X drifts only on successful fire (spawner_step); vx holds
          * drift delta and must not feed the shared integer pass.
@@ -5053,7 +5059,7 @@ static void update_enemies(void)
         }
         /* Type 69 retires on count==0 only (7abc entity_clear); u8 X wrap
          * at bounce must not trip playfield cull. Luster 16-18, duster/teruzo/sig,
-         * stealth 34/65/66, 8.8 leads/bars 20/21/37/38/42/43/45, and
+         * stealth 34/65/66, 8.8 leads/bars 20/21/37/38/41/42/43/45, and
          * 4898 Y-only 61/62/72/83 use unsigned Y>=0xD0 (letterbox is
          * draw-only). Exclude them so Y=201..207 is not culled 7px early. */
         if (e->kind != KIND_SPAWNER
@@ -5073,8 +5079,8 @@ static void update_enemies(void)
             && e->kind != KIND_FIREUP
             && !(e->kind == KIND_EBULLET
                 && (e->variant == 20 || e->variant == 21 || e->variant == 37
-                    || e->variant == 38 || e->variant == 42 || e->variant == 43
-                    || e->variant == 45))
+                    || e->variant == 38 || e->variant == 41 || e->variant == 42
+                    || e->variant == 43 || e->variant == 45))
             && (e->x < -16 || e->x > max_x + 16
                 || (e->kind != KIND_GSWOOP && e->y > max_y)
                 || e->y < -24))
