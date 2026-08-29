@@ -29,9 +29,12 @@ Live blob (cmd 0x89, 2-byte dest):
 
   0xAD2C row 3000 dest 0xAD61   (round 2 -> round 3)
   0xAD5E         dest 0xAAEF   (warp stub -> round 2 start)
+  0xA74C row  650 dest 0xA6F4   (ending stream self-loop, not credits)
 
 Type 10/20/37/38/41 SAT +04 stays. Types 7/8 umber morph stays.
 Pairdesc dirs / stealth dir[0]=2 / type 11/69 SAT 0 / cmd 0 bit2 stay.
+KIND_FIREUP still player_fireup_latch (+1B=0 + SET 7). collide_player
+still skips only dead/over. Type 21 init no +04. No 0xBFD6.
 
 Usage (from zanac-md):
     python tools/test_cmd9_no_alc_reset.py
@@ -56,6 +59,7 @@ ASM_CANDIDATES = [
 
 LIVE = (
     (0xAD2C, 3000, 0xAD61),
+    (0xA74C, 650, 0xA6F4),
 )
 
 
@@ -131,6 +135,25 @@ def main() -> int:
             fails += 1
         else:
             print("  ASM 40d6: reset_entities zeros E132 (boot/warp, not cmd 9)")
+        # Ending stream 0xA6F4; cmd 9 self-loop at 0xA74C (row 650 = 0x028A).
+        if not re.search(
+            r"DB\s+0x00,\s*0x00,\s*0x86,\s*0x33.*;\s*0xa6f4",
+            asm,
+            re.I,
+        ):
+            fail("zanac.asm 0xA6F4 is not ending stream start (row0 cmd6)")
+            fails += 1
+        else:
+            print("  ASM 0xA6F4: ending stream start (row 0 cmd 6)")
+        if not re.search(
+            r"0x8A,\s*0x02,\s*0x89,\s*0xF4,\s*0xA6.*;\s*0xa744",
+            asm,
+            re.I,
+        ):
+            fail("zanac.asm 0xA74C is not cmd9 dest 0xA6F4")
+            fails += 1
+        else:
+            print("  ASM 0xA74C: cmd 9 dest 0xA6F4 (row 650 self-loop)")
     else:
         print("  (zanac.asm not on this machine; C/blob locks only)")
 
@@ -148,6 +171,30 @@ def main() -> int:
         fails += 1
     else:
         print("  cmd_script_jump: still load_trigger_from_pc")
+    if "MAP_ENDING_STREAM" in jump:
+        fail("cmd_script_jump must not special-case 0xA6F4 (96e2 is JP 9433)")
+        fails += 1
+    else:
+        print("  cmd_script_jump: 0xA6F4 is a normal 941b jump")
+
+    # LAB_92af / R8 0xFFFF / warp dest still arm credits.
+    if "static void arm_ending_stream(void)" not in src:
+        fail("arm_ending_stream must remain for LAB_92af")
+        fails += 1
+    else:
+        print("  arm_ending_stream: still present (LAB_92af / R8 / warp)")
+    start_end = fn_span(src, "void map_script_start_ending(void)")
+    if not start_end or "arm_ending_stream" not in start_end:
+        fail("map_script_start_ending must still arm_ending_stream")
+        fails += 1
+    else:
+        print("  map_script_start_ending: still arm_ending_stream")
+    warp = fn_span(src, "void map_script_warp(u16 dest)")
+    if not warp or "MAP_ENDING_STREAM" not in warp:
+        fail("map_script_warp must still special-case dest 0xA6F4")
+        fails += 1
+    else:
+        print("  map_script_warp: dest 0xA6F4 still arms ending")
 
     boot = fn_span(src, "static void script_boot(u8 round, u16 pc)")
     if not boot or "entity_alc_reset" not in boot:
