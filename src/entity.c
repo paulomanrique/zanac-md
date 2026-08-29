@@ -120,7 +120,8 @@
  *   65-66   stealth - 7f99 writes X from 807c, never +01: stream leftover
  *           Y=0 (top). 4/7 hp, +17=1 set_vel 8.8 +0c=3; volley 8084/8087/
  *           808a (20/59). +04 sat_col 0x85 (65) / 0x8b (66); SAT 0xCC solid
- *           (no XOR, no vis). Port: dest/bind/script/timer; clock=+1d.
+ *           (no XOR, no vis). +0D/+1D=0x30; type 65 7ff0 +0D=0x20 reload
+ *           only (+1D stays 0x30). Port: dest/bind/script/timer; clock=+1d.
  *           4898 u8 wrap-cull Y>=0xD0 / X>=0xD1.
  *   67      med_circle - 839f: writes Y/X, +04=0x86, SAT 0x20 pat 8;
  *           +0c=3 +17=3 HP5; +1b=0x78 +1c=0x1e. 83d8: SAT XOR 0x34/0x0c
@@ -2613,8 +2614,9 @@ static void spawn_stealth(Slot *e, u8 type)
      * script/timer = X/Y fracs; variant==66 stands in for +05 bit0. */
     apply_dir_88(e, k_stealth_dir[si], 1);
     e->alive = 1;
-    /* +0x0D/+0x1D = 0x30; type 65 overrides to 0x20. Port: clock=+1d. */
-    e->clock = (type == 65) ? 32 : 48;
+    /* 7fc9/7fcd: +0D/+1D = 0x30. Type 65 7ff0 writes +0D=0x20 only;
+     * +1D stays 0x30. Port clock=+1d first countdown. Reload in stealth_step. */
+    e->clock = 48;
     /* 7fc5 +04=0x88; 7fec type65 0x85; 8002 type66 0x8b. Solid SAT. */
     if (type == 65)
         e->sat_col = 0x85;
@@ -2628,7 +2630,8 @@ static void spawn_stealth(Slot *e, u8 type)
 
 static void stealth_step(Slot *e)
 {
-    /* Volley on +1d (clock); cruise 8.8 applied in entity_update. */
+    /* Volley on +1d (clock); cruise 8.8 applied in entity_update.
+     * 8017: reload +1d from +0d. Type 65 +0d=0x20; 34/66 stay 0x30. */
     if (e->clock)
         e->clock--;
     else
