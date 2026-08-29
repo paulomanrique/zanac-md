@@ -81,7 +81,8 @@ void map_script_base_cleared(void);
 void map_script_base_seg_down(s16 x, s16 y, u8 variant);
 /* Last live KIND_BASE died: E152 := 0 so 8f5e hold can 90a6. */
 void map_script_base_no_segments(void);
-/* 8c15: live nametable cells from type-0xC9 dispatch (phase 0-3). */
+/* 8c15: paint from 8948 bind SAT (post Y+0x10, pre table xo/yo), not live SAT.
+ * 8c39 uses IX+06/+07 from 8a95; 8ac7 xo/yo is hitbox only. */
 void map_script_base_8c15(s16 x, s16 y, u8 variant, u8 phase);
 /* 8c80: type 79 88ed stages. HP>=0x15 -> 8ced; NZ -> 8cfa; 0 -> 8d07. */
 void map_script_punch_79_hp(s16 x, s16 y, u8 hp);

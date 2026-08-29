@@ -335,7 +335,7 @@ typedef struct {
     u8  vram_fr;    /* last DMA'd frame; 0xFF = none */
     u8  vram_nib;   /* last DMA'd color nibble; 0xFF = none */
     u16 dest;       /* idol warp ptr or fire# */
-    u16 bind;       /* 8948 nametable VRAM, SET 7 */
+    u16 bind;       /* 8.8 Yvel, or 8948 SAT (X<<8 | Y) after +0x10 pre xo/yo */
     Sprite *spr;
     Sprite *mspr;   /* type39 complement SAT (71f6); NULL if occupancy-only */
     u8  marker;     /* type39 sibling count (71da); 0x27 occupancy */
@@ -499,6 +499,7 @@ static int step_88_4898(Slot *e);
 static int step_88_y_4898(Slot *e);
 static void apply_dir_88(Slot *e, u8 dir, u8 speed);
 static void apply_dir_4cf7(Slot *e, u8 dir, u8 speed);
+static void base_8c15(const Slot *e);
 
 static void spr_vis_playfield(Sprite *sp, s16 dx, s16 dy, int want_vis)
 {
@@ -2044,7 +2045,8 @@ static const u8 k_gun[5][4] = {
 
 /* base_segment_table 0x8df1: sat_name, HP, y_off, x_off, motion.
  * MSX writes sat_name to +0x03 for hitbox size but never sets +0x04;
- * sat_color stays 0 (invisible). Visual is nametable tiles only. */
+ * sat_color stays 0 (invisible). Visual is nametable tiles only.
+ * 8ac7 xo/yo adjust SAT after 8948; 8c15 eyes stay on the bind cell. */
 static const u8 k_base[7][5] = {
     { 0x20, 0x28, 0x00, 0x00, 0x7F },
     { 0x20, 0x14, 0x00, 0x00, 0x08 },
@@ -3825,6 +3827,13 @@ static void base_finish_death(Slot *e)
         map_script_base_no_segments();
 }
 
+/* 8c15 / 8c39: VRAM from 8948 bind (packed in e->bind), not live SAT. */
+static void base_8c15(const Slot *e)
+{
+    map_script_base_8c15((s16)(u8)(e->bind >> 8), (s16)(u8)e->bind,
+                         e->variant, (u8)(e->script & 3));
+}
+
 static void base_step(Slot *e)
 {
     u8 idx = (u8)(e->variant - 73);
@@ -3848,16 +3857,15 @@ static void base_step(Slot *e)
         e->armed = 1;
         {
             u8 ypre = (u8)e->y;
-            u16 yaln = (u16)ypre & 0xF8;
-            u8 col;
 
             /* 8a7d L=Y then Y+=0x10; 8948 uses L (pre-+0x10), H=X-0x20
-             * before table xo/yo at 8ac7. */
+             * before table xo/yo at 8ac7. 8c15 reads +06/+07 from that
+             * bind, not live SAT. Pack SAT after +0x10 / before xo/yo
+             * so base_nt_cell's Y-0x10 / X-0x20 matches 8948 HL. */
             e->y = (s16)(u8)(ypre + 0x10);
             if (idx > 6)
                 idx = 0;
-            col = (u8)((u8)((u8)e->x - 0x20) >> 3);
-            e->bind = (u16)(0x3800 + (yaln << 2) + col);
+            e->bind = (u16)(((u16)(u8)e->x << 8) | (u8)e->y);
             e->y = (s16)(u8)((u8)e->y + k_base[idx][2]);
             e->x = (s16)(u8)((u8)e->x + k_base[idx][3]);
         }
@@ -3933,7 +3941,7 @@ static void base_step(Slot *e)
             else
                 e->script = (u8)((e->script & 0xF0) | (u8)np | (e->script & 0x10));
             /* 8b60 CALL 8c15 after a phase step. */
-            map_script_base_8c15(e->x, e->y, e->variant, (u8)(e->script & 3));
+            base_8c15(e);
         }
         else
             e->timer = (u8)sum;

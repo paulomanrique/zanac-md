@@ -917,7 +917,8 @@ static void base_nt_cell(s16 x, s16 y, u8 dc, u8 dr, u8 tid)
     u8 row;
     u8 ysub;
 
-    /* 8c39 uses +06/+07 bind from 8948 (SAT X-0x20, Y-0x10). */
+    /* 8c39 uses +06/+07 from 8948: H=SAT_X-0x20, L=SAT_Y pre +0x10.
+     * Caller passes SAT after 8a7e Y+0x10 and before 8ac7 xo/yo. */
     ysub = (u8)((u8)y - 0x10);
     if ((u8)(ysub >> 3) >= 0x18)
         return;
@@ -928,6 +929,8 @@ static void base_nt_cell(s16 x, s16 y, u8 dc, u8 dr, u8 tid)
 
 void map_script_base_8c15(s16 x, s16 y, u8 variant, u8 phase)
 {
+    /* x,y are 8948 SAT, not live SAT after k_base xo/yo. Type 75
+     * xo/yo 0xFC/0xFC: live-SAT paint lands one 8px cell left and up. */
     u8 p = (u8)(phase & 3);
     u8 t0;
     u8 rows;
