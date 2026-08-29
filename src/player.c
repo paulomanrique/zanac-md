@@ -39,7 +39,8 @@ static u8  s_fire_counter;
 static u8  s_fire_mode;
 static u8  s_fire_timer;
 static u8  s_xvel_sel;
-static u8  s_invuln;
+static u8  s_invuln;        /* IX+0x1B i-frame timer */
+static u8  s_if_latch;      /* IX+0x05 bit7; type60 86a4 cancel */
 static u8  s_dead;
 static u8  s_dead_timer;
 static u8  s_over;
@@ -177,6 +178,7 @@ static void respawn(void)
     s_dead = 0;
     s_dead_timer = 0;
     s_invuln = PLAYER_IFRAMES;
+    s_if_latch = 1;         /* 0x75fb SET 7,(IX+0x05) */
     s_shot_level = 0;       /* player_ship_handler zeroes E10B on spawn */
     s_shot_cd = 0;
     s_alc_cadence = 0;
@@ -201,6 +203,7 @@ void player_init(void)
     s_fire_timer = 0x3C;
     s_xvel_sel = 4;
     s_invuln = PLAYER_IFRAMES;
+    s_if_latch = 1;         /* 0x75fb SET 7,(IX+0x05) */
     s_dead = 0;
     s_dead_timer = 0;
     s_over = 0;
@@ -257,7 +260,7 @@ u8 player_fire_num(void)
 
 u8 player_invincible(void)
 {
-    return (u8)((s_invuln != 0) || s_dead || s_over);
+    return (u8)(s_if_latch || (s_invuln != 0) || s_dead || s_over);
 }
 
 u8 player_dead(void)
@@ -283,7 +286,8 @@ void player_skip_over(void)
 
 void player_hit(void)
 {
-    if (s_dead || s_over || s_invuln)
+    /* 86a4 BIT 7,(IX+0x05): latch cancels death even when +1B is 0. */
+    if (s_dead || s_over || s_invuln || s_if_latch)
         return;
 
     /* collision_response: player type1 -> type60. Lives/DEC wait until
@@ -322,6 +326,15 @@ void player_grant_iframes(void)
      * is the type60 86a4 cancel latch: player_hit() no-ops while set.
      * 44ea still CP 0x81, so collide_player must not skip 44B0/453E. */
     s_invuln = PLAYER_IFRAMES;
+    s_if_latch = 1;
+}
+
+void player_fireup_latch(void)
+{
+    /* 8e92 SUB A / LD (IY+0x1B),A — assign 0, not 0x40.
+     * 8e9f SET 7,(IY+0x05) — 86a4 cancel. Next 7710 DEC wraps 0→255. */
+    s_invuln = 0;
+    s_if_latch = 1;
 }
 
 void player_grant_life(void)
@@ -682,15 +695,18 @@ void player_update(void)
     if ((joy & (BUTTON_A | BUTTON_C)) || s_fire_num == 2)
         entity_try_spawn_fire(s_x, s_y, s_xvel_sel);
 
-    if (s_invuln)
+    /* 7710: BIT 7 +05; XOR +04 0x0E; DEC +1B; Z → RES 7 + restore 0x8F.
+     * Fire-up 8e92 +1B=0 + 8e9f SET 7: DEC wraps 0→255 (256-frame blink). */
+    if (s_if_latch || s_invuln)
     {
         s_invuln--;
-        /* MSX XOR sat_color 0x0E (0x8F <-> 0x81) each frame of the 64-count.
+        /* MSX XOR sat_color 0x0E (0x8F <-> 0x81) each frame of the count.
          * Both values keep TMS EC bit7, so draw X stays SAT-32. */
         s_sat_col = (u8)(s_sat_col ^ 0x0E);
         show_ship((s_invuln & 2) == 0);
         if (!s_invuln)
         {
+            s_if_latch = 0;
             s_sat_col = 0x8F;
             show_ship(1);
         }
