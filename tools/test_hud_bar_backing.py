@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """HUD bar spaces must not punch WINDOW color 0 through to leftover white.
 
-0x4BDF border is 03 20 20 20 03. Tile 0x20 CT is 0x70 (bg nibble 0).
+0x4BDF border is 03 + six 20 + 03 (8 tiles). Tile 0x20 CT is 0x70 (bg nibble 0).
 WINDOW replaces BG_A; punch-through is BG_B. Fill BG_B cols 24-31.
 
 Do NOT opaque-recolor shared charset 01/02/03/20: 0x20 is also the
@@ -38,8 +38,8 @@ def main() -> int:
         return fail("space 0x20 must keep ROM CT (bg nibble 0)")
     if "recolor_charset_tile(0x01, charset_ct + 0x01 * 8)" not in map_c:
         return fail("HUD 0x01 must keep ROM CT")
-    if "03 20 20 20 03" not in hud:
-        return fail("0x4BDF border bytes must stay documented")
+    if "0x03, 0x20, 0x20, 0x20, 0x20, 0x20, 0x20, 0x03" not in hud:
+        return fail("0x4BDF border must stay assembled 8-tile 03+six 20+03")
 
     print("ok: HUD BG_B backing; shared 01/02/03/20 keep CT bg=0")
     return 0

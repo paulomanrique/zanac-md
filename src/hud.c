@@ -26,7 +26,7 @@ static void hud_fill_bar_backing(void)
      * SCREEN2 CT bg=0 (transparent to R7). Punch-through is BG_B, not
      * BG_A. Tile 0x20 is also the 0x96c2 " ROUND n " space on BG_A --
      * do not bake an opaque bg into that shared id. Fill BG_B cols
-     * 24-31 so 0x4BDF (03 20 20 20 03) cannot punch leftover white. */
+     * 24-31 so 0x4BDF (03 + six 20 + 03) cannot punch leftover white. */
     VDP_fillTileMapRect(WINDOW, blank, HUD_COL, 2, MODE_BAR_W, 24);
     VDP_fillTileMapRect(BG_A, blank, HUD_COL, 2, MODE_BAR_W, 24);
     VDP_fillTileMapRect(BG_B, blank, HUD_COL, 0, MODE_BAR_W, 32);
@@ -189,23 +189,31 @@ static void hud_hbar(u16 msx_row)
 }
 
 /*
- * Border loop 0x4BDF: B=0x0E rows from 0x3958, inline 03 20 20 20 03 00.
- * Rows 10-23, col 24.
+ * Border loop 0x4BDF: B=0x0E rows from 0x3958.
+ * 5C28 prints the bytes after CALL until 00. Assembled inline at 0x4BE2:
+ *   INC BC          03
+ *   JR NZ,0x4C05    20 20   (disp = 0x4C05-0x4BE5)
+ *   JR NZ,0x4C07    20 20
+ *   JR NZ,0x4C09    20 20
+ *   INC BC          03
+ *   NOP             00
+ * = 03 20 20 20 20 20 20 03 at cols 24-31 (full 8-tile bar).
+ * A 5-tile 03 20 20 20 03 read the JR opcodes as three spaces.
  */
 static void hud_draw_border(void)
 {
+    static const u8 border[8] = {
+        0x03, 0x20, 0x20, 0x20, 0x20, 0x20, 0x20, 0x03
+    };
     u8 i;
+    u8 c;
     u16 y;
 
     for (i = 0; i < 14; i++)
     {
         y = hud_y((u16)(10 + i));
-        hud_put_win(HUD_COL, y, 0x03);
-        hud_put_win((u16)(HUD_COL + 1), y, ' ');
-        hud_put_win((u16)(HUD_COL + 2), y, ' ');
-        hud_put_win((u16)(HUD_COL + 3), y, ' ');
-        hud_put_win((u16)(HUD_COL + 4), y, 0x03);
-        /* 0x4BDF writes 5 tiles. Cols 29-31 stay hud_fill_bar_backing. */
+        for (c = 0; c < 8; c++)
+            hud_put_win((u16)(HUD_COL + c), y, border[c]);
     }
 }
 
