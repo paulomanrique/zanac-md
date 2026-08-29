@@ -2223,7 +2223,9 @@ static const u8 k_base[7][5] = {
 };
 
 static const u8 k_stealth_x[4] = { 32, 208, 80, 160 };
-static const u8 k_stealth_dir[4] = { 0, 6, 4, 4 }; /* [0]=0 down (was 2); E=0x80 wraps to idx0 */
+/* 0x807C (X,dir) pairs: 20 02 / D0 06 / 50 04 / A0 04. 4cf7 dir 2 =
+ * down-right (word0 Y=90, word1 X=90). Dir 0 is right, not down. */
+static const u8 k_stealth_dir[4] = { 2, 6, 4, 4 };
 /* 0x8084: player Y < entity Y. 0x8087: player Y >= entity Y. 16-dir volley. */
 static const u8 k_volley_hi[3] = { 0x0C, 0x0A, 0x0E };
 static const u8 k_volley_lo[3] = { 0x04, 0x02, 0x06 };
