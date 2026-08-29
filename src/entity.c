@@ -164,10 +164,10 @@
  *           pat 13. Port: dest/bind/script/timer 8.8; spr FRAME_BOLT;
  *           vis toggle ~ XOR.
  *   57-58   pairdesc- 81d1/8247: 71c5 (Y=0, X=0x28..0xC6), E=4, JP 81ac
- *           (speed 5 dir 4, +0c=3, +1f=0x20) then convert to type 59 (4c91
- *           aim). 59 is 8.8 set_vel speed 5. SAT 0x6C pat 27 (57) / 0x68
- *           pat 26 (58); color 0x8F. Port: apply_dir_88 dir4 spd5; clock=+1f;
- *           FRAME_SIG_DOUBLE/TRIPLE.
+ *           (speed 5 dir 4, +0c=3, +1f=0x20) then 8207 ev21 + type 59
+ *           (4c91 aim). 59 is 8.8 set_vel speed 5. SAT 0x6C pat27 (57) /
+ *           0x68 pat26 (58); color 0x8F. Port: apply_dir_88 dir4 spd5;
+ *           clock=+1f; FRAME_SIG_DOUBLE/TRIPLE.
  *   20      lead_homing 8668: +0c=0x0B Y-home tgt 0xFF accel 0x0C iters 1;
  *           Xvel 8.8: hi=(R&3)-2, lo=L (same prng); dest/script like other leads.
  *           Stream-capable (is_port_type): random_x 71c5 Y=0 + type20_init_vel;
@@ -3572,10 +3572,14 @@ static void pairdesc_step(Slot *e)
         return;
     }
     {
-        /* 0x820c: LAB_ram_4c91 (not coarse aim_dir). */
-        u8 dir = aim_4c91(e->x, e->y);
+        /* 0x8207: ev21 then 4c91. Shared 81e6 path for type 57 and 58. */
+        u8 dir;
         u8 n = (e->variant == 58) ? 2 : 1;
         u8 k;
+
+        sound_play_event(SND_EV_EHIT2);
+        /* 0x820c: LAB_ram_4c91 (not coarse aim_dir). */
+        dir = aim_4c91(e->x, e->y);
         /* Convert self + children to type 59; dirs stay (aim / +4 / +12).
          * Motion: 8269 set_velocity_from_dir 8.8 speed 5. */
         init_type59(e, e->x, e->y, dir);
