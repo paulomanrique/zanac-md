@@ -25,6 +25,9 @@ static void hud_wipe_window(void)
     VDP_fillTileMapRect(WINDOW, trans, 0, 0, MODE_H32_COLS, 28);
     VDP_fillTileMapRect(WINDOW, blank, HUD_COL, 0, MODE_BAR_W, 28);
     VDP_fillTileMapRect(BG_A, blank, HUD_COL, 0, MODE_BAR_W, 28);
+    /* WPV=2 makes rows 0-1 full-width WINDOW. Restore the opaque top bar
+     * so charset 0 from the wipe cannot sit in the 16px letterbox. */
+    mode_draw_letterbox();
 }
 
 static u16 hud_y(u16 msx_row)

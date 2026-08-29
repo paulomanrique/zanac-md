@@ -499,6 +499,7 @@ static const u8 k_box_sat[30] = {
 static s16 slot_draw_y(const Slot *s);
 static void marker_place(Slot *s, u16 frame);
 static void marker_kill(Slot *s);
+static int complement_frame_ok(u16 frame);
 static u8 hw_sprite_count(void);
 static int band_overlap(s16 a, s16 b);
 static int line_budget_full(s16 dy);
@@ -677,6 +678,19 @@ static void spr_sync(Slot *s)
  * is enough to unfold: primary_only + FRAME_*_C at the same MD draw
  * (71f6 SUB 0x11 == 48C0). Overlaying a folded primary with FRAME_*_C
  * would paint black. Pairdesc 57/58 stay occupancy-only (no SAT name). */
+/* 71da writes type 0x27 + color 0x81 and leaves +03 unread. Leftover SAT
+ * name 0 is chip (FRAME_CHIP); SGDK addSprite defaults to frame 0 (shot).
+ * Complements must not draw those. Occupancy-only (pairdesc 57/58) never
+ * calls this with a SAT name. */
+static int complement_frame_ok(u16 frame)
+{
+    if (frame >= FRAME_N)
+        return 0;
+    if (frame == FRAME_SHOT || frame == FRAME_CHIP)
+        return 0;
+    return 1;
+}
+
 static void marker_place(Slot *s, u16 frame)
 {
     s16 mdx;
@@ -684,7 +698,7 @@ static void marker_place(Slot *s, u16 frame)
 
     if (!s->marker)
         s->marker = 1;
-    if (frame >= FRAME_N)
+    if (!complement_frame_ok(frame))
         return;
     s->mframe = (u8)frame;
     /* Occupancy stays even if the hardware complement is withheld. */
@@ -701,6 +715,8 @@ static void marker_place(Slot *s, u16 frame)
                                   SPR_FLAG_AUTO_VRAM_ALLOC);
         if (!s->mspr)
             return;
+        /* addSprite starts at frame 0 (shot). Hide until SAT name is set. */
+        SPR_setVisibility(s->mspr, HIDDEN);
         SPR_setAnimAndFrame(s->mspr, 0, (s16)frame);
         SPR_setDepth(s->mspr, (s16)(mdy - 1));
         SPR_setDepth(s->spr, mdy);
@@ -901,6 +917,11 @@ static void spr_place(Slot *s, u16 frame)
     if (frame < FRAME_N)
         s->sat = k_frame_sat[frame];
     s->frame = (u8)frame;
+    /* Reused slot: leftover type39 mspr stays at SAT 0 / frame 0 (chip/shot)
+     * unless this spawn writes a new complement. Kill it before the first
+     * visible frame. marker_place re-adds when the SAT name is real. */
+    if (s->mspr && !s->marker)
+        marker_kill(s);
     if (!s->spr)
     {
         s->vram_fr = 0xFF;
@@ -913,6 +934,9 @@ static void spr_place(Slot *s, u16 frame)
         {
             s->spr->data = (u32)s;
             SPR_setFrameChangeCallback(s->spr, spr_frame_cb);
+            /* addSprite defaults to objs frame 0 (shot). Hide until SAT
+             * name + color + link are rewritten. */
+            SPR_setVisibility(s->spr, HIDDEN);
             SPR_setAnimAndFrame(s->spr, 0, frame);
             spr_sync(s);
         }
@@ -967,7 +991,13 @@ static Slot *free_enemy(void)
     u8 i;
     for (i = 0; i < ENEMY_SLOTS; i++)
         if (!s_en[i].alive)
+        {
+            /* Reused slot: leftover SAT name 0 is chip; leftover frame 0
+             * is shot; leftover mspr is a type39 complement. spr_kill
+             * rewrites name+color+link before the next spawn draws. */
+            spr_kill(&s_en[i]);
             return &s_en[i];
+        }
     return NULL;
 }
 
@@ -1855,6 +1885,9 @@ static int step_8f25_unarmed(Slot *e)
 
 /* base_core_anim 0x8a16: (SAT name, color) x4 yellow, then 0x8a1e black.
  * Names 0x1C/0x20/0x24/0x20 = lead / med_circle / lg_circle / med_circle. */
+/* 8a16 SAT names only (lead / med / lg / med). Do not walk into other
+ * FRAME_* indices. FRAME_MED_CIRCLE bakes TMS 6 (dark red) in objs.png. */
+static const u8 k_orb_sat[4] = { 0x1C, 0x20, 0x24, 0x20 };
 static const u8 k_orb_frame[4] = {
     FRAME_LEAD, FRAME_MED_CIRCLE, FRAME_CIRCLE, FRAME_MED_CIRCLE
 };
@@ -1905,9 +1938,13 @@ static void orb_step(Slot *e)
     e->vx = 0;
     e->vy = 0;
 
-    /* anim_sub 0x4912: +0E=4, table 8a16 then 8a1e. aux>>2 is that reload. */
+    /* anim_sub 0x4912: +0E=4, table 8a16 then 8a1e. aux>>2 is that reload.
+     * Lock SAT name to 8a16 (0x1C/0x20/0x24/0x20). Dirty VRAM so the
+     * baked-red med-circle remaps to 8F/83/8A/8B or 81 every tick. */
     idx = (u8)((e->aux >> 2) & 3);
+    e->vram_fr = 0xFF;
     spr_place(e, k_orb_frame[idx]);
+    e->sat = k_orb_sat[idx];
     spr_set_sat_col(e, e->script ? k_orb_yel_col[idx] : k_orb_blk_col[idx]);
     e->aux++;
 }
@@ -5243,11 +5280,11 @@ static void collide_bolt_enemies(Slot *bolt, u8 persist)
                 e->vx = 0;
                 e->vy = 0;
                 /* dest kept: +0x1c/1d warp ptr from idol table.
-                 * Idol had no sprite (nametable); orb needs pat 9 lg_circle. */
-                if (e->spr)
-                    SPR_setAnimAndFrame(e->spr, 0, FRAME_CIRCLE);
-                else
-                    spr_place(e, FRAME_CIRCLE);
+                 * Idol had no SAT; first 8a16 pair is SAT 0x1C / 0x8F. */
+                e->vram_fr = 0xFF;
+                spr_place(e, FRAME_LEAD);
+                e->sat = k_orb_sat[0];
+                spr_set_sat_col(e, k_orb_yel_col[0]);
                 {
                     Slot *c = free_enemy();
                     if (c)
@@ -5688,6 +5725,8 @@ bool entity_spawn_shot(s16 x, s16 y)
     if (live >= cap || !free)
         return FALSE;
 
+    /* Shot SAT leftover 0 is chip; addSprite frame 0 is shot. Wipe first. */
+    spr_kill(free);
     free->alive = 1;
     free->kind = KIND_SHOT;
     free->x = x;
@@ -5699,8 +5738,6 @@ bool entity_spawn_shot(s16 x, s16 y)
     free->bind = (u16)((u16)(u8)(~n) << 8);
     free->script = 0;
     free->timer = 0;
-    free->spr = NULL;
-    free->mspr = NULL;
     /* shot_handler 0x7237: SAT colour 0x8F (EC) before the sprite is
      * placed, copied from ship SAT X at 0x76e1. */
     free->sat_col = 0x8F;
@@ -5729,6 +5766,7 @@ void entity_try_spawn_fire(s16 x, s16 y, u8 xvel_sel)
     if (xvel_sel > 8)
         xvel_sel = 8;
 
+    spr_kill(&s_fire);
     s_fire.alive = 1;
     s_fire.kind = KIND_FIRE;
     s_fire.variant = fn;
@@ -5737,7 +5775,6 @@ void entity_try_spawn_fire(s16 x, s16 y, u8 xvel_sel)
     s_fire.script = 0;
     s_fire.x = x;
     s_fire.y = y;
-    s_fire.spr = NULL;
     s_fexpire = 0;
     /* 0x72bc fire 0/1/2/7 start 0x80 (EC); 0x7335/0x73d2 fire 3/4/5/6
      * are 0x8F. Bit7 must be set before spr_place so the first frame shifts. */

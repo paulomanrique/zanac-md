@@ -2506,7 +2506,10 @@ static void base_clear_finish(void)
             map_script_start_ending();
         return;
     }
-    /* SUB_ram_4163: ev1, or ev2 if round%8==0. Attract (E102.7) skips. */
+    /* SUB_ram_4163: ev1, or ev2 if round%8==0. Attract (E102.7) skips.
+     * GAME OVER already played ev4 (0x4679); do not restart stage BGM. */
+    if (player_is_over())
+        return;
     if (player_e102() & 0x80)
         return;
     if ((s_ms.round & 7) == 0)
@@ -2631,7 +2634,8 @@ static void base_hold(void)
             {
                 entity_base_set(0x0C);
                 /* 9380: bit5 -> stop + 4163 (E102.7 gated). */
-                if ((s_e157 & 0x20) && !(player_e102() & 0x80))
+                if ((s_e157 & 0x20) && !(player_e102() & 0x80)
+                    && !player_is_over())
                 {
                     sound_stop_all();
                     if ((s_ms.round & 7) == 0)
@@ -2653,7 +2657,8 @@ static void base_hold(void)
     if (s_e15a)
     {
         s_e15a--;
-        if (!s_e15a && (s_e157 & 0x20) && !(player_e102() & 0x80))
+        if (!s_e15a && (s_e157 & 0x20) && !(player_e102() & 0x80)
+            && !player_is_over())
             sound_play_event(SND_EV_FANFARE);
     }
     /* 9047: E157 bit4 skips the BCD timer / TIME HUD. */
@@ -2761,7 +2766,8 @@ void map_script_update(void)
                 s_banner_bgm_arm = 0;
                 /* SUB_ram_4163 after round banner: restore main theme if fanfare
                  * or other SFX cleared the ev7->ev1 chain. */
-                if (s_ms.running && !s_cred_on && !sound_bgm_active())
+                if (s_ms.running && !s_cred_on && !player_is_over()
+                    && !sound_bgm_active())
                 {
                     if ((s_ms.round & 7) == 0)
                         sound_play_event(SND_EV_ROUND8);

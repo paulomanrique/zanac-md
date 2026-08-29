@@ -257,9 +257,10 @@ static void fetch_stream(Slot *s)
                 break;
             }
             s->stream = ptr;
-            sound_play_event(ev);
-            /* Intro/theme streams always END immediately after the chain byte. */
+            /* Release this voice before the chained event so dest F_BUSY
+             * (ev7 slot 2 -> ev1) does not 0x51C1 RET NZ the new load. */
             s->cfg = 0;
+            sound_play_event(ev);
             return;
         }
         case 0x88:
@@ -473,26 +474,11 @@ static void flush_psg(void)
 static void load_voice(u8 d, const u8 *hdr, u8 ev)
 {
     Slot *s;
-    u8 i;
 
     if (d >= SLOTS)
         d = (u8)(SLOTS - 1);
     s = &s_slot[d];
-    /* SFX may land on a busy BGM slot (ev7 intro uses 2/3/4); steal a free one. */
-    if (s->cfg)
-    {
-        if (hdr[0] && !(hdr[0] & F_BUSY))
-        {
-            for (i = 0; i < SLOTS; i++)
-            {
-                if (!s_slot[i].cfg)
-                {
-                    s = &s_slot[i];
-                    break;
-                }
-            }
-        }
-    }
+    /* 0x51C2: LDIR 8 header bytes onto dest. No steal-a-free-slot. */
     clear_slot(s);
     s->cfg = hdr[0];
     s->amp = hdr[1];
@@ -519,8 +505,8 @@ void sound_play_event(u8 ev)
         return;
     n = rd(p);
     p++;
-    if (n >= 2)
-        stop_slots();
+    /* 0x5199 has no "n>=2 stop all". ev8/ev9/ev11/ev25 are 2-3 voices;
+     * stopping every slot there killed ev1/ev2 mid-play. */
     for (i = 0; i < n; i++)
     {
         u8 d = rd(p);
@@ -534,6 +520,9 @@ void sound_play_event(u8 ev)
             p++;
             continue;
         }
+        /* 0x51BE: dest cfg bit6 F_BUSY -> RET NZ, abort the rest. */
+        if (d < SLOTS && (s_slot[d].cfg & F_BUSY))
+            return;
         {
             u8 hdr[8];
             u8 k;
@@ -619,7 +608,9 @@ u8 sound_bgm_active(void)
     u8 i;
     for (i = 0; i < 3; i++)
     {
-        if (s_slot[i].cfg && s_slot[i].event <= 10)
+        /* ev4 is the GAME OVER cue (0x4679), not looping stage BGM. */
+        if (s_slot[i].cfg && s_slot[i].event <= 10
+            && s_slot[i].event != SND_EV_GAMEOVER)
             return 1;
     }
     return 0;

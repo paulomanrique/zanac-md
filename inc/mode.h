@@ -57,7 +57,7 @@ u16  mode_letter_attr(void);
 int  mode_hud_overlap(s16 draw_x, u16 width);
 
 /* Black letterbox rows 0-1 / 26-27, full H32 width (Original only).
- * WINDOW HUD still sits on top in cols 24-31. */
+ * WINDOW covers rows 0-1 full width plus the right HUD (cols 24-31). */
 void mode_draw_letterbox(void);
 
 #endif

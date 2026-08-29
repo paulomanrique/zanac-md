@@ -46,7 +46,7 @@ void sound_fade(void);
 
 void sound_play_title(void);
 void sound_play_round(u8 round);
-/* Any stage-BGM event (1/2/7/10) still running on slots 0-2. */
+/* Stage BGM (ev 1/2/7/10) on slots 0-2. ev4 GAME OVER is not BGM. */
 u8   sound_bgm_active(void);
 void sound_play_shot(void);
 void sound_play_explode(void);
