@@ -352,6 +352,8 @@ typedef struct {
 static Slot s_shot[SHOT_SLOTS];
 static Slot s_fire;
 static Slot s_en[ENEMY_SLOTS];
+/* explode_enemies 0x8A26 wait_frames B=5 with R7 BD=15. */
+static u8  s_flash_left;
 
 static u8  s_spawn_ctrl;
 static u8  s_spawn_timer;
@@ -500,6 +502,7 @@ static s16 slot_draw_y(const Slot *s);
 static void marker_place(Slot *s, u16 frame);
 static void marker_kill(Slot *s);
 static int complement_frame_ok(u16 frame);
+static void mspr_upload(Slot *s);
 static u8 hw_sprite_count(void);
 static int band_overlap(s16 a, s16 b);
 static int line_budget_full(s16 dy);
@@ -508,6 +511,8 @@ static int step_88_y_4898(Slot *e);
 static void apply_dir_88(Slot *e, u8 dir, u8 speed);
 static void apply_dir_4cf7(Slot *e, u8 dir, u8 speed);
 static void base_8c15(const Slot *e);
+static void flash_begin(void);
+static void flash_tick(void);
 
 static void spr_vis_playfield(Sprite *sp, s16 dx, s16 dy, int want_vis)
 {
@@ -516,9 +521,13 @@ static void spr_vis_playfield(Sprite *sp, s16 dx, s16 dy, int want_vis)
     if (mode_get() == MODE_ORIGINAL)
     {
         s16 y0 = (s16)mode_y_off();
+        s16 y1 = (s16)(y0 + 192);
 
-        /* TMS 192-line clip: origin in the 16px letterbox is off-screen. */
-        if (dy < y0 || dy >= (s16)(y0 + 192))
+        /* TMS 192-line clip. Origin in a letterbox is off-screen.
+         * SAT Y 0xB8 draws at 200 and occupies 200-215; the bar is
+         * 208-223. Low-pri sprites are clipped by the high-pri bar
+         * for the overlapping 8px; hide only when fully past 192. */
+        if (dy + (s16)MODE_SPR_W <= y0 || dy >= y1)
             want_vis = 0;
         if (mode_hud_overlap(dx, MODE_SPR_W))
             want_vis = 0;
@@ -691,6 +700,27 @@ static int complement_frame_ok(u16 frame)
     return 1;
 }
 
+static void mspr_upload(Slot *s)
+{
+    Sprite *sp = s->mspr;
+    TileSet *ts;
+    u16 nbytes;
+    u16 vaddr;
+    const u8 *src;
+
+    /* Complements have no sat_col remap. Queue the SAT-name tiles
+     * before spr_sync so frame 0 (shot) never hits the screen. */
+    if (!sp || !sp->frame)
+        return;
+    ts = sp->frame->tileset;
+    if (!ts || !ts->numTile)
+        return;
+    nbytes = (u16)(ts->numTile * 32);
+    vaddr = (u16)((sp->attribut & TILE_INDEX_MASK) * 32);
+    src = (const u8 *)FAR_SAFE(ts->tiles, nbytes);
+    DMA_queueDma(DMA_VRAM, (void *)src, vaddr, (u16)(nbytes / 2), 2);
+}
+
 static void marker_place(Slot *s, u16 frame)
 {
     s16 mdx;
@@ -711,19 +741,22 @@ static void marker_place(Slot *s, u16 frame)
         if (hw_sprite_count() >= 70 || line_budget_full(mdy))
             return;
         s->mspr = SPR_addSpriteEx(&spr_objs, mdx, mdy,
-                                  TILE_ATTR(PAL2, TRUE, FALSE, FALSE),
+                                  TILE_ATTR(PAL2, FALSE, FALSE, FALSE),
                                   SPR_FLAG_AUTO_VRAM_ALLOC);
         if (!s->mspr)
             return;
-        /* addSprite starts at frame 0 (shot). Hide until SAT name is set. */
+        /* addSprite starts at frame 0 (shot). Frame + tiles first. */
         SPR_setVisibility(s->mspr, HIDDEN);
+        SPR_setPriority(s->mspr, FALSE);
         SPR_setAnimAndFrame(s->mspr, 0, (s16)frame);
+        mspr_upload(s);
         SPR_setDepth(s->mspr, (s16)(mdy - 1));
         SPR_setDepth(s->spr, mdy);
         spr_sync(s);
         return;
     }
     SPR_setAnimAndFrame(s->mspr, 0, (s16)frame);
+    mspr_upload(s);
     spr_sync(s);
 }
 
@@ -928,27 +961,29 @@ static void spr_place(Slot *s, u16 frame)
         s->vram_nib = 0xFF;
         s->spr = SPR_addSpriteEx(&spr_objs, mode_draw_x(s->x, s->sat_col),
                                  slot_draw_y(s),
-                                 TILE_ATTR(PAL2, TRUE, FALSE, FALSE),
+                                 TILE_ATTR(PAL2, FALSE, FALSE, FALSE),
                                  SPR_FLAG_AUTO_VRAM_ALLOC);
         if (s->spr)
         {
             s->spr->data = (u32)s;
             SPR_setFrameChangeCallback(s->spr, spr_frame_cb);
-            /* addSprite defaults to objs frame 0 (shot). Hide until SAT
-             * name + color + link are rewritten. */
+            /* addSprite defaults to objs frame 0 (shot). Hide, set SAT
+             * name, upload tiles, then spr_sync may show. */
             SPR_setVisibility(s->spr, HIDDEN);
+            SPR_setPriority(s->spr, FALSE);
             SPR_setAnimAndFrame(s->spr, 0, frame);
+            spr_upload_color(s);
             spr_sync(s);
         }
     }
     else
     {
         prev = s->spr->frameInd;
-        spr_sync(s);
         SPR_setAnimAndFrame(s->spr, 0, frame);
-        /* Same frame: engine skips callback -- push tint now. */
+        /* Tiles before visible. Same frame skips callback -- push now. */
         if (prev == (s16)frame)
             spr_upload_color(s);
+        spr_sync(s);
     }
 }
 
@@ -992,10 +1027,9 @@ static Slot *free_enemy(void)
     for (i = 0; i < ENEMY_SLOTS; i++)
         if (!s_en[i].alive)
         {
-            /* Reused slot: leftover SAT name 0 is chip; leftover frame 0
-             * is shot; leftover mspr is a type39 complement. spr_kill
-             * rewrites name+color+link before the next spawn draws. */
-            spr_kill(&s_en[i]);
+            /* Do not spr_kill: release+addSprite reallocates VRAM and
+             * flashes objs frame 0 (shot) until tiles upload. Death
+             * already released. spr_place reuses or adds hidden. */
             return &s_en[i];
         }
     return NULL;
@@ -1942,7 +1976,6 @@ static void orb_step(Slot *e)
      * Lock SAT name to 8a16 (0x1C/0x20/0x24/0x20). Dirty VRAM so the
      * baked-red med-circle remaps to 8F/83/8A/8B or 81 every tick. */
     idx = (u8)((e->aux >> 2) & 3);
-    e->vram_fr = 0xFF;
     spr_place(e, k_orb_frame[idx]);
     e->sat = k_orb_sat[idx];
     spr_set_sat_col(e, e->script ? k_orb_yel_col[idx] : k_orb_blk_col[idx]);
@@ -5481,6 +5514,8 @@ void entity_init(void)
     memset(s_shot, 0, sizeof(s_shot));
     memset(&s_fire, 0, sizeof(s_fire));
     memset(s_en, 0, sizeof(s_en));
+    s_flash_left = 0;
+    mode_backdrop_flash(0);
 
     s_rng = 0xA351;
     s_spawn_ctrl = 0x02;          /* stream active */
@@ -5520,6 +5555,7 @@ void entity_init(void)
 
 void entity_update(void)
 {
+    flash_tick();
     spawn_tick();
     update_shots();
     update_fire();
@@ -5531,6 +5567,9 @@ void entity_update(void)
 void entity_release(void)
 {
     u8 i;
+
+    s_flash_left = 0;
+    mode_backdrop_flash(0);
     for (i = 0; i < SHOT_SLOTS; i++)
         spr_kill(&s_shot[i]);
     spr_kill(&s_fire);
@@ -5725,8 +5764,8 @@ bool entity_spawn_shot(s16 x, s16 y)
     if (live >= cap || !free)
         return FALSE;
 
-    /* Shot SAT leftover 0 is chip; addSprite frame 0 is shot. Wipe first. */
-    spr_kill(free);
+    /* Reuse the hardware sprite. spr_place sets the SAT name and
+     * uploads before the sprite is visible (frame 0 is shot). */
     free->alive = 1;
     free->kind = KIND_SHOT;
     free->x = x;
@@ -6101,12 +6140,29 @@ u8 entity_base_flags(void)
     return s_e150;
 }
 
+static void flash_begin(void)
+{
+    /* 8A26: WRTVDP BC=0x0F07, wait_frames 5, convert, WRTVDP 0x0107. */
+    s_flash_left = 5;
+    mode_backdrop_flash(1);
+}
+
+static void flash_tick(void)
+{
+    if (!s_flash_left)
+        return;
+    s_flash_left--;
+    if (!s_flash_left)
+        mode_backdrop_flash(0);
+}
+
 void entity_explode_airborne(void)
 {
     u8 i;
 
     /* explode_enemies 0x8A26: type & 0x7F in [1,0x45] except 0x28 -> 0x23.
      * Keeps +0x18 so type35 4a6a scores the source type. */
+    flash_begin();
     for (i = 0; i < ENEMY_SLOTS; i++)
     {
         Slot *e = &s_en[i];

@@ -123,9 +123,13 @@ static void show_ship(int vis)
     if (mode_get() == MODE_ORIGINAL)
     {
         s16 y0 = (s16)mode_y_off();
+        s16 y1 = (s16)(y0 + 192);
         s16 dy = mode_draw_y(s_y);
 
-        if (dy < y0 || dy >= (s16)(y0 + 192))
+        /* SAT Y 0xB8 -> draw 200; ship occupies 200-215 over the bar
+         * at 208. Hide only when fully past the 192; high-pri letterbox
+         * tiles clip the overlapping 8px (sprites are low priority). */
+        if (dy + SHIP_H <= y0 || dy >= y1)
             vis = 0;
     }
     SPR_setVisibility(s_spr, vis ? VISIBLE : HIDDEN);
@@ -203,7 +207,9 @@ void player_init(void)
     s_sat_col = 0x8F;
     /* EC before first frame: 0x75EB SAT colour 0x8F, hardware X = SAT-32. */
     s_spr = SPR_addSprite(a->ship, ship_draw_x(), mode_draw_y(s_y),
-                          TILE_ATTR(PAL2, TRUE, FALSE, FALSE));
+                          TILE_ATTR(PAL2, FALSE, FALSE, FALSE));
+    if (s_spr)
+        SPR_setPriority(s_spr, FALSE);
 }
 
 s16 player_x(void)
