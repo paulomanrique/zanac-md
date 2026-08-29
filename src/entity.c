@@ -73,7 +73,8 @@
  *           stealth 66 (808a x5), swoop28 8ddb C=4. Port: KIND_SIG variant 59
  *           + apply_dir_88(...,5) + 8.8 step (shares 81a8 with type56).
  *           4898 u8 wrap-cull Y>=0xD0 / X>=0xD1.
- *   63      chip    - pickup, raises shot_level
+ *   63      chip    - pickup, raises shot_level. 7882 SAT 0x04 (pat 1),
+ *           color 0x8F. 4560 half 3,3 => 10x10 (not SAT 0 / 0x40 14x12).
  *   68      proto_box -> 3 boxes (types 4/5/6)
  *   80      husk    - 8e14: bfb3+ev18+849c first frame (84d1 + 4912), then 8f45 / clear
  *   83      fire-up - 8e3a: Yvel FFE0 8.8; SAT 0x24/0x81 blank vs 0x04/8eaf[+1c];
@@ -697,9 +698,9 @@ static void spr_sync(Slot *s)
  * (71f6 SUB 0x11 == 48C0). Overlaying a folded primary with FRAME_*_C
  * would paint black. Pairdesc 57/58 stay occupancy-only (no SAT name). */
 /* 71da writes type 0x27 + color 0x81 and leaves +03 unread. Leftover SAT
- * name 0 is chip (FRAME_CHIP); SGDK addSprite defaults to frame 0 (shot).
- * Complements must not draw those. Occupancy-only (pairdesc 57/58) never
- * calls this with a SAT name. */
+ * name 0 is empty (pat 0), not chip (pat 1 SAT 0x04). SGDK addSprite
+ * defaults to frame 0 (shot). Complements must not draw those.
+ * Occupancy-only (pairdesc 57/58) never calls this with a SAT name. */
 static int complement_frame_ok(u16 frame)
 {
     if (frame >= FRAME_N)
@@ -787,7 +788,7 @@ static const u8 k_frame_sat[FRAME_N] = {
     0x60, /* 2  FRAME_TERUZO */
     0x78, /* 3  FRAME_LUSTER */
     0xD4, /* 4  FRAME_BOX */
-    0x00, /* 5  FRAME_CHIP */
+    0x04, /* 5  FRAME_CHIP  pat 1; 7882 / 8e5d SAT 0x04 */
     0x1C, /* 6  FRAME_LEAD */
     0x70, /* 7  FRAME_SIG */
     0x2C, /* 8  FRAME_SHOT_D */
@@ -849,7 +850,7 @@ static void anim_sub_4912(Slot *e, const u8 *sats, const u8 *cols,
                          u8 nframes, u8 reload);
 
 /* SAT name -> FRAME_*. SAT 0 is empty (pat 0). Do not return FRAME_CHIP
- * (k_frame_sat[5] is 0) or FRAME_SHOT -- leftover name 0 is occupancy. */
+ * or FRAME_SHOT -- leftover name 0 is occupancy. FRAME_CHIP is SAT 0x04. */
 static u16 frame_from_sat(u8 sat)
 {
     u16 i;
@@ -1699,6 +1700,7 @@ static void spawn_chip_at(s16 x, s16 y)
     e->timer = 0;
     e->alive = 1;
     spr_place(e, FRAME_CHIP);
+    e->sat = 0x04;              /* pat 1; 7882 SAT name (hitbox 10x10) */
 }
 
 static void apply_dir_88(Slot *e, u8 dir, u8 speed);
@@ -2065,8 +2067,8 @@ static void fireup_step(Slot *e)
     }
     else
     {
-        spr_place(e, FRAME_CHIP);   /* pat 1; k_frame_sat is 0x00 */
-        e->sat = 0x04;              /* Original SAT name for hitbox */
+        spr_place(e, FRAME_CHIP);   /* pat 1 SAT 0x04 */
+        e->sat = 0x04;              /* 8e5d SAT name for hitbox */
         spr_set_sat_col(e, e->aux); /* weapon color from 8eaf */
     }
 
@@ -2264,9 +2266,9 @@ static void become_chip(Slot *e)
     e->vx = 0;
     e->vy = 0;
     e->clock = 1;
-    e->sat = 0x04;
     e->sat_col = 0x8F;
     spr_place(e, FRAME_CHIP);
+    e->sat = 0x04;              /* 7882 SAT 0x04 after name write */
 }
 
 static void spawn_gun(Slot *e, u8 type)
