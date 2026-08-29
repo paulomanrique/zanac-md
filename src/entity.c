@@ -133,8 +133,10 @@
  *           Burst at Yvel==0: 7x38 / 2x41 at parent XY (7 writes IX+01/+02;
  *           8 copies both; 9 8ddb type20); type9 +1d=8 -> type20.
  *           Port: dest/bind/script/timer 8.8; clock=+1d. Stream Y=0.
- *   11/69   spawner - 7ad4/7a67: E130 table, interval 0x28, drift on fire
- *           +/-2 bounce u8 X>=0xC0, 8ddb C=3/5, E12D.bit3 gate
+ *   11/69   spawner - 7ad4 writes type 0x45 SAT 0x28 (interval) then
+ *           7a67; 97bc LDIR emit/count/interval into +01/+02/+03.
+ *           +04 never written (color 0 = TMS invisible). No FRAME_FIRE.
+ *           Drift on fire +/-2 bounce u8 X>=0xC0, 8ddb C=3/5, E12D.bit3.
  *   22-25   veybar  - 7d0f/7db4: Yvel 8.8 0400, +15=0x14 iters 1, tgt 0;
  *           shared active 7d4c: morph fire @clock 0x20 -> type37 (7d8c)
  *           via 8ddb parent XY (no +4/+8). 22/23 +0c=0x09 (Xvel armed,
@@ -3805,7 +3807,14 @@ static void spawn_spawner(Slot *e)
         e->aux = 5;
     }
     e->alive = 1;
-    spr_place(e, FRAME_FIRE);   /* SAT 0x1E initially transparent-ish */
+    /* 7af0 SAT 0x28 is also the 0x28 interval. 7a67 / 71c5 never
+     * write +04; TMS color 0 is transparent. Do not spr_place
+     * FRAME_FIRE -- that baked white target at Y=0. */
+    e->sat = 0x28;
+    e->sat_col = 0;
+    e->spr = NULL;
+    e->mspr = NULL;
+    e->marker = 0;
 }
 
 /* cmd 1 97CA: type 69 + (+01 emit, +02 count, +03 interval). 7a67 copies
@@ -3838,7 +3847,13 @@ static void spawn_spawner_cmd1(Slot *e, u8 emit, u8 count, u8 interval)
         e->aux = 5;
     }
     e->alive = 1;
-    spr_place(e, FRAME_FIRE);
+    /* 97ca LDIR leaves +03 = interval; 7a67 copies it to +1b/+1c.
+     * SAT name stays the interval; +04 leftover 0 (invisible). */
+    e->sat = interval;
+    e->sat_col = 0;
+    e->spr = NULL;
+    e->mspr = NULL;
+    e->marker = 0;
 }
 
 static void spawner_step(Slot *e)
