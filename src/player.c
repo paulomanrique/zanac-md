@@ -138,7 +138,10 @@ static void show_ship(int vis)
     }
     SPR_setVisibility(s_spr, vis ? VISIBLE : HIDDEN);
     if (vis)
+    {
         SPR_setPosition(s_spr, dx, mode_draw_y(s_y));
+        SPR_setDepth(s_spr, 0);
+    }
 }
 
 static void fire_select(u8 n)
@@ -213,7 +216,11 @@ void player_init(void)
     s_spr = SPR_addSprite(a->ship, ship_draw_x(), mode_draw_y(s_y),
                           TILE_ATTR(PAL2, FALSE, FALSE, FALSE));
     if (s_spr)
+    {
         SPR_setPriority(s_spr, FALSE);
+        /* entity_dispatch 0x445F: E300 writes SAT first (on top). */
+        SPR_setDepth(s_spr, 0);
+    }
 }
 
 s16 player_x(void)
