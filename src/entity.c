@@ -117,11 +117,11 @@
  *           4898 u8 wrap-cull Y>=0xD0 / X>=0xD1.
  *   67      med_circle - 839f: writes Y/X, +04=0x86, SAT 0x20 pat 8;
  *           +0c=3 +17=3 HP5; +1b=0x78 +1c=0x1e. 83d8: SAT XOR 0x34/0x0c
- *           only while +05.0 clear (no 44BA, no 4898). First +1b Z:
+ *           (0x20 pat 8 <-> 0x14 pat 5 small star). First +1b Z:
  *           SET +05.0, aim_4c91+set_vel speed 3, +04=0x8d, reload
  *           +1b=0x32+(R&0x1e); +05.1 stops reaim. Port: sat_col 0x86,
  *           idle XOR not vis; clock=+1b; aux=phase|mot|stop; 8.8;
- *           spr FRAME_MED_CIRCLE (pat 8 kept).
+ *           spr FRAME_MED_CIRCLE / FRAME_SMALL_STAR from SAT.
  *   73-79   base    - nametable-only (sat_col=0 like MSX); HP from base_segment_table
  *           8a5a: until BIT 7, Y+=8 per E700.1, RET until E150.1; then SET 7,
  *           Y+=0x10, table xo/yo, 8948. 8c15 paints live tiles from phase.
@@ -283,7 +283,8 @@
 #define FRAME_LOGA_B    57  /* pat 20 loga_B SAT 0x50 type39 */
 #define FRAME_LOGA_D    58  /* pat 21 loga_B fire SAT 0x54 */
 #define FRAME_SNOW      59  /* pat 4 SAT 0x10 fire 3 (7331) */
-#define FRAME_N         60
+#define FRAME_SMALL_STAR 60 /* pat 5 SAT 0x14 type 67 83d8 XOR */
+#define FRAME_N         61
 
 #define KIND_SHOT       2
 #define KIND_FIRE       3
@@ -883,7 +884,8 @@ static const u8 k_frame_sat[FRAME_N] = {
     0xE8, /* 56 FRAME_UMBER_B_C */
     0x50, /* 57 FRAME_LOGA_B  pat20 SAT 0x50 */
     0x54, /* 58 FRAME_LOGA_D  pat21 SAT 0x54 */
-    0x10  /* 59 FRAME_SNOW    pat 4 SAT 0x10 */
+    0x10, /* 59 FRAME_SNOW    pat 4 SAT 0x10 */
+    0x14  /* 60 FRAME_SMALL_STAR pat 5 SAT 0x14 type 67 */
 };
 
 static u16 frame_from_sat(u8 sat);
@@ -918,6 +920,7 @@ static const u8 k_frame_color[FRAME_N] = {
     7, 1, 15, 1, 7, 1, 15, 4, 15, 15, 15,
     11, 1, 7, 1,
     1, 1,
+    15,
     15
 };
 
@@ -2810,11 +2813,18 @@ static void spawn_med_circle(Slot *e)
 
 static void circle_step(Slot *e)
 {
-    /* 0x83d8: SAT name ^=0x34, color ^=0x0c (keep FRAME_MED_CIRCLE).
-     * DEC +1b; NZ + bit0 clear -> 48b8 only. Z: SET +05.0, DEC +1c,
-     * +1c==0 SET +05.1; else +04=0x8d, +1b=0x32+(R&0x1e),
-     * aim_4c91 + set_velocity_from_dir speed 3. Bit0 gates 4898. */
+    /* 0x83d8: SAT name ^=0x34 (0x20 <-> 0x14), color ^=0x0c.
+     * SAT 0x14 is gfx pat 5 (small star), extracted into
+     * FRAME_SMALL_STAR. DEC +1b; NZ + bit0 clear -> 48b8 only.
+     * Z: SET +05.0, DEC +1c, +1c==0 SET +05.1; else +04=0x8d,
+     * +1b=0x32+(R&0x1e), aim_4c91 + set_velocity_from_dir speed 3.
+     * Bit0 gates 4898. */
+    u16 fr;
+
     e->sat ^= 0x34;
+    fr = frame_from_sat(e->sat);
+    if (fr < FRAME_N)
+        spr_place(e, fr);
     spr_set_sat_col(e, (u8)(e->sat_col ^ 0x0c));
 
     e->clock--;

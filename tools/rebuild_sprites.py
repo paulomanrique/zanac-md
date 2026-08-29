@@ -56,7 +56,7 @@ def compl_only(compl):
 
 
 # FRAME index -> (pat, tms_color, is_complement)
-# Matches entity.c FRAME_* 0..58. Primaries are body bits only.
+# Matches entity.c FRAME_* 0..60. Primaries are body bits only.
 FRAMES = [
     (10, 15, False),   # SHOT
     (22, 9, False),    # DUSTER
@@ -118,6 +118,7 @@ FRAMES = [
     (20, 1, True),     # LOGA_B SAT 0x50
     (21, 1, True),     # LOGA_D SAT 0x54
     (4, 15, False),    # SNOW pat 4 SAT 0x10 fire 3
+    (5, 15, False),    # SMALL_STAR pat 5 SAT 0x14 type 67 83d8 XOR
 ]
 
 
