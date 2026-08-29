@@ -15,18 +15,26 @@
  *   0 All-Range  - xvel_table[E10C] dir, 4cf7 speed 0xC2 8.8
  *           (bit6*3 * bit7*4 * count2 = *24 -> 12 px cardinal),
  *           +0c=3 then 72de + 4898. Port: apply_dir_4cf7(..., 0xC2).
+ *           Type19 expire 74be entity_clear (not piercing).
  *   1 Straight   - +0c=1 Y-only, Yvel 0xFE00, fire_dec_ammo per spawn,
  *           72ea -> 72de + 4898. Port: bind=0xFE00, step_88_y_4898.
+ *           Type19 expire 72ea (update): piercing.
  *   2 Field      - auto (fire_select writes E380=3), Y=player_Y-8, persist hits
+ *           74c1: DEC E14D, ammo 0x14 SAT 0x20 (pat 8).
  *   3 Circular   - snowflake/orb, 16-dir orbit, +17=0xC3 4cf7 every frame,
  *           fire_life_timer. Port: apply_dir_4cf7(..., 0xC3) into off 8.8.
+ *           Type19 expire 735d (update): piercing.
  *   4 Vibrator   - lg_circle, rise + X bang-bang around anchor, persist hit->ev24
  *   5 Rewinder   - SAT 0x0C, Yvel 8.8 0xFE00 then +4/frame, X=player_X,
  *           Y>=0x10, die if Y > player_Y+0x10, 4898 Y-only. Ammo shots.
- *   6 Plasma     - no persistent entity (explode_enemies + ev19)
+ *           Type19 expire 7464 (update): piercing.
+ *   6 Plasma     - 73ce SAT 0x10 color 0x8F, Yvel 0xFE00 +0c=1, fire_dec_ammo,
+ *           update 7494 -> 4898. Type19 expire 7511 explode+ev19+48d0.
+ *           Not an instant no-entity nuke (that was invented).
  *   7 High Speed - comet, fire0_dir_table, +17=0xC3 4cf7
  *           (bit6*3 * bit7*4 * count3 = *36 -> 18 px cardinal),
  *           728f spawn 4cf7 then 7306 -> 72de + 4898. Port: apply_dir_4cf7.
+ *           Type19 expire 7306 (update): piercing.
  * Enemies: G group-1 airborne + round-1 pickups that the spawn_table emits
  *   4-6     box     - 7826: DEC +03 SAT countdown (0 wraps 255f) then
  *           reveal SAT 0xD4 color 0x8F HP5 Yvel 8.8 01C0; not vis/hit
@@ -412,7 +420,6 @@ static s16 s_faccel;
 static s16 s_fanchor;
 static u8  s_fdir;
 static u8  s_fexpire;
-static u8  s_f6cd;
 
 /* vel_dir_table integer approx (legacy apply_dir); 8.8 uses k_unit_*. */
 static const s8 k_dir_vx[16] = {
@@ -4230,8 +4237,8 @@ static void update_shots(void)
 
 static void fire_offscreen_reset(u8 fn)
 {
-    /* 0x749c: off-screen + E14D==0 -> fire_reset. Fire 1/4/5. */
-    if ((fn == 1 || fn == 4 || fn == 5) && player_fire_ammo() == 0)
+    /* 0x749c: off-screen + E14D==0 -> fire_reset. Fire 1/4/5/6. */
+    if ((fn == 1 || fn == 4 || fn == 5 || fn == 6) && player_fire_ammo() == 0)
         player_fire_select(0);
 }
 
@@ -4241,9 +4248,6 @@ static void update_fire(void)
     Slot *f = &s_fire;
     u8 fn;
     u8 cycle;
-
-    if (s_f6cd)
-        s_f6cd--;
 
     if (!f->alive)
         return;
@@ -4325,12 +4329,13 @@ static void update_fire(void)
             return;
         }
     }
-    else if (fn == 1)
+    else if (fn == 1 || fn == 6)
     {
-        /* 72ea -> 72de -> 4898: +0c=1 Y-only, Yvel 0xFE00. */
+        /* Fire 1 72ea -> 72de + 4898. Fire 6 7494 -> 4898 only.
+         * Both +0c=1 Yvel 0xFE00. 72de color INC is fire 1 (cycle). */
         if (step_88_y_4898(f))
         {
-            fire_offscreen_reset(1);
+            fire_offscreen_reset(fn);
             return;
         }
     }
@@ -4350,10 +4355,10 @@ static void update_fire(void)
         f->y += f->vy;
     }
 
-    /* Fire 0/7 script is 4898 X frac; fire 1 timer is Y frac. Do not
+    /* Fire 0/7 script is 4898 X frac; fire 1/6 timer is Y frac. Do not
      * use those as a blink tick. 72de is color INC only; SAT write
      * every frame. */
-    if (fn != 0 && fn != 1 && fn != 7)
+    if (fn != 0 && fn != 1 && fn != 6 && fn != 7)
         f->script++;
     /* fire 0/1/2/7 run: INC sat_color, keep TMS EC bit7 so SAT overlap
      * stays graphic overlap. 3/4/5 stay 0x8F. */
@@ -4376,7 +4381,7 @@ static void update_fire(void)
             spr_vis_playfield(f->spr, fdx, mode_draw_y(f->y), 1);
     }
 
-    if (fn != 0 && fn != 1 && fn != 2 && fn != 3 && fn != 7)
+    if (fn != 0 && fn != 1 && fn != 2 && fn != 3 && fn != 6 && fn != 7)
     {
         if (f->x < -16 || f->x > (s16)(a->playfield_w + 8)
             || f->y < -24 || f->y > (s16)(a->playfield_h + 8))
@@ -5040,9 +5045,21 @@ static void collide_bolt_enemies(Slot *bolt, u8 persist)
                 sound_play_event(SND_EV_FIRE_EXPIRE);
             }
         }
-        else
+        else if (persist == 4)
         {
-            /* fire 2 expire 0x74C1: ev24, DEC E14D, FF -> fire_reset. */
+            /* type19 7511: explode_enemies + ev19 + 48d0 + 749c.
+             * 8a3e skips type>=0x46, so 44CA structures still 7904. */
+            entity_explode_airborne();
+            sound_play_event(SND_EV_PLASMA);
+            spr_kill(bolt);
+            fire_offscreen_reset(6);
+            if (e->kind == KIND_EXPL)
+                return;
+        }
+        else if (persist == 1)
+        {
+            /* fire 2 expire 0x74C1: ev24, DEC E14D, FF -> fire_reset.
+             * ammo == 0x14 -> SAT name 0x20 (pat 8). */
             player_fire_dec_ammo();
             if (player_fire_ammo() == 0xFF)
             {
@@ -5050,8 +5067,13 @@ static void collide_bolt_enemies(Slot *bolt, u8 persist)
                 player_fire_select(0);
             }
             else
+            {
                 sound_play_event(SND_EV_FIRE_EXPIRE);
+                if (player_fire_ammo() == 0x14)
+                    spr_place(bolt, FRAME_MED_CIRCLE);
+            }
         }
+        /* persist 3: type19 expire is the live update (1/3/5/7 piercing). */
         /* 8833 child 0xD1: 7904 BIT 7 skips 880d. 453e still remaps the
          * bolt (shot consumed) then DEC 0->255 and restores type 0xD1.
          * Do not fall into 8824/88c2; that punch is type-81 death. */
@@ -5277,6 +5299,10 @@ static void collide_shots_enemies(void)
             persist = 1;
         else if (fn == 4)
             persist = 2;
+        else if (fn == 1 || fn == 3 || fn == 5 || fn == 7)
+            persist = 3;
+        else if (fn == 6)
+            persist = 4;
         collide_bolt_enemies(&s_fire, persist);
     }
 }
@@ -5416,7 +5442,7 @@ void entity_init(void)
     s_alc_shots = 0;
     s_alc_events = 0;
     s_fyoff = s_fxoff = s_fvy = s_fvx = s_faccel = s_fanchor = 0;
-    s_fdir = s_fexpire = s_f6cd = 0;
+    s_fdir = s_fexpire = 0;
     entity_alc_reset();
     /* BE27 via alc_recompute already armed E137/E138 from BE76[0]=0x38. */
 
@@ -5675,21 +5701,6 @@ void entity_try_spawn_fire(s16 x, s16 y, u8 xvel_sel)
     u16 frame;
 
     fn = player_fire_num();
-    /* Fire 6 Plasma Flash: no persistent type-3. Expire 0x7511 =
-     * explode_enemies + ev19 + 0x749c ammo check. */
-    if (fn == 6)
-    {
-        if (s_f6cd)
-            return;
-        s_f6cd = 20;
-        player_fire_dec_ammo();
-        entity_explode_airborne();
-        sound_play_event(SND_EV_PLASMA);
-        if (player_fire_ammo() == 0)
-            player_fire_select(0);
-        return;
-    }
-
     if (s_fire.alive)
         return;
 
@@ -5706,8 +5717,8 @@ void entity_try_spawn_fire(s16 x, s16 y, u8 xvel_sel)
     s_fire.y = y;
     s_fire.spr = NULL;
     s_fexpire = 0;
-    /* 0x72bc fire 0/1/2/7 start 0x80 (EC); 0x7335/0x73d2 fire 3/4/5 are
-     * 0x8F. Bit7 must be set before spr_place so the first frame shifts. */
+    /* 0x72bc fire 0/1/2/7 start 0x80 (EC); 0x7335/0x73d2 fire 3/4/5/6
+     * are 0x8F. Bit7 must be set before spr_place so the first frame shifts. */
     s_fire.sat_col = 0x8F;
 
     if (fn == 1)
@@ -5771,6 +5782,17 @@ void entity_try_spawn_fire(s16 x, s16 y, u8 xvel_sel)
         s_fvy = (s16)0xFE00;
         frame = FRAME_FIRE;
     }
+    else if (fn == 6)
+    {
+        /* Plasma 0x73CE: SAT 0x10, color 0x8F, Yvel 0xFE00, +0c=1,
+         * fire_dec_ammo, JP 7494 -> 4898. 7511 is type19 expire. */
+        s_fire.vx = 0;
+        s_fire.vy = 0;
+        s_fire.dest = 0;
+        s_fire.bind = 0xFE00;
+        frame = FRAME_SNOW;
+        player_fire_dec_ammo();
+    }
     else if (fn == 7)
     {
         /* High Speed 0x728F: SAT 0x08 comet, fire0_dir_table, +17=0xC3.
@@ -5798,8 +5820,8 @@ void entity_try_spawn_fire(s16 x, s16 y, u8 xvel_sel)
         s_fire.alive = 0;
         return;
     }
-    /* 7331 SAT 0x10. FRAME_SNOW is pat 4; 4560 uses +03. */
-    if (fn == 3)
+    /* 7331/73ce SAT 0x10. FRAME_SNOW is pat 4; 4560 uses +03. */
+    if (fn == 3 || fn == 6)
         s_fire.sat = 0x10;
     sound_play_event(SND_EV_FIRE);
 }

@@ -24,7 +24,7 @@ void entity_on_shot_fired(u8 cadence);
 
 /* Spawn a type-2 player shot at MD top-left. Returns FALSE if pool full. */
 bool entity_spawn_shot(s16 x, s16 y);
-/* Type-3 fire-weapon (E380). No-op if live, or fire_num 6 (no persistent entity). */
+/* Type-3 fire-weapon (E380). No-op if live. Fire 6 is SAT 0x10 + 4898. */
 void entity_try_spawn_fire(s16 x, s16 y, u8 xvel_sel);
 void entity_kill_fire(void);
 /* Type60 player death FX at (x,y); SRL E132/E12E; clear -> E102 bit0. */
