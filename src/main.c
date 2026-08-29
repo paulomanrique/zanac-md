@@ -19,8 +19,15 @@ int main(bool hardReset)
     SPR_init();
     /* wait_one_frame 0x4306 is one GINT (E1F8>=1). gameplay_frame_loop
      * 0x407A LD B,1. SGDK DMA auto-flush waits another VBlank when the
-     * queue fills -- that is a second retrace and halves the tick rate. */
+     * queue fills -- that is a second retrace and halves the tick rate.
+     * Keep autoflush off. Raise the queue/buffer so the 68000 prepares
+     * every SAT/complement/tile in the active frame; one flush after
+     * the wait copies them in that vblank. Do not drop work. */
     DMA_setAutoFlush(FALSE);
+    DMA_setMaxQueueSize(160);       /* default 80; tile+NT+SAT can fill */
+    DMA_setBufferSize(16384);       /* default 8192 NTSC; sat_col remap */
+    DMA_setMaxTransferSize(0);      /* 0 = no cap; ToDefault is 7200 */
+    DMA_setIgnoreOverCapacity(FALSE);
     mode_init();
     sound_init();
     SYS_setVIntCallback(vint_psg);
@@ -36,7 +43,8 @@ int main(bool hardReset)
             game_update();
 
         SPR_update();
-        SYS_doVBlankProcess();
+        SYS_doVBlankProcess();  /* one wait_one_frame 0x4306 */
+        DMA_flushQueue();       /* flush in THAT vblank; never before */
     }
 
     return 0;

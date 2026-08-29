@@ -42,8 +42,27 @@ def main() -> int:
 
     if "DMA_setAutoFlush(FALSE)" not in main_c:
         return fail("main.c: DMA auto-flush must be off (extra VBlank = 30Hz)")
+    if "DMA_setAutoFlush(TRUE)" in main_c:
+        return fail("main.c: do not re-enable autoflush")
     if main_c.count("SYS_doVBlankProcess()") != 1:
         return fail("main.c: exactly one SYS_doVBlankProcess per tick")
+    if main_c.count("DMA_flushQueue()") != 1:
+        return fail("main.c: exactly one DMA_flushQueue per tick")
+    if not re.search(
+        r"SPR_update\(\);\s*"
+        r"SYS_doVBlankProcess\(\);.*\n"
+        r"\s*DMA_flushQueue\(\);",
+        main_c,
+    ):
+        return fail("loop must be SPR_update; SYS_doVBlankProcess; DMA_flushQueue")
+    flush_at = main_c.find("DMA_flushQueue()")
+    wait_at = main_c.find("SYS_doVBlankProcess()")
+    if flush_at < 0 or wait_at < 0 or flush_at < wait_at:
+        return fail("DMA_flushQueue before the wait is a second retrace")
+    if "DMA_setMaxQueueSize(" not in main_c:
+        return fail("raise DMA command queue; default 80 fills mid-frame")
+    if "DMA_setBufferSize(" not in main_c or "DMA_setMaxTransferSize(0)" not in main_c:
+        return fail("raise DMA buffer / unlimited transfer; do not cap at 7200")
     if re.search(r"SYS_setFPS|setMaxFPS|30\s*\*\s*FPS|fps\s*=\s*30", main_c, re.I):
         return fail("main.c: do not add a 30fps cap")
 
@@ -77,7 +96,7 @@ def main() -> int:
     if re.search(r"s_scroll_px\s*\+=\s*2|s_e711\s*>>\s*4", map_c):
         return fail("do not invent 2px/frame scroll")
 
-    print("ok: one VBlank/tick, DMA auto-flush off, 1px scroll, no 30fps cap")
+    print("ok: SPR_update; doVBlank; flush; DMA budget raised; no 30fps cap")
     return 0
 
 
