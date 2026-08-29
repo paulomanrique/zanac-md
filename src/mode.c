@@ -105,9 +105,11 @@ void mode_apply_video(void)
     if (s_mode == MODE_ORIGINAL)
     {
         VDP_setScreenWidth256();
-        /* Right 8 tiles (4 double-cols) + full 28-row height. */
+        /* L-window: rows 0-1 full width (16px letterbox) so BG_B wrap/peek
+         * in NT 31 cannot show through a transparent BG_A cell. Rows 2-27
+         * keep the right 8 tiles (WHP 12 = col 24). Bottom 16px stays BG_A. */
         VDP_setWindowHPos(TRUE, 12);
-        VDP_setWindowVPos(FALSE, 28);
+        VDP_setWindowVPos(FALSE, 2);
         load_letter_tile();
         PAL_setColor(0, RGB24_TO_VDPCOLOR(0x000000));
         VDP_setBackgroundColor(0);
@@ -131,8 +133,9 @@ void mode_draw_letterbox(void)
      * transparent WINDOW cells in cols 24-31 cannot show BG_B wrap. */
     VDP_fillTileMapRect(BG_A, attr, 0, 0, MODE_H32_COLS, 2);
     VDP_fillTileMapRect(BG_A, attr, 0, 26, MODE_H32_COLS, 2);
-    /* WINDOW overlays cols 24-31. SGDK tile 0 leftover there reads as a
-     * white stripe in the letterbox next to the right HUD. */
-    VDP_fillTileMapRect(WINDOW, attr, MODE_BAR_COL, 0, MODE_BAR_W, 2);
+    /* WPV=2: rows 0-1 are full-width WINDOW. Opaque PAL0 black here hides
+     * the NT 31 peek that VSCROLL parks in screen Y 8-15. HUD cols 24-31
+     * of the bottom bar stay WINDOW so tile 0 cannot stripe the corner. */
+    VDP_fillTileMapRect(WINDOW, attr, 0, 0, MODE_H32_COLS, 2);
     VDP_fillTileMapRect(WINDOW, attr, MODE_BAR_COL, 26, MODE_BAR_W, 2);
 }
