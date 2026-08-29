@@ -56,10 +56,14 @@ static u8  s_e114;
 static u8  s_e148;
 static u8  s_e14f;
 
-/* score_award_table 0x4AEA: BCD idx -> decimal points. */
-static const u16 k_award[21] = {
-    0, 1, 6, 10, 17, 20, 30, 50, 80, 100,
-    200, 400, 800, 1000, 1500, 2000, 3000, 4000, 5000, 10000, 2000
+/* score_award_table 0x4AEA: 21 x 3-byte little-endian BCD (E103/E104/E105).
+ * 4a74: A*3 + 0x4AEA. 4a6a and 91c1 both land here.
+ * idx 20 is 00 00 20 = 200000 (does not fit u16). 9251 writes E157=0xB2
+ * so E157&0x1F==0x12 -> base_clear_award_index_table[18]==0x14. */
+static const u32 k_award[21] = {
+    0UL, 1UL, 6UL, 10UL, 17UL, 20UL, 30UL, 50UL, 80UL, 100UL,
+    200UL, 400UL, 800UL, 1000UL, 1500UL, 2000UL, 3000UL, 4000UL, 5000UL,
+    10000UL, 200000UL
 };
 
 static void place_start(void)
