@@ -1219,14 +1219,6 @@ static void bg_init(void)
     VDP_clearPlane(BG_B, TRUE);
     memset(s_nt, 0, sizeof(s_nt));
     bg_load_tiles();
-    /* VDP_clearPlane leaves SGDK tile 0 on BG_A rows 2-25 cols 0-23.
-     * SCREEN2 bg 0 is transparent to R7 black. Map tiles with CT bg=0
-     * punch through BG_B to that leftover (white mid-screen). Fill the
-     * playfield only -- HUD cols 24-31 stay hud_fill_bar_backing; do
-     * not opaque-recolor shared charset 0x20 (ROUND banner spaces).
-     * Before bg_fill_plane so 0x96c2 SETWRT 0x3948 can stamp on top. */
-    if (mode_get() == MODE_ORIGINAL)
-        VDP_fillTileMapRect(BG_A, mode_letter_attr(), 0, 2, MODE_BAR_COL, 24);
     bg_fill_plane();
     /* Charset load does not touch BG_A, but restamp the 16px bars so a
      * leftover tile 0 cannot sit under the ship at SAT Y 0xB8. */
