@@ -35,7 +35,7 @@ def main() -> int:
         return fail("k_orb_sat must stay 1C/20/24/20")
     if "orb_keep_body_nibbles" not in ent:
         return fail("orb upload must sanitize leftover PAL2 nibbles")
-    if "if (s->kind == KIND_ORB)" not in ent:
+    if "s->kind == KIND_ORB" not in ent:
         return fail("sanitize must run on type 72 uploads")
     if "u16 out = 128" not in ent:
         return fail("orb upload must zero-pad to 4 tiles (leftover UL VRAM)")

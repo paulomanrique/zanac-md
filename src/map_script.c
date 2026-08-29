@@ -116,6 +116,7 @@ static u8  s_row_carry;         /* E700 bit 1: 97e3 ran this frame */
 static u16 s_scroll_base;       /* E702 after build_tile_screen; VSCROLL 0 */
 static u8  s_skip_precompute;   /* cmd 9 941b RET: this step does not 97e3 */
 static u8  s_ram_only;          /* boot: assemble E800 without poking VRAM */
+static u8  s_assemble_peek;     /* peek assemble: tiles only, no place */
 /* Two DMA_QUEUE sources -- SGDK stores the pointer until vblank.
  * Original pads to MODE_H32_COLS so cols 24-31 of a wrap row are never
  * leftover charset. */
@@ -681,12 +682,19 @@ static void peek_next_row_at(u16 map_row, u16 wrap_px)
 {
     u8 x;
     u8 line[PF_COLS];
+    u8 idol_snap;
 
     if (s_ram_only)
         return;
     memcpy(s_col_snap, s_col, sizeof(s_col));
     memcpy(s_stream_snap, s_stream, sizeof(s_stream));
+    idol_snap = s_idol_cur;
+    /* Tile preview of row+1 only. place_tile_group / 95ed must not
+     * spawn: a delay that hits 0 here would place, then restore the
+     * stream so the next real 97e3 places again (stacked bases). */
+    s_assemble_peek = 1;
     assemble_row(map_row);
+    s_assemble_peek = 0;
     for (x = 0; x < PF_COLS; x++)
         line[x] = s_rowbuf[ASM_SKIP + x];
     /* wrap_px selects the letterbox NT that the next 1-8px of VSCROLL
@@ -694,6 +702,7 @@ static void peek_next_row_at(u16 map_row, u16 wrap_px)
     dma_nt_row(hidden_wrap_nt_at(wrap_px), line, s_row_tm);
     memcpy(s_col, s_col_snap, sizeof(s_col));
     memcpy(s_stream, s_stream_snap, sizeof(s_stream));
+    s_idol_cur = idol_snap;
 }
 
 static void peek_next_row(u16 map_row)
@@ -1210,6 +1219,14 @@ static void bg_init(void)
     VDP_clearPlane(BG_B, TRUE);
     memset(s_nt, 0, sizeof(s_nt));
     bg_load_tiles();
+    /* VDP_clearPlane leaves SGDK tile 0 on BG_A rows 2-25 cols 0-23.
+     * SCREEN2 bg 0 is transparent to R7 black. Map tiles with CT bg=0
+     * punch through BG_B to that leftover (white mid-screen). Fill the
+     * playfield only -- HUD cols 24-31 stay hud_fill_bar_backing; do
+     * not opaque-recolor shared charset 0x20 (ROUND banner spaces).
+     * Before bg_fill_plane so 0x96c2 SETWRT 0x3948 can stamp on top. */
+    if (mode_get() == MODE_ORIGINAL)
+        VDP_fillTileMapRect(BG_A, mode_letter_attr(), 0, 2, MODE_BAR_COL, 24);
     bg_fill_plane();
     /* Charset load does not touch BG_A, but restamp the 16px bars so a
      * leftover tile 0 cannot sit under the ship at SAT Y 0xB8. */
@@ -1284,10 +1301,17 @@ static void place_tile_group(StreamSlot *st, u16 *pptr)
             if (wr != 7 && wr != 8)
                 dest = map_script_ptrs[0];  /* 0xB7A5 */
         }
-        /* 0x9607 check_col_clear: CF -> skip place (still consume + idol bump). */
+        /* 0x9607 check_col_clear: CF -> skip place (still consume + idol bump).
+         * Peek assemble must still consume the descriptor (count/tiles)
+         * but must not spawn -- restore would leave the entities. */
         if (entity_check_col_clear())
         {
-            if (entity_place_ground(type, x, y, dest))
+            if (s_assemble_peek)
+            {
+                if (ctrl & 0x80)
+                    nbase++;
+            }
+            else if (entity_place_ground(type, x, y, dest))
             {
                 /* bit7: INC E151 only on successful place (0x9637). */
                 if (ctrl & 0x80)
@@ -1302,7 +1326,7 @@ static void place_tile_group(StreamSlot *st, u16 *pptr)
         }
         ptr = (u16)(ptr + 3);
     }
-    if ((ctrl & 0x80) && nbase)
+    if ((ctrl & 0x80) && nbase && !s_assemble_peek)
     {
         s_e152 = nbase;
         entity_base_open(nbase);
@@ -1370,7 +1394,12 @@ static void place_ctrl_at(u16 ptr)
             }
             if (entity_check_col_clear())
             {
-                if (entity_place_ground(type, x, y, dest))
+                if (s_assemble_peek)
+                {
+                    if (ctrl & 0x80)
+                        nbase++;
+                }
+                else if (entity_place_ground(type, x, y, dest))
                 {
                     if (ctrl & 0x80)
                         nbase++;
@@ -1384,7 +1413,7 @@ static void place_ctrl_at(u16 ptr)
             }
             q = (u16)(q + 3);
         }
-        if ((ctrl & 0x80) && nbase)
+        if ((ctrl & 0x80) && nbase && !s_assemble_peek)
         {
             s_e152 = nbase;
             entity_base_open(nbase);

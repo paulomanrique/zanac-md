@@ -946,8 +946,11 @@ static void spr_upload_color(Slot *s)
 
     /* 16x16 SAT is 4 tiles. AUTO_VRAM_ALLOC sizes to the sheet max (4).
      * A nearly-empty LEAD (pat 7: 14 bits, UL 4x4 empty) can ship fewer
-     * tiles; leftover VRAM in the unused slot is flyer blue / cyan. */
-    if (s->kind == KIND_ORB)
+     * tiles; leftover VRAM in the unused slot is flyer blue / cyan.
+     * 84d1 / 86F3 use the same SAT 0x1C/0x20/0x24 discs as type 72. */
+    if (s->kind == KIND_ORB
+        || s->kind == KIND_EXPL || s->kind == KIND_PDEAD
+        || s->kind == KIND_HUSK)
     {
         u16 out = 128;
         u16 n;

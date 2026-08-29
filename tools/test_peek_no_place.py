@@ -1,0 +1,98 @@
+#!/usr/bin/env python3
+"""Peek assemble must not place_tile_group-spawn. hidden_wrap stays Y 8.
+
+peek_next_row_at snapshots cols/streams, assembles row+1 for wrap DMA,
+then restores. stream_stamp_buf can expire a delay during that assemble
+and call 95ed. Entities are not in the snapshot -- a delay that hits 0
+on peek would spawn, then the next real 97e3 would spawn again
+(stacked 964C bases).
+
+hidden_wrap_nt_at stays screen Y 8. Boot peek NT 31 and in-game +8 stay.
+964C / proto_box +0x20 / k_base 8ac7 stay.
+
+Usage (from zanac-md):
+    python tools/test_peek_no_place.py
+"""
+from __future__ import annotations
+
+import re
+import sys
+from pathlib import Path
+
+ROOT = Path(__file__).resolve().parents[1]
+MAPC = ROOT / "src" / "map_script.c"
+ENT = ROOT / "src" / "entity.c"
+
+
+def fail(msg: str) -> int:
+    print("FAIL:", msg)
+    return 1
+
+
+def hidden_wrap_nt_at(scroll_px: int, y_off: int = 16) -> int:
+    off = (scroll_px + y_off) & 0xFF
+    py = (8 - off) & 0xFF
+    return py >> 3
+
+
+def main() -> int:
+    map_c = MAPC.read_text(encoding="utf-8")
+    ent = ENT.read_text(encoding="utf-8")
+
+    peek = re.search(
+        r"static void peek_next_row_at\(u16 map_row, u16 wrap_px\)\s*\{(.*?)^\}",
+        map_c,
+        re.S | re.M,
+    )
+    if not peek:
+        return fail("peek_next_row_at not found")
+    body = peek.group(1)
+    if "s_assemble_peek = 1" not in body:
+        return fail("peek must set s_assemble_peek around assemble_row")
+    if "s_assemble_peek = 0" not in body:
+        return fail("peek must clear s_assemble_peek after assemble_row")
+    if "idol_snap" not in body or "s_idol_cur = idol_snap" not in body:
+        return fail("peek must restore s_idol_cur (IX+0x1D)")
+    if "memcpy(s_stream, s_stream_snap" not in body:
+        return fail("peek must still restore stream cursors")
+
+    if "if (s_assemble_peek)" not in map_c:
+        return fail("place_tile_group must skip spawn when peeking")
+    if "nbase && !s_assemble_peek" not in map_c:
+        return fail("peek must not entity_base_open / arm")
+
+    # hidden_wrap_nt_at stays screen Y 8
+    wrap = re.search(
+        r"static u8 hidden_wrap_nt_at\(u16 scroll_px\)\s*\{(.*?)^\}",
+        map_c,
+        re.S | re.M,
+    )
+    if not wrap:
+        return fail("hidden_wrap_nt_at not found")
+    if "8 - off" not in wrap.group(1) and "8 - (off)" not in wrap.group(1):
+        return fail("hidden_wrap_nt_at must stay screen Y 8")
+
+    if "peek_next_row_at((u16)(s_ms.row + 1), s_scroll_px)" not in map_c:
+        return fail("boot peek must stay hidden_wrap_nt_at(s_scroll_px)")
+    if not re.search(
+        r"peek_next_row_at\(map_row,\s*\(u16\)\(s_scroll_px \+ 8\)\)", map_c
+    ):
+        return fail("in-game peek must stay +8")
+
+    if hidden_wrap_nt_at(0) != 31:
+        return fail("letterbox at scroll_px=0 must stay NT 31")
+
+    formula = "x = (s16)st->ybase * 8 + (s16)r[2] - 0x20"
+    if formula not in map_c:
+        return fail("place_tile_group SAT X must stay ybase*8 + blob_X - 0x20")
+    if "x + 0x20" not in ent:
+        return fail("proto_box children must stay +0x20 apart (77a1)")
+    if "e->y = (s16)(u8)((u8)e->y + k_base[idx][2])" not in ent:
+        return fail("k_base yo applies at arm (8ac7), not at place")
+
+    print("ok: peek assemble does not place; wrap Y 8 / 964C / 8ac7 stay")
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())
