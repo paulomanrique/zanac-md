@@ -17,6 +17,10 @@ int main(bool hardReset)
 
     VDP_setScreenWidth320();
     SPR_init();
+    /* wait_one_frame 0x4306 is one GINT (E1F8>=1). gameplay_frame_loop
+     * 0x407A LD B,1. SGDK DMA auto-flush waits another VBlank when the
+     * queue fills -- that is a second retrace and halves the tick rate. */
+    DMA_setAutoFlush(FALSE);
     mode_init();
     sound_init();
     SYS_setVIntCallback(vint_psg);

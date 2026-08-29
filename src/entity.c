@@ -514,8 +514,6 @@ static void marker_kill(Slot *s);
 static int complement_frame_ok(u16 frame);
 static void mspr_upload(Slot *s);
 static u8 hw_sprite_count(void);
-static int band_overlap(s16 a, s16 b);
-static int line_budget_full(s16 dy);
 static int step_88_4898(Slot *e);
 static int step_88_y_4898(Slot *e);
 static void apply_dir_88(Slot *e, u8 dir, u8 speed);
@@ -532,13 +530,15 @@ static s16 sat_depth_marker(const Slot *s);
  * sprite_sat_write 0x48B8 appends Y-0x11,X,name,color. TMS first SAT
  * index is on top. Slot 0 E300 player, E320+ shots, E380 fire, E3A0+
  * enemies. 71f6 complement appends immediately after its primary.
- * SGDK lower depth = earlier SAT = on top. Do not sort by draw Y --
- * that weaves enemies through shots.
+ * SGDK lower depth = earlier SAT = on top. SPR_MIN_DEPTH is always-on-top
+ * so a leftover Y depth cannot weave flyers through shots. Complement
+ * stays primary+1 (71f6). Do not sort by draw Y.
  */
-#define SAT_DEPTH_PLAYER    0
-#define SAT_DEPTH_SHOT      1
+/* SPR_MIN_DEPTH stays above any leftover Y depth. Slot walk after that. */
+#define SAT_DEPTH_PLAYER    SPR_MIN_DEPTH
+#define SAT_DEPTH_SHOT      (SPR_MIN_DEPTH + 1)
 #define SAT_DEPTH_FIRE      (SAT_DEPTH_SHOT + SHOT_SLOTS)
-#define SAT_DEPTH_ENEMY     16
+#define SAT_DEPTH_ENEMY     (SAT_DEPTH_FIRE + 1)
 
 static s16 sat_depth_primary(const Slot *s)
 {
@@ -628,52 +628,12 @@ static u8 hw_sprite_count(void)
     return n;
 }
 
-static int band_overlap(s16 a, s16 b)
-{
-    return (a < (s16)(b + (s16)MODE_SPR_W)) && (b < (s16)(a + (s16)MODE_SPR_W));
-}
-
-static int line_budget_full(s16 dy)
-{
-    u8 n = 0;
-    u8 i;
-    s16 pdy;
-
-    if (mode_get() != MODE_ORIGINAL)
-        return 0;
-    pdy = mode_draw_y(player_y());
-    if (band_overlap(pdy, dy))
-        n++;
-    for (i = 0; i < SHOT_SLOTS; i++)
-        if (s_shot[i].spr && s_shot[i].alive
-            && band_overlap(slot_draw_y(&s_shot[i]), dy))
-            n++;
-    if (s_fire.spr && s_fire.alive && band_overlap(slot_draw_y(&s_fire), dy))
-        n++;
-    for (i = 0; i < ENEMY_SLOTS; i++)
-    {
-        Slot *e = &s_en[i];
-        s16 ey;
-
-        if (!e->alive)
-            continue;
-        ey = slot_draw_y(e);
-        if (e->spr && band_overlap(ey, dy))
-            n++;
-        /* Do not count mspr: complements are what we drop. Counting them
-         * here would hide/show every other frame on a packed line. */
-    }
-    /* MD 20/line. 10 primaries + complements = 20; drop complements first. */
-    return (n >= 10);
-}
-
 static void spr_sync(Slot *s)
 {
     s16 dx;
     s16 dy;
     s16 mdx;
     s16 mdy;
-    int mvis;
 
     dx = mode_draw_x(s->x, s->sat_col);
     dy = slot_draw_y(s);
@@ -694,27 +654,10 @@ static void spr_sync(Slot *s)
     SPR_setDepth(s->mspr, sat_depth_marker(s));
     if (s->spr)
         SPR_setDepth(s->spr, sat_depth_primary(s));
-    /* Complement uses the same letterbox/HUD clip as the primary, plus
-     * its own draw box (EC 0x81 can sit 32px left of a non-EC body). */
+    /* 71f6 always writes the complement SAT. Clip only this EC sprite's
+     * own draw box. Do not hide it because the primary overlaps the HUD
+     * or because a port line-budget is full -- that left colored halves. */
     spr_vis_playfield(s->mspr, mdx, mdy, 1);
-    mvis = 1;
-    if (mode_get() == MODE_ORIGINAL)
-    {
-        s16 y0 = (s16)mode_y_off();
-
-        if (dy < y0 || dy >= (s16)(y0 + 192))
-            mvis = 0;
-        if (mdy < y0 || mdy >= (s16)(y0 + 192))
-            mvis = 0;
-        if (mode_hud_overlap(dx, MODE_SPR_W))
-            mvis = 0;
-        if (mode_hud_overlap(mdx, MODE_SPR_W))
-            mvis = 0;
-        if (line_budget_full(mdy))
-            mvis = 0;
-    }
-    if (!mvis)
-        SPR_setVisibility(s->mspr, HIDDEN);
 }
 
 /* MSX spawn_col_marker (0x71da): type 0x27 slot, +04=0x81, HL left at +03.
@@ -790,7 +733,7 @@ static void marker_place(Slot *s, u16 frame)
     mdy = slot_draw_y(s);
     if (!s->mspr)
     {
-        if (hw_sprite_count() >= 70 || line_budget_full(mdy))
+        if (hw_sprite_count() >= 70)
             return;
         s->mspr = SPR_addSpriteEx(&spr_objs, mdx, mdy,
                                   TILE_ATTR(PAL2, FALSE, FALSE, FALSE),

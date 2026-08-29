@@ -140,7 +140,7 @@ static void show_ship(int vis)
     if (vis)
     {
         SPR_setPosition(s_spr, dx, mode_draw_y(s_y));
-        SPR_setDepth(s_spr, 0);
+        SPR_setDepth(s_spr, SPR_MIN_DEPTH);
     }
 }
 
@@ -218,8 +218,9 @@ void player_init(void)
     if (s_spr)
     {
         SPR_setPriority(s_spr, FALSE);
-        /* entity_dispatch 0x445F: E300 writes SAT first (on top). */
-        SPR_setDepth(s_spr, 0);
+        /* entity_dispatch 0x445F: E300 writes SAT first (on top).
+         * SPR_MIN_DEPTH is SGDK's always-on-top; Y-sort cannot bury it. */
+        SPR_setDepth(s_spr, SPR_MIN_DEPTH);
     }
 }
 

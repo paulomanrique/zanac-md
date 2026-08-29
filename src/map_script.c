@@ -646,10 +646,9 @@ static void bg_set_vscroll(void)
     VDP_setVerticalScroll(BG_A, 0);
     off = (u16)((s_scroll_px + mode_y_off()) & 0xFF);
     VDP_setVerticalScroll(BG_B, (s16)(-(s16)off));
-    /* Screen Y 0-15 / 208-223 always show 16px of BG_B "above/below" the
-     * 192 (wrap or peek). Clip those pixels; wiping NT 24-31 would hide
-     * the 1-7px peek that VSCROLL places at the top of the 192. */
-    mode_draw_letterbox();
+    /* Letterbox tiles live on BG_A / WINDOW (VSCROLL 0). They are
+     * stamped once at boot / hud_wipe. Filling them every tick was a
+     * second VRAM burst on top of SYS_doVBlankProcess. */
 }
 
 /* 97e3 scroll_precompute: DEC E714 (wrap 0->23), assemble once. */
@@ -2892,8 +2891,6 @@ void map_script_draw_hud(void)
 {
     const ModeAssets *a = mode_assets();
     u16 cols = a->screen_width / 8;
-
-    mode_draw_letterbox();
 
     if (mode_get() == MODE_ORIGINAL)
     {
