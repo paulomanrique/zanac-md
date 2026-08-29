@@ -29,6 +29,9 @@ def main() -> int:
     if "SAT_DEPTH_PLAYER" not in ent or "SAT_DEPTH_SHOT" not in ent:
         print("FAIL: missing SAT_DEPTH_* constants")
         return 1
+    if "#define SAT_DEPTH_PLAYER    SPR_MIN_DEPTH" not in ent:
+        print("FAIL: SAT_DEPTH_PLAYER must be SPR_MIN_DEPTH (leftover Y cannot weave)")
+        return 1
     if "sat_depth_primary" not in ent or "sat_depth_marker" not in ent:
         print("FAIL: missing sat_depth helpers")
         return 1
@@ -44,7 +47,7 @@ def main() -> int:
     if "SPR_setDepth(s->mspr, sat_depth_marker(s))" not in ent:
         print("FAIL: complement must use sat_depth_marker")
         return 1
-    if "SPR_setDepth(s_spr, 0)" not in ply:
+    if "SPR_setDepth(s_spr, SPR_MIN_DEPTH)" not in ply:
         print("FAIL: ship must stay SAT index 0 (E300 first write)")
         return 1
 

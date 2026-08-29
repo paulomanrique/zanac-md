@@ -63,6 +63,8 @@ static u8  s_ay_tone_on[3];
 /* E200: mute_sound=3 (bit0 one-shot mute + bit1 freeze), restore=0 */
 static u8  s_e200;
 
+static int gameover_voices_active(void);
+
 static u8 rd(u16 a)
 {
     if (a < SOUND_BLOB_BASE || a > SOUND_BLOB_END)
@@ -492,6 +494,18 @@ static void load_voice(u8 d, const u8 *hdr, u8 ev)
     s->duration = 1;
 }
 
+static int gameover_voices_active(void)
+{
+    u8 i;
+
+    for (i = 0; i < SLOTS; i++)
+    {
+        if (s_slot[i].cfg && s_slot[i].event == SND_EV_GAMEOVER)
+            return 1;
+    }
+    return 0;
+}
+
 void sound_play_event(u8 ev)
 {
     u16 p;
@@ -499,6 +513,11 @@ void sound_play_event(u8 ev)
     u8 i;
 
     if (!ev || ev > SOUND_EVENT_MAX)
+        return;
+    /* 0x4663: stop_all then ev4. wait_fire_or_timeout does not enqueue
+     * other events. ev4 lives on slots 2/3/4; ev1/ev13 would steal ch A/B
+     * or abort the remaining GO voices (0x51C1 F_BUSY). */
+    if (ev != SND_EV_GAMEOVER && gameover_voices_active())
         return;
     p = rd16((u16)(SOUND_PTR_TABLE + ((u16)ev << 1)));
     if (p < SOUND_BLOB_BASE || p > SOUND_BLOB_END)
