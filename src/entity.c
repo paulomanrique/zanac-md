@@ -1563,7 +1563,8 @@ static void spawn_duster(Slot *e)
     /* handler_type10_duster 0x7a2a.
      * 8.8 packing matches type20/26: dest=Xvel, bind=Yvel,
      * script=Xfrac, timer=Yfrac. aux=+0x14 X-home tgt.
-     * +0c=0x13 Y|X motion|X_homing; Yvel 0x0300; +16=8, +17=1. */
+     * +0c=0x13 Y|X motion|X_homing; Yvel 0x0300; +16=8, +17=1.
+     * +03=0x58 +04=0x89 (EC). */
     u8 r1 = rnd();
     u8 r2 = rnd();
     u8 x;
@@ -1586,6 +1587,7 @@ static void spawn_duster(Slot *e)
     e->aux = (x < 0x88) ? 0xFF : 0x00;
     e->clock = 0;
     e->alive = 1;
+    e->sat_col = 0x89;          /* 7a48 +04; TMS EC bit7, nibble 9 */
     spr_place(e, FRAME_DUSTER);
     marker_place(e, FRAME_DUSTER_C);  /* spawn_col_marker SAT 0x5C */
 }
@@ -1787,6 +1789,7 @@ static void spawn_ebullet_dir(s16 x, s16 y, u8 dir)
     e->y = y;
     apply_dir(e, dir);
     e->alive = 1;
+    e->sat_col = 0x8F;          /* 84eb type37 +04; TMS EC bit7 */
     spr_place(e, FRAME_LEAD);
 }
 
@@ -2553,9 +2556,11 @@ static void spawn_lead20(s16 x, s16 y)
     c->ground = 0;
     c->x = x;
     c->y = y;
-    /* 8668: +0c=0x0B, +13=0xFF, +15=0x0C, +17=1; Xvel 8.8 from one R. */
+    /* 8668: +03=0x1C +04=0x8F, +0c=0x0B, +13=0xFF, +15=0x0C, +17=1;
+     * Xvel 8.8 from one R. */
     type20_init_vel(c);
     c->alive = 1;
+    c->sat_col = 0x8F;          /* 8672 +04; TMS EC bit7 */
     spr_place(c, FRAME_LEAD);
 }
 
@@ -3030,6 +3035,10 @@ static void init_frag(Slot *e, s16 x, s16 y, u8 dir, u8 variant)
         apply_dir_88(e, (u8)(dir & 15), speed);
     }
     e->alive = 1;
+    /* 20/37/38/41/42/43: +04=0x8F (8672/84eb/8513/8539). Type 21 init
+     * 863b does not write +04 (active 8659 is R-nibble|0x80). */
+    if (variant != 21)
+        e->sat_col = 0x8F;
     /* 21: SAT 0x18 pat 6. 45: 850b writes 0x1C then 8625 pulses 0x18/0x20. */
     spr_place(e, (variant == 21 || variant == 45) ? FRAME_LIGHT_BAR : FRAME_LEAD);
 }
@@ -4295,6 +4304,7 @@ static int spawn_from_type(u8 t)
         e->y = 0;
         type20_init_vel(e);
         e->alive = 1;
+        e->sat_col = 0x8F;      /* 8672 +04; TMS EC bit7 */
         spr_place(e, FRAME_LEAD);
     }
     else if (t == 56)
