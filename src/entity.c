@@ -86,7 +86,10 @@
  *           aim_4c91+set_vel 8.8 speed (R&3)+1, +0c=3, 3 hp;
  *           SAT 0x40 plane / col-marker 0x44 plane_compl (cyan 0x83);
  *           spr FRAME_PLANE + FRAME_PLANE_C (type39, unfolded).
- *   64      proto   - table-driven converter (spawn_type_list[E130/2+R&3])
+ *   64      proto   - 8279: spawn_type_list[E130/2+R&3], write +00, RET.
+ *           Table has 0x40 at idx 0/23/51; a 64 result retries next frame.
+ *           Port has no type-64 slot, so re-roll until the byte is not 64
+ *           (eventual MSX type). Do not invent force-44 on a 64 lookup.
  *   70/71   idol    - nametable totem (no SAT); HP 6; -> type 72 orb + bfc8 + type-81 child
  *           8f25: unsigned Y+=8 per E700.1 until wrap, SET 7, Y+=0x10; then 8f45
  *           Y+=8 per E700.1 until Y>=0xD0.
@@ -4266,12 +4269,23 @@ static int spawn_from_type(u8 t)
     }
     if (t == 64)
     {
-        /* 8279: index spawn_type_list by E130/2 + R&3, clamp 0x5F. */
-        u8 idx = (u8)((s_e130 >> 1) + (rnd() & 3));
-        u8 nt;
-        if (idx > 0x5F)
-            idx = 0x5F;
-        nt = spawn_type_list[idx];
+        /* 8279: index spawn_type_list by E130/2 + R&3, clamp 0x5F,
+         * write the byte into +00, RET. 0xBECC has 0x40 at 0/23/51, so a
+         * 64 result leaves the slot as type 64 and the same handler runs
+         * next frame. Force-44 invented a plane whenever the lookup was
+         * 64 — wrong at idx 23 (18/24/16) and 51 (58/28/23). Re-roll
+         * until the byte is not 64 (eventual MSX type; E130 stable). */
+        u8 nt = 64;
+        int guard = 0;
+
+        while (nt == 64 && guard < 8)
+        {
+            u8 idx = (u8)((s_e130 >> 1) + (rnd() & 3));
+            if (idx > 0x5F)
+                idx = 0x5F;
+            nt = spawn_type_list[idx];
+            guard++;
+        }
         if (nt == 64 || !is_port_type(nt))
             nt = 44;
         return spawn_from_type(nt);
