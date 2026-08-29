@@ -15,7 +15,8 @@ void entity_release(void);
 void entity_on_spawn_ctrl(u8 ctrl);
 /* Map-script cmd C: signed spawn-pace nudge into E132/E12E (ALC family 2). */
 void entity_on_spawn_pace(s8 nudge);
-/* Cmd 8/9 round transition: restart ALC accumulators. */
+/* First boot / warp / credits: zero E12E/E12F/E131/E132.
+ * Cmd 9 (0x96E2 JP 0x9433) does not wipe them. */
 void entity_alc_reset(void);
 
 /* Per fire-tick ALC family 1: E13F cadence -> E12F/E131/E141 (76a7/76b0/76bc).

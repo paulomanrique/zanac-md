@@ -1784,7 +1784,8 @@ static void cmd_script_jump(u8 cmd, const u8 *ops)
     if (s_ms.round >= 1 && s_ms.round <= 8)
         s_continue_round = s_ms.round;
     s_ms.pc = dest;
-    entity_alc_reset();
+    /* 96de JP 9433 / 941b: reload trigger/row/PC only. MSX never writes
+     * E12E/E12F/E131/E132 here — firing + cmd 12 survive the jump. */
     load_trigger_from_pc();
     /* LAB_941b: E702 = trigger-1. Do not reset E714 / E800 -- MSX keeps
      * the circular nametable. Cmd 9 RETs without 97d5/precompute. Keep
