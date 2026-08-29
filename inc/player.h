@@ -44,6 +44,8 @@ u8   player_score_hi(void);
 u8   player_e148(void);
 void player_e148_sub5(void);
 void player_fire_select(u8 n);
+/* fire_reset 0x7544: E14F=0 then fire_select(0). Not 7548. */
+void player_fire_reset(void);
 void player_fire_dec_ammo(void);
 u8   player_fire_ammo(void);
 /* fire_life_timer 0x730B. 1 if E14D underflow -> fire_reset. */

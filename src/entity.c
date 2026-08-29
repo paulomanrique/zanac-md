@@ -4479,9 +4479,9 @@ static void update_shots(void)
 
 static void fire_offscreen_reset(u8 fn)
 {
-    /* 0x749c: off-screen + E14D==0 -> fire_reset. Fire 1/4/5/6. */
+    /* 0x749c: off-screen + E14D==0 -> fire_reset 7544. Fire 1/4/5/6. */
     if ((fn == 1 || fn == 4 || fn == 5 || fn == 6) && player_fire_ammo() == 0)
-        player_fire_select(0);
+        player_fire_reset();
 }
 
 static void update_fire(void)
@@ -5315,7 +5315,7 @@ static void collide_bolt_enemies(Slot *bolt, u8 persist)
             if (player_fire_ammo() == 0xFF)
             {
                 spr_kill(bolt);
-                player_fire_select(0);
+                player_fire_reset();
             }
             else
             {
