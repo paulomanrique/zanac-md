@@ -399,7 +399,7 @@ static u8  s_e131;
 static u8  s_e132;
 static u8  s_e141;          /* 76bc shot counter; cleared on type35 init */
 static u8  s_e142;          /* 8457 rate-table index; cleared on type35 init */
-static u8  s_alc_shots;     /* E140: INC on successful shot spawn (76e5) */
+static u8  s_alc_shots;     /* E140: INC wrap on successful shot spawn (76e8) */
 static u8  s_alc_events;
 
 /* shot_power_table 0x778F: E10E vy, E10D cap, E10F SAT name.
@@ -5896,7 +5896,7 @@ void entity_on_shot_fired(u8 cadence)
 
     if (s_alc_events < 255)
         s_alc_events++;
-    /* 0x76e5 E140: INC only on successful spawn -- entity_spawn_shot. */
+    /* 0x76e8 E140: INC (wrap) only on successful spawn -- entity_spawn_shot. */
 }
 
 bool entity_spawn_shot(s16 x, s16 y)
@@ -5948,9 +5948,12 @@ bool entity_spawn_shot(s16 x, s16 y)
         free->alive = 0;
         return FALSE;
     }
-    /* 0x76e5: INC E140 only after a free slot actually spawned. */
-    if (s_alc_shots < 255)
-        s_alc_shots++;
+    /* 0x76e8: INC (E140) after a free slot actually spawned. Z80 wrap
+     * 255→0. E141 at 76bc is the saturating counter (INC / JR NZ / DEC);
+     * E140 has no such restore. Type 61 gate 8374 is (E140&0x3F)==
+     * (E103&0x3F); a stuck 0xFF makes &0x3F==0x3F, which packed BCD
+     * E103 never matches, so the type-62 extra-life riser dies. */
+    s_alc_shots++;
     return TRUE;
 }
 
