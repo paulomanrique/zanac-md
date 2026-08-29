@@ -179,10 +179,11 @@
  *           pat 13. Port: dest/bind/script/timer 8.8; spr FRAME_BOLT;
  *           vis toggle ~ XOR.
  *   57-58   pairdesc- 81d1/8247: 71c5 (Y=0, X=0x28..0xC6), E=4, JP 81ac
- *           (speed 5 dir 4, +0c=3, +1f=0x20) then 8207 ev21 + type 59
- *           (4c91 aim). 59 is 8.8 set_vel speed 5. SAT 0x6C pat27 (57) /
- *           0x68 pat26 (58); color 0x8F. Port: apply_dir_88 dir4 spd5;
- *           clock=+1f; FRAME_SIG_DOUBLE/TRIPLE.
+ *           (speed 5 dir 4, +0c=3, +1f=0x20) then 8207 ev21 + type 59.
+ *           820c 4c91 → E=aim; 8214 DEC E self +1A; 822E INC A child1
+ *           +1A; type 58 8244 DEC A child2 +1A. 8269 AND 0x0F speed 5.
+ *           SAT 0x6C pat27 (57) / 0x68 pat26 (58); color 0x8F.
+ *           Port: apply_dir_88 dir4 spd5; clock=+1f; FRAME_SIG_DOUBLE/TRIPLE.
  *   20      lead_homing 8668: +0c=0x0B Y-home tgt 0xFF accel 0x0C iters 1;
  *           Xvel 8.8: hi=(R&3)-2, lo=L (same prng); dest/script like other leads.
  *           Stream-capable (is_port_type): random_x 71c5 Y=0 + type20_init_vel;
@@ -3750,17 +3751,18 @@ static void pairdesc_step(Slot *e)
         u8 k;
 
         sound_play_event(SND_EV_EHIT2);
-        /* 0x820c: LAB_ram_4c91 (not coarse aim_dir). */
+        /* 0x820c 4c91 → E=aim (16-dir). Convert writes +0x1A then RET;
+         * 8269 next frame: AND 0x0F, JP 81a8 speed 5. Port applies now.
+         * 8214 DEC E → self aim-1; 822E INC A → child1 aim+1;
+         * type 58 8236 LD A,(HL) / 8244 DEC A → child2 aim. */
         dir = aim_4c91(e->x, e->y);
-        /* Convert self + children to type 59; dirs stay (aim / +4 / +12).
-         * Motion: 8269 set_velocity_from_dir 8.8 speed 5. */
-        init_type59(e, e->x, e->y, dir);
+        init_type59(e, e->x, e->y, (u8)(dir - 1));
         for (k = 0; k < n; k++)
         {
             Slot *c = free_enemy();
             if (!c)
                 break;
-            init_type59(c, e->x, e->y, (u8)((dir + (k ? 4 : 12)) & 15));
+            init_type59(c, e->x, e->y, (u8)(k ? dir : (dir + 1)));
         }
     }
 }
