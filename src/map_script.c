@@ -829,11 +829,23 @@ static void punch_bind(s16 x, s16 y, u8 variant)
     u8 c;
     u8 ysub;
 
-    /* 8ca2: live SAT X-0x20 / Y-0x10 (u8), then 88ed into E800+VRAM. */
-    ysub = (u8)((u8)y - 0x10);
+    /* 8ca2: B=SAT_X-0x20, H=SAT_X-0x1C, C=SAT_Y-0x10, L=SAT_Y-0x0C, then
+     * 75 (0x4B) JP 88ed with HL; 76 (0x4C) JR 8cd6 (skips LD L,C) so H=B
+     * and L stays Y-0x0C; 77 (0x4D) LD L,C then JP 88ed; 73/74/78 fall
+     * through LD L,C / DE=8cda / LD H,B so X-0x20 Y-0x10.
+     * Type 75/76 table yo=0xFC: live Y-0x10 floors one 8px row above the
+     * 8c15 bind cell (8948 after Y+0x10, before xo/yo). */
+    if (variant == 75 || variant == 77)
+        x = (s16)(x - 0x1C);
+    else
+        x = (s16)(x - 0x20);
+    if (variant == 75 || variant == 76)
+        ysub = (u8)((u8)y - 0x0C);
+    else
+        ysub = (u8)((u8)y - 0x10);
     if ((u8)(ysub >> 3) >= 0x18)
         return;
-    if (!sat_to_nt((s16)(x - 0x20), (s16)(ysub & 0xF8), &col, &row))
+    if (!sat_to_nt(x, (s16)(ysub & 0xF8), &col, &row))
         return;
     w = 1;
     h = 1;
