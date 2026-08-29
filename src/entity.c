@@ -91,6 +91,7 @@
  *           70 expires; 71 black warp. 4898 +0c=5 Y_motion: unsigned
  *           Y>=0xD0 clears. Port: bind/timer 8.8; clock=+0x1b;
  *           script=+0x1e; aux=anim. 8a16 SAT 1C/20/24/20 colors 8F/83/8A/8B;
+ *           mid 0x83 uploads PAL2[7] cyan (PAL2[3] is dim flyer green).
  *           8a1e same names color 81. yellow 8a26+ev19 / black map_script_warp
  *   81      husk-src- nametable (no SAT); HP 4; 880d->8824 type-80 husk + 88c2
  *   82      firebox - nametable digit 0x30+fire# (87e2, no SAT); HP 4; 880d->8874 type 83 + 88d8
@@ -885,6 +886,12 @@ static void remap_tiles(u8 *dst, const u8 *src, u16 nbytes, u8 from, u8 to)
     }
 }
 
+/* Type 72 8a16 mid is SAT 0x20 / color 0x83 (TMS 3). gfx pat 8 is the
+ * 96-bit disc (bake 15). PAL2[3] is half flyer green -- leave that
+ * index. Only this SAT upload uses PAL2[7] TMS cyan (light-cyan).
+ * Flyer sat_col 0x83 stays nibble 3. Stored sat_col stays 0x83. */
+static const u8 k_orb_mid_pal = 7;
+
 /* Upload spr_objs frame tiles, remapping baked TMS body -> sat_col low nibble.
  * PAL2 indices match rebuild_sprites / TMS low nibble. Complement (1) untouched. */
 static void spr_upload_color(Slot *s)
@@ -908,6 +915,8 @@ static void spr_upload_color(Slot *s)
     /* Complement-only / blank frames keep verbatim pixels. */
     if (baked <= 1)
         want = baked;
+    else if (s->kind == KIND_ORB && (s->sat_col & 0x0F) == 3)
+        want = k_orb_mid_pal;   /* 8a16 0x83 off dim PAL2[3] */
     else if (s->sat_col)
         want = (u8)(s->sat_col & 0x0F);
     else
@@ -1955,8 +1964,8 @@ static int step_8f25_unarmed(Slot *e)
  * Names 0x1C/0x20/0x24/0x20 = lead / med_circle / lg_circle / med_circle. */
 /* 8a16 SAT names only (lead / med / lg / med). Do not walk into other
  * FRAME_* indices. FRAME_MED_CIRCLE is pat 8 baked TMS 15 (same as
- * lead/lg). 8a16 colors 8F/83/8A/8B remap from 15; bake 6 was type 67
- * 0x86 and showed a red mid-pulse when DMA remap missed. */
+ * lead/lg). 8a16 colors 8F/83/8A/8B stay in the table; mid 0x83 uploads
+ * as k_orb_mid_pal (PAL2[7] cyan) so it does not hit dim PAL2[3]. */
 static const u8 k_orb_sat[4] = { 0x1C, 0x20, 0x24, 0x20 };
 static const u8 k_orb_frame[4] = {
     FRAME_LEAD, FRAME_MED_CIRCLE, FRAME_CIRCLE, FRAME_MED_CIRCLE
@@ -2010,7 +2019,7 @@ static void orb_step(Slot *e)
 
     /* anim_sub 0x4912: +0E=4, table 8a16 then 8a1e. aux>>2 is that reload.
      * Lock SAT name to 8a16 (0x1C/0x20/0x24/0x20). Dirty VRAM so the
-     * med-circle remaps 15 -> 8F/83/8A/8B or 81 every tick. */
+     * med-circle remaps 15 -> 8F / k_orb_mid_pal / 8A/8B or 81 every tick. */
     idx = (u8)((e->aux >> 2) & 3);
     spr_place(e, k_orb_frame[idx]);
     e->sat = k_orb_sat[idx];
