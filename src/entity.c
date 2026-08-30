@@ -88,6 +88,8 @@
  *           aim_4c91+set_vel 8.8 speed (R&3)+1, +0c=3, 3 hp;
  *           SAT 0x40 plane / col-marker 0x44 plane_compl (cyan 0x83);
  *           spr FRAME_PLANE + FRAME_PLANE_C (type39, unfolded).
+ *           82f9 CALL 4898: u8 wrap-cull Y>=0xD0 / X>=0xD1
+ *           (not playfield max_y / max_x+16).
  *   64      proto   - 8279: spawn_type_list[E130/2+R&3], write +00, RET.
  *           Table has 0x40 at idx 0/23/51; a 64 result retries next frame.
  *           Port has no type-64 slot, so re-roll until the byte is not 64
@@ -5071,18 +5073,11 @@ static void update_enemies(void)
             chip_step(e);
         else if (e->kind == KIND_GROUND)
         {
-            /* type44 +0c=3: X|Y 8.8 via dest/bind + script/timer fracs. */
-            s32 xpos = ((s32)e->x << 8) | (u8)e->script;
-            s32 ypos = ((s32)e->y << 8) | (u8)e->timer;
-
-            xpos += (s16)e->dest;
-            ypos += (s16)e->bind;
-            e->script = (u8)xpos;
-            e->timer = (u8)ypos;
-            e->x = (s16)(xpos >> 8);
-            e->y = (s16)(ypos >> 8);
-            e->vx = 0;
-            e->vy = 0;
+            /* type44 82f9 CALL 4898 +0c=3: u8 8.8 wrap-cull
+             * Y>=0xD0 / X>=0xD1. Signed s32 + playfield max_y=200 /
+             * X>256 killed Y=201..207 and X=0xD1..0xFF. */
+            if (step_88_4898(e))
+                continue;
         }
         else if (e->kind == KIND_FIREUP)
         {
@@ -5324,7 +5319,7 @@ static void update_enemies(void)
         }
         /* Type 69 retires on count==0 only (7abc entity_clear); u8 X wrap
          * at bounce must not trip playfield cull. Luster 16-18, duster/teruzo/sig,
-         * stealth 34/65/66, 8.8 leads/bars 20/21/37/38/41/42/43/45, and
+         * stealth 34/65/66, type44 ground, 8.8 leads/bars 20/21/37/38/41/42/43/45, and
          * 4898 Y-only 36/61/62/72/83 use unsigned Y>=0xD0 (letterbox is
          * draw-only). Exclude them so Y=201..207 is not culled 7px early. */
         if (e->kind != KIND_SPAWNER
@@ -5343,6 +5338,7 @@ static void update_enemies(void)
             && e->kind != KIND_DESCEND
             && e->kind != KIND_FIREUP
             && e->kind != KIND_FLASH
+            && e->kind != KIND_GROUND
             && !(e->kind == KIND_EBULLET
                 && (e->variant == 20 || e->variant == 21 || e->variant == 37
                     || e->variant == 38 || e->variant == 41 || e->variant == 42
