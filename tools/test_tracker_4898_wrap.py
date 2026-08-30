@@ -1,39 +1,36 @@
 #!/usr/bin/env python3
-"""Types 26-29 edge swooper use 4898 unsigned wrap, not playfield max_y.
+"""Types 31/33 stealth tracker use 4898 unsigned wrap, not playfield max_y.
 
 zanac.asm Japan v1 (SHA1 46e9ed7b7f6dfda8eee266476c9ebc4dd9d8fcc2):
 
-  handler_type26_edge_swooper_a 0x7de2 (27 shares; 28/29 join 7e3f):
-    init +0c=0x0F (Y_homing bit3 + anim bit2 + X_motion bit1 + Y_motion bit0)
-    active 0x7e3f DEC +1e / 8ddb child, then
-    CALL 0x4898                  ; 0x7e55
-    Types 28/29 handler_type28_edge_swooper_b 0x7e78 JR NZ 7e3f.
+  handler_type31_stealth_tracker entry 0x7f84 (type 33 shares):
+    playerY CP entityY; BIT6 +05 CCF; NC keep +0c; CY +0c=2
+    then fall into 7f73 XOR +04 0x06
+    CALL 0x4898                  ; 0x7f7b
+    JP 0x44ba                    ; 0x7f7e
+
+  Jump table type 31/33 = 0x7F84. Gswoop 30/32 child is type+1
+  (KIND_TRACKER) and also ends at 7f73/7f7b.
 
   Z80 CALL 0x4898 is bytes CD 98 48.
 
-  Y_motion_sub 0x48de:
-    ADD HL,DE
-    LD A,H / CP 0xD0 / RET C
-    JP 0x48d0                    ; entity_clear
-
-  X_motion_sub 0x48f8:
-    ADD HL,DE
-    LD A,H / CP 0xD1 / RET C
-    JP 0x48d0
+  +0c=1 Y_motion_sub 0x48de: ADD HL,DE / LD A,H / CP 0xD0 / RET C
+  +0c=2 X_motion_sub 0x48f8: ADD HL,DE / LD A,H / CP 0xD1 / RET C
 
   Original playfield_h=192; port max_y = playfield_h+8 = 200.
-  Old swoop_step added X/Y vel as signed s32 then the shared pass
+  Old tracker_step added X/Y vel as signed s32 then the shared pass
   culled Y>200 / Y<-24 / X>256.
-  Y=201..207 is still live on MSX (unsigned < 0xD0).
-  Rise wrap Y=0 + Yvel 0xFD00 is unsigned 0xFD >= 0xD0 clear,
-  not signed Y=-3 then playfield y<-24.
-  X>=0xD1 (left wrap 0+FF40 -> 0xFF, or right drift past 0xD0) clears.
+  Type32 child first rise: Y=0xD0 + 0xFF00 -> 0xCF (207) is live
+  on MSX (unsigned < 0xD0) and died on playfield max_y=200.
+  Type30 child left-wrap: X=0 + FE80 -> 0xFE >= 0xD1 clears;
+  signed s32 sat at -1.5 then playfield x<-16.
 
 Usage (from zanac-md):
-    python tools/test_swoop_4898_wrap.py
+    python tools/test_tracker_4898_wrap.py
 """
 from __future__ import annotations
 
+import hashlib
 import re
 import sys
 from pathlib import Path
@@ -50,6 +47,14 @@ ASM_CANDIDATES = [
     Path.home() / "zanac-re" / "source" / "zanac.asm",
     ROOT.parent / "zanac-re" / "source" / "zanac.asm",
 ]
+JAPAN_V1_SHA1 = "46e9ed7b7f6dfda8eee266476c9ebc4dd9d8fcc2"
+CALL_4898 = bytes.fromhex("cd9848")
+ROM_CANDIDATES = [
+    Path("/tmp/zanac-japan-v1.rom"),
+    Path("/tmp/refs/zanac-japan-v1.rom"),
+    Path("/tmp/zanac.rom"),
+    ROOT.parent / "zanac.rom",
+]
 
 
 def fail(msg: str) -> None:
@@ -60,6 +65,16 @@ def load_asm() -> str | None:
     for p in ASM_CANDIDATES:
         if p.is_file():
             return p.read_text(encoding="utf-8", errors="replace")
+    return None
+
+
+def load_japan_v1() -> bytes | None:
+    for p in ROM_CANDIDATES:
+        if not p.is_file():
+            continue
+        data = p.read_bytes()
+        if hashlib.sha1(data).hexdigest() == JAPAN_V1_SHA1:
+            return data
     return None
 
 
@@ -88,13 +103,18 @@ def parse_spawn_list(src: str) -> list[int] | None:
     return [int(x, 0) for x in re.findall(r"0x[0-9A-Fa-f]+|\d+", m.group(1))]
 
 
-def step_xy_4898(x: int, y: int, xf: int, yf: int, vx: int, vy: int) -> tuple[int, int, bool]:
-    """u8 8.8 ADD then unsigned Y>=0xD0 / X>=0xD1."""
-    xpos = ((((x & 0xFF) << 8) | (xf & 0xFF)) + (vx & 0xFFFF)) & 0xFFFF
+def step_y_4898(y: int, yf: int, vy: int) -> tuple[int, bool]:
+    """u8 8.8 ADD then unsigned Y>=0xD0."""
     ypos = ((((y & 0xFF) << 8) | (yf & 0xFF)) + (vy & 0xFFFF)) & 0xFFFF
-    x = (xpos >> 8) & 0xFF
     y = (ypos >> 8) & 0xFF
-    return x, y, y >= 0xD0 or x >= 0xD1
+    return y, y >= 0xD0
+
+
+def step_x_4898(x: int, xf: int, vx: int) -> tuple[int, bool]:
+    """u8 8.8 ADD then unsigned X>=0xD1."""
+    xpos = ((((x & 0xFF) << 8) | (xf & 0xFF)) + (vx & 0xFFFF)) & 0xFFFF
+    x = (xpos >> 8) & 0xFF
+    return x, x >= 0xD1
 
 
 def old_signed_then_playfield(
@@ -121,45 +141,40 @@ def main() -> int:
     mapc = MAPC.read_text(encoding="utf-8", errors="replace")
     spawn_src = SPAWN.read_text(encoding="utf-8", errors="replace")
     asm = load_asm()
+    rom = load_japan_v1()
 
     if asm:
-        t26 = asm.split("handler_type26_edge_swooper_a:", 1)
-        if len(t26) < 2:
-            fail("zanac.asm missing handler_type26_edge_swooper_a")
+        t31 = asm.split("handler_type31_stealth_tracker:", 1)
+        if len(t31) < 2:
+            fail("zanac.asm missing handler_type31_stealth_tracker")
             fails += 1
         else:
-            body = t26[1].split("handler_type30_ground_swooper:", 1)[0]
-            if not re.search(r"CALL\s+0x4898\s*;\s*0x7e55", body, re.I):
-                fail("swoop armed must CALL 4898 at 7e55")
+            body = t31[1].split("LAB_ram_7f99:", 1)[0]
+            if not re.search(r"CALL\s+0x4898\s*;\s*0x7f7b", body, re.I):
+                fail("tracker epilogue must CALL 4898 at 7f7b")
                 fails += 1
             else:
-                print("  ASM 7e55: CALL 4898 (Z80 CD 98 48)")
-            if not re.search(r"LD\s+\(IX\+0x0c\),\s*0x0f\s*;\s*0x7e2b", body, re.I):
-                fail("swoop init must set +0c=0x0F (Y|X|anim|Y-homing)")
+                print("  ASM 7f7b: CALL 4898 (Z80 CD 98 48)")
+            if not re.search(r"XOR\s+0x06\s*;\s*0x7f76", body, re.I):
+                fail("7f73 must XOR +04 0x06 before 4898")
                 fails += 1
             else:
-                print("  ASM 7e2b: +0c=0x0F Y|X|anim|Y-homing")
-            if not re.search(r"JR\s+NZ,\s*0x7e3f\s*;\s*0x7e7c", body, re.I):
-                fail("type 28 must JR NZ 7e3f (shared 7e55)")
+                print("  ASM 7f76: XOR +04 0x06")
+            if not re.search(r"LD\s+A,\s*\(0xe301\)\s*;\s*0x7f84", body, re.I):
+                fail("7f84 is not LD A,(E301) player Y")
                 fails += 1
             else:
-                print("  ASM 7e7c: type 28 JR NZ 7e3f")
-            if not re.search(r"JR\s+NZ,\s*0x7e3f\s*;\s*0x7e8a", body, re.I):
-                fail("type 29 must JR NZ 7e3f (shared 7e55)")
+                print("  ASM 7f84: LD A,(E301) player Y")
+            if not re.search(r"LD\s+\(IX\+0x0c\),\s*0x02\s*;\s*0x7f93", body, re.I):
+                fail("7f93 must set +0c=2 (X_motion)")
                 fails += 1
             else:
-                print("  ASM 7e8a: type 29 JR NZ 7e3f")
-            if not re.search(r"LD\s+\(IX\+0x15\),\s*0x07\s*;\s*0x7e27", body, re.I):
-                fail("swoop init must set +15 accel 0x07")
+                print("  ASM 7f93: +0c=2 X_motion")
+            if not re.search(r"JR\s+0x7f73\s*;\s*0x7f97", body, re.I):
+                fail("7f97 must JR 7f73 (shared 7f7b)")
                 fails += 1
             else:
-                print("  ASM 7e27: +15 accel 0x07")
-        t28 = asm.split("handler_type28_edge_swooper_b:", 1)
-        if len(t28) < 2:
-            fail("zanac.asm missing handler_type28_edge_swooper_b")
-            fails += 1
-        else:
-            print("  ASM: handler_type28_edge_swooper_b present")
+                print("  ASM 7f97: JR 7f73")
         if not re.search(r"CP\s+0xd0\s*;\s*0x48f2", asm, re.I):
             fail("Y_motion_sub 48f2 is not CP 0xD0")
             fails += 1
@@ -170,12 +185,49 @@ def main() -> int:
             fails += 1
         else:
             print("  ASM 490c: X_motion_sub CP 0xD1")
+        # Jump table type 31 at 0x70B7+31*2 = 0x70F5 is 84 7F.
+        if not re.search(r"ADD\s+A,\s*H\s*;\s*0x70f5", asm, re.I):
+            fail("jump table 70f5 is not 0x84 (type 31 lo)")
+            fails += 1
+        elif not re.search(r"LD\s+A,\s*A\s*;\s*0x70f6", asm, re.I):
+            fail("jump table 70f6 is not 0x7F (type 31 hi = 7F84)")
+            fails += 1
+        else:
+            print("  ASM 70f5: type 31 handler 0x7F84")
+        if not re.search(r"ADD\s+A,\s*H\s*;\s*0x70f9", asm, re.I):
+            fail("jump table 70f9 is not 0x84 (type 33 lo)")
+            fails += 1
+        elif not re.search(r"LD\s+A,\s*A\s*;\s*0x70fa", asm, re.I):
+            fail("jump table 70fa is not 0x7F (type 33 hi = 7F84)")
+            fails += 1
+        else:
+            print("  ASM 70f9: type 33 handler 0x7F84")
     else:
         print("  (zanac.asm not on this machine; C locks only)")
 
+    if rom is not None:
+        if rom[0x7F7B : 0x7F7B + 3] != CALL_4898:
+            fail(
+                f"Japan v1 7f7b bytes {rom[0x7F7B:0x7F7B+3].hex()} "
+                f"want {CALL_4898.hex()}"
+            )
+            fails += 1
+        else:
+            print("  ROM 7f7b: cd 98 48")
+        if rom[0x70F5 : 0x70F7] != bytes.fromhex("847f"):
+            fail(
+                f"Japan v1 type31 handler {rom[0x70F5:0x70F7].hex()} "
+                "want 84 7f"
+            )
+            fails += 1
+        else:
+            print("  ROM 70f5: type 31 -> 7f84")
+    else:
+        print("  (Japan v1 ROM not on this machine; ASM + C locks)")
+
     # Y=201..207: playfield max_y=200 kills; 4898 does not.
     for y in range(201, 208):
-        _, _, culled = step_xy_4898(0x80, y, 0, 0, 0, 0)
+        _, culled = step_y_4898(y, 0, 0)
         if culled:
             fail(f"4898 must keep Y={y} (< 0xD0)")
             fails += 1
@@ -183,46 +235,46 @@ def main() -> int:
         if not old:
             fail(f"old playfield cull must kill Y={y} (> 200)")
             fails += 1
-    yx, yy, culled = step_xy_4898(0x80, 0xCF, 0, 0, 0, 0x0100)
-    if (yy, culled) != (0xD0, True):
-        fail(f"4898 at 0xCF + 0x0100 -> Y={yy:#x} cull={culled}, want 0xD0 True")
+    y, culled = step_y_4898(0xCF, 0, 0x0100)
+    if (y, culled) != (0xD0, True):
+        fail(f"4898 at 0xCF + 0x0100 -> Y={y:#x} cull={culled}, want 0xD0 True")
         fails += 1
     else:
         print("  sim: Y=201..207 live on 4898; old max_y=200 kills; 0xD0 clears")
 
-    # Rise wrap: Y=0 + 0xFD00 -> 0xFD >= 0xD0. Signed s32 sits at -3.
-    _, y, culled = step_xy_4898(0x80, 0, 0, 0, 0, 0xFD00)
-    ox, oy, old = old_signed_then_playfield(0x80, 0, 0, 0, 0, 0xFD00)
-    if (y, culled) != (0xFD, True):
-        fail(f"4898 rise wrap 0+0xFD00 -> Y={y:#x} cull={culled}, want 0xFD True")
+    # Type32 child first rise: Y=0xD0 + 0xFF00 -> 0xCF. Signed also 207.
+    y, culled = step_y_4898(0xD0, 0, 0xFF00)
+    ox, oy, old = old_signed_then_playfield(0xC0, 0xD0, 0, 0, 0, 0xFF00)
+    if (y, culled) != (0xCF, False):
+        fail(f"4898 type32 rise 0xD0+0xFF00 -> Y={y:#x} cull={culled}, want 0xCF False")
         fails += 1
-    elif oy != -3:
-        fail(f"old signed s32 0+0xFD00 -> {oy}, want -3")
+    elif oy != 0xCF:
+        fail(f"old signed 0xD0+0xFF00 -> Y={oy}, want 207")
         fails += 1
-    elif old:
-        fail("old playfield cull must keep signed Y=-3 (>-24)")
+    elif not old:
+        fail("old playfield cull must kill signed Y=207 (> 200)")
         fails += 1
     else:
-        print("  sim: rise wrap 0+0xFD00 -> 0xFD clear; s32 was -3 live")
+        print("  sim: type32 child 0xD0+0xFF00 -> 0xCF live; old max_y kills")
 
-    # Type 26 left wrap: X=0 + FF40 -> 0xFF >= 0xD1. Signed sits at -1.
-    x, _, culled = step_xy_4898(0, 0x80, 0, 0, 0xFF40, 0)
-    ox, oy, old = old_signed_then_playfield(0, 0x80, 0, 0, 0xFF40, 0)
-    if (x, culled) != (0xFF, True):
-        fail(f"4898 left wrap 0+FF40 -> X={x:#x} cull={culled}, want 0xFF True")
+    # Type30 child left wrap: X=0 + FE80 -> 0xFE >= 0xD1. Signed sits at -1.5.
+    x, culled = step_x_4898(0, 0, 0xFE80)
+    ox, oy, old = old_signed_then_playfield(0, 0x80, 0, 0, 0xFE80, 0)
+    if (x, culled) != (0xFE, True):
+        fail(f"4898 left wrap 0+FE80 -> X={x:#x} cull={culled}, want 0xFE True")
         fails += 1
-    elif ox != -1:
-        fail(f"old signed s32 0+FF40 -> X={ox}, want -1")
+    elif ox != -2:
+        fail(f"old signed s32 0+FE80 -> X={ox}, want -2")
         fails += 1
     elif old:
-        fail("old playfield cull must keep signed X=-1 (>-16)")
+        fail("old playfield cull must keep signed X=-2 (>-16)")
         fails += 1
     else:
-        print("  sim: type26 left wrap 0+FF40 -> 0xFF clear; s32 was -1 live")
+        print("  sim: type30 child left wrap 0+FE80 -> 0xFE clear; s32 was -2 live")
 
     # X=0xD1..0xFF: 4898 clears; old playfield X>256 does not.
     for x in range(0xD1, 0x100):
-        _, _, culled = step_xy_4898(x, 0x80, 0, 0, 0, 0)
+        _, culled = step_x_4898(x, 0, 0)
         if not culled:
             fail(f"4898 must clear X={x:#x} (>= 0xD1)")
             fails += 1
@@ -232,95 +284,110 @@ def main() -> int:
             fails += 1
     print("  sim: X=0xD1..0xFF clears on 4898; old playfield keeps")
 
-    step = fn_span(ent, "static void swoop_step(Slot *e)")
+    step = fn_span(ent, "static void tracker_step(Slot *e)")
     if not step:
-        fail("swoop_step not found")
+        fail("tracker_step not found")
         fails += 1
-    elif "step_88_4898" not in step:
-        fail("swoop_step must use step_88_4898 (4898 X|Y CP 0xD0/0xD1)")
+    elif "ypos +=" in step or "s32 ypos" in step or "s32 xpos" in step:
+        fail("tracker_step must not keep signed s32 X/Y")
         fails += 1
     elif "playfield" in step or "max_y" in step:
-        fail("swoop_step must not invent a playfield cull")
+        fail("tracker_step must not invent a playfield cull")
         fails += 1
-    elif "ypos +=" in step or "xpos +=" in step:
-        fail("swoop_step must not keep signed s32 X/Y")
+    elif "step_88_y_4898" not in step:
+        fail("tracker_step +0c=1 must use step_88_y_4898")
         fails += 1
-    elif "if (step_88_4898(e))" not in step:
-        fail("swoop_step must CALL step_88_4898")
+    elif "(u8)e->x >= 0xD1" not in step:
+        fail("tracker_step +0c=2 must unsigned-cull X>=0xD1")
+        fails += 1
+    elif "(u8)((u8)e->x)" not in step and "((u8)e->x)" not in step:
+        fail("tracker_step X add must be unsigned u8 8.8")
+        fails += 1
+    elif "0x0B" in step or "sib->x" in step:
+        fail("tracker_step (7f84) must not grow a merge")
         fails += 1
     else:
-        print("  swoop_step: step_88_4898 (unsigned Y>=0xD0 / X>=0xD1)")
+        print("  tracker_step: Y step_88_y_4898 / X u8 wrap X>=0xD1")
 
-    # Fire / child / anim stay.
+    # Y-then-X stay. XOR +04 0x06 stay.
     if step:
-        if "spawn_frag(e->x, e->y, 0, 37)" not in step:
-            fail("swoop type26 child type37 was reverted")
+        if "e->clock & 0x40" not in step:
+            fail("tracker BIT6 sense was reverted")
             fails += 1
-        elif "spawn_frag(e->x, e->y, 0, 20)" not in step:
-            fail("swoop type27 child type20 was reverted")
+        elif "e->clock & (u8)~3) | 2" not in step:
+            fail("tracker +0c=2 switch was reverted")
             fails += 1
-        elif "init_type59(c, e->x, e->y, 4)" not in step:
-            fail("swoop type28 child type59 was reverted")
-            fails += 1
-        elif "spawn_frag(e->x, e->y, 0x04, 41)" not in step:
-            fail("swoop type29 child type41 was reverted")
-            fails += 1
-        elif "e->clock = 0x20" not in step:
-            fail("swoop fire reload 0x20 was reverted")
-            fails += 1
-        elif "FRAME_SPINNER_0" not in step:
-            fail("swoop anim table pats 43-46 was reverted")
-            fails += 1
-        elif "yvel - 0x0007" not in step:
-            fail("swoop Y_homing accel 0x07 was reverted")
+        elif "e->sat_col ^ 0x06" not in step:
+            fail("tracker 7f73 XOR 0x06 was reverted")
             fails += 1
         else:
-            print("  KEEP: swoop fire 8ddb children / anim / Y-home 0x07")
+            print("  KEEP: tracker Y-then-X / BIT6 / XOR 0x06")
 
-    spawn = fn_span(ent, "static void spawn_swoop(Slot *e, u8 type)")
+    spawn = fn_span(ent, "static void spawn_tracker(Slot *e, u8 type)")
     if not spawn:
-        fail("spawn_swoop not found")
+        fail("spawn_tracker not found")
         fails += 1
-    elif "e->bind = 0x0280" not in spawn:
-        fail("spawn_swoop must keep Yvel 8.8 0x0280")
+    elif "e->bind = 0x0200" not in spawn:
+        fail("spawn_tracker must keep Yvel 8.8 0x0200")
         fails += 1
-    elif "e->dest = 0xFF40" not in spawn or "e->dest = 0x00C0" not in spawn:
-        fail("spawn_swoop must keep type26/27 Xvel FF40/00C0")
+    elif "e->clock = 0x01" not in spawn:
+        fail("spawn_tracker must keep +0c=1 Y-then-X")
         fails += 1
-    elif "e->dest = 0xFE00" not in spawn or "e->dest = 0x0200" not in spawn:
-        fail("spawn_swoop must keep type28/29 Xvel FE00/0200")
+    elif "apply_dir_88(e, k_stealth_dir[si], 1)" not in spawn:
+        fail("spawn_tracker must keep 807c dir speed 1")
         fails += 1
-    elif "e->clock = 0x18" not in spawn or "e->clock = 0x04" not in spawn:
-        fail("spawn_swoop must keep +1e 0x18 / 0x04")
+    elif "e->y = 0" not in spawn:
+        fail("spawn_tracker must keep leftover Y=0")
         fails += 1
     else:
-        print("  spawn_swoop: Yvel 0x0280 Xvel FF40/00C0/FE00/0200 clock 0x18/0x04")
+        print("  spawn_tracker: Y=0 bind=0x0200 +0c=1 807c dir")
+
+    gs_spawn = fn_span(ent, "static void spawn_gswoop(Slot *e, u8 type)")
+    if not gs_spawn:
+        fail("spawn_gswoop not found")
+        fails += 1
+    elif "c->kind = KIND_TRACKER" not in gs_spawn:
+        fail("gswoop child must stay KIND_TRACKER")
+        fails += 1
+    elif "e->y = 0xD0" not in gs_spawn or "e->bind = 0xFF00" not in gs_spawn:
+        fail("type32 rise Y=0xD0 / Yvel FF00 was reverted")
+        fails += 1
+    elif "c->dest = (type == 30) ? 0xFE80 : 0xFF00" not in gs_spawn:
+        fail("gswoop child Xvel FE80/FF00 was reverted")
+        fails += 1
+    else:
+        print("  KEEP: gswoop child KIND_TRACKER type32 Y=0xD0 FF00")
 
     upd = fn_span(ent, "static void update_enemies(void)")
     if not upd:
         fail("update_enemies not found")
         fails += 1
     else:
-        if "e->kind != KIND_SWOOP" not in upd:
-            fail("KIND_SWOOP must be excluded from playfield max_y cull")
+        if "e->kind != KIND_TRACKER" not in upd:
+            fail("KIND_TRACKER must be excluded from playfield max_y cull")
             fails += 1
         else:
-            print("  update_enemies: KIND_SWOOP excluded from max_y cull")
+            print("  update_enemies: KIND_TRACKER excluded from max_y cull")
         if not re.search(
-            r"else if \(e->kind == KIND_SWOOP\)\s*\{\s*"
-            r"swoop_step\(e\);\s*"
+            r"else if \(e->kind == KIND_TRACKER\)\s*\{\s*"
+            r"tracker_step\(e\);\s*"
             r"if \(!e->alive\)\s*continue;",
             upd,
         ):
-            fail("KIND_SWOOP must continue after 4898 clear")
+            fail("KIND_TRACKER must continue after 4898 clear")
             fails += 1
         else:
-            print("  update_enemies: swoop_step then continue if dead")
+            print("  update_enemies: tracker_step then continue if dead")
+        if "tracker 31/33" not in upd:
+            fail("cull comment must list tracker 31/33 with 4898 wrap set")
+            fails += 1
+        else:
+            print("  update_enemies: tracker 31/33 in 4898 wrap set")
         if "swoop 26-29" not in upd:
-            fail("cull comment must list swoop 26-29 with 4898 wrap set")
+            fail("cull comment must keep swoop 26-29")
             fails += 1
         else:
-            print("  update_enemies: swoop 26-29 in 4898 wrap set")
+            print("  update_enemies: swoop 26-29 still in 4898 wrap set")
         if "veybar 22-25" not in upd:
             fail("cull comment must keep veybar 22-25")
             fails += 1
@@ -331,9 +398,9 @@ def main() -> int:
             fails += 1
         else:
             print("  update_enemies: type 36 still in 4898 Y-only set")
-        # KIND_SWOOP is an extra != term before KIND_VEYBAR.
-        # The veybar/umber/ebullet grouping must stay intact:
-        # && KIND_VEYBAR && KIND_UMBER && !(KIND_EBULLET && variants)
+        # KIND_TRACKER is an extra != term before KIND_SWOOP.
+        # The swoop/veybar/umber/ebullet grouping must stay intact:
+        # && KIND_SWOOP && KIND_VEYBAR && KIND_UMBER && !(KIND_EBULLET && variants)
         if re.search(
             r"e->kind != KIND_VEYBAR\s*"
             r"&&\s*e->kind != KIND_UMBER\s*"
@@ -346,7 +413,8 @@ def main() -> int:
             )
             fails += 1
         elif not re.search(
-            r"e->kind != KIND_SWOOP\s*"
+            r"e->kind != KIND_TRACKER\s*"
+            r"&&\s*e->kind != KIND_SWOOP\s*"
             r"&&\s*e->kind != KIND_VEYBAR\s*"
             r"&&\s*e->kind != KIND_UMBER\s*"
             r"&&\s*!\(e->kind == KIND_EBULLET\s*"
@@ -355,7 +423,7 @@ def main() -> int:
         ):
             fail(
                 "playfield cull must keep "
-                "KIND_SWOOP then "
+                "KIND_TRACKER then KIND_SWOOP then "
                 "!(KIND_EBULLET && variants) after KIND_VEYBAR/UMBER"
             )
             fails += 1
@@ -388,6 +456,19 @@ def main() -> int:
         fails += 1
     else:
         print("  step_88_y_4898: unsigned Y>=0xD0")
+
+    swoop = fn_span(ent, "static void swoop_step(Slot *e)")
+    if not swoop or "step_88_4898" not in swoop:
+        fail("swoop 26-29 4898 stay was reverted")
+        fails += 1
+    else:
+        print("  KEEP: swoop_step step_88_4898")
+
+    if upd and "e->kind != KIND_SWOOP" not in upd:
+        fail("KIND_SWOOP playfield-cull exclude was reverted")
+        fails += 1
+    else:
+        print("  KEEP: KIND_SWOOP excluded from playfield cull")
 
     vey = fn_span(ent, "static void veybar_step(Slot *e)")
     if not vey or "step_88_4898" not in vey or "step_88_y_4898" not in vey:
@@ -641,6 +722,18 @@ def main() -> int:
     else:
         print("  KEEP: type 80/35 tick_e124_84bc")
 
+    if "mode_letter_attr" in ent:
+        fail("entity.c must not grow a playfield-wide mode_letter_attr fill")
+        fails += 1
+    else:
+        print("  KEEP: no playfield-wide mode_letter_attr")
+
+    if "dma_nt_row" not in mapc:
+        fail("dma_nt_row HUD restore was reverted")
+        fails += 1
+    else:
+        print("  KEEP: dma_nt_row HUD BG_B restore")
+
     vals = parse_spawn_list(spawn_src)
     if vals:
         for t, name in ((21, "21"), (41, "41"), (45, "45")):
@@ -649,6 +742,11 @@ def main() -> int:
                 fails += 1
             else:
                 print(f"  KEEP: type {name} child-only")
+        if 30 not in vals:
+            fail("spawn_type_list must still include type 30 (tracker parent)")
+            fails += 1
+        else:
+            print("  spawn_type_list still includes type 30")
         for t in (26, 27, 28, 29):
             if t not in vals:
                 fail(f"spawn_type_list must still include type {t}")
@@ -662,16 +760,7 @@ def main() -> int:
     else:
         print("  KEEP: player.h fire_reset + fire_select")
 
-    tracker = fn_span(ent, "static void tracker_step(Slot *e)")
-    if not tracker:
-        fail("tracker_step not found")
-        fails += 1
-    elif "ypos +=" in tracker or "s32 ypos" in tracker:
-        fail("tracker 7f7b 4898 stay was reverted")
-        fails += 1
-    else:
-        print("  KEEP: tracker_step 7f7b unsigned (not leftover)")
-
+    # Leftover same-class CALL (one-PR: do not ship).
     pair = fn_span(ent, "static void pairdesc_step(Slot *e)")
     if not pair:
         fail("pairdesc_step not found")
