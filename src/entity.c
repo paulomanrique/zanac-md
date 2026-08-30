@@ -183,8 +183,13 @@
  *           4898 u8 wrap-cull Y>=0xD0 / X>=0xD1.
  *   62      invisible_riser 8709: Yvel 8.8 FF80, every-16f NT poke;
  *           type61 death gate (E140&3F)==(E103&3F) -> 62; else E148>=5
- *           -> 83. Ship touch: INC lives + ev8. 4898 +0c=1: unsigned
- *           Y>=0xD0 clears (top wrap). Port: bind/timer 8.8; clock=+0d.
+ *           -> 83. Ship touch: INC lives + ev8. 8709 BIT 7: init
+ *           870f-8723 SET 7 then 8727 RET (no 8728 poke, no 4898).
+ *           8385 writes 0x3E and RETs; next dispatch is that init RET.
+ *           Port become_riser is the 8385 write (collide after updates);
+ *           skip first riser_step so 8728+4898 start the following frame.
+ *           Armed 874a: 4898 +0c=1 unsigned Y>=0xD0 (top wrap).
+ *           Port: bind/timer 8.8; clock=+0d.
  *   36      flash   - 8296: Yvel 8.8 0080 (+0c=1), attr XOR 0x0e
  *           each frame, then entity_update + 7904 (HP16). SAT 0x34
  *           pat 13. Port: dest/bind/script/timer 8.8; spr FRAME_BOLT;
@@ -384,6 +389,9 @@ static u8  s_fire7_life_ticked;
  * 7228-724e this frame (player_update then entity_update). */
 static u8  s_shot_init_ret[SHOT_SLOTS];
 static Slot s_en[ENEMY_SLOTS];
+/* 8709 BIT 7: init 870f-8727 RET, no 8728 / 4898. Armed after
+ * become_riser (8385 type 0x3E write). Next riser_step is 8728. */
+static u8  s_riser_init_ret[ENEMY_SLOTS];
 /* explode_enemies 0x8A26 wait_frames B=5 with R7 BD=15. */
 static u8  s_flash_left;
 
@@ -2794,7 +2802,8 @@ static void descender_step(Slot *e)
 /* handler_type62_invisible_riser 0x8709:
  * Yvel 8.8 FF80, pat 0, +0c=1; every-16f VRAM poke; ship-touch ->
  * INC E10A + ev8 + status. Spawned from type61 death when
- * (E140&0x3F)==(E103&0x3F). */
+ * (E140&0x3F)==(E103&0x3F). 8709 BIT 7 clear: init SET 7 / 8727 RET
+ * (no 8728, no 4898). 8385 is the type write; this is the next visit. */
 static void become_riser(Slot *e)
 {
     marker_kill(e);
@@ -2815,6 +2824,14 @@ static void become_riser(Slot *e)
     e->vx = 0;
     e->vy = 0;
     e->alive = 1;
+    /* 8385 writes 0x3E (bit7 clear) and RETs. Next dispatch is 8709
+     * init SET 7 / 8727 RET. Arm skip so the first KIND_RISER visit
+     * is that RET, not 8728+4898. */
+    {
+        u8 idx = (u8)(e - s_en);
+        if (idx < ENEMY_SLOTS)
+            s_riser_init_ret[idx] = 1;
+    }
 }
 
 static void spawn_riser(Slot *e)
@@ -5083,6 +5100,14 @@ static void update_enemies(void)
         }
         else if (e->kind == KIND_RISER)
         {
+            /* 8709 BIT 7 clear: 870f-8723 init then 8727 RET.
+             * 8385 already wrote type 0x3E; this visit is the init RET.
+             * 8728 poke + 874a 4898 start next frame. */
+            if (s_riser_init_ret[i])
+            {
+                s_riser_init_ret[i] = 0;
+                continue;
+            }
             riser_step(e);
             if (!e->alive)
                 continue;
@@ -5764,6 +5789,7 @@ void entity_init(void)
     s_fireup_seq = 0;
     s_fire7_life_ticked = 0;
     memset(s_shot_init_ret, 0, sizeof(s_shot_init_ret));
+    memset(s_riser_init_ret, 0, sizeof(s_riser_init_ret));
     s_base_left = 0;
     s_e150 = 0;
     s_e130 = 0;
