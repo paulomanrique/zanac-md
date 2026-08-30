@@ -188,9 +188,10 @@ static void respawn(void)
     s_dead_timer = 0;
     s_invuln = PLAYER_IFRAMES;
     s_if_latch = 1;         /* 0x75fb SET 7,(IX+0x05) */
-    s_shot_level = 0;       /* player_ship_handler zeroes E10B on spawn */
+    s_shot_level = 0;       /* player_ship_handler 0x7603 zeroes E10B on spawn */
     s_shot_cd = 0;
     s_alc_cadence = 0;
+    entity_zero_e130();     /* 0x7606 SUB A / LD (E130),A (HUD tail omitted) */
     s_xvel_sel = 4;
     entity_kill_fire();
     fire_reset();           /* 0x75ff CALL 7544 */
