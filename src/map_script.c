@@ -119,7 +119,7 @@ static u8  s_ram_only;          /* boot: assemble E800 without poking VRAM */
 static u8  s_assemble_peek;     /* peek assemble: tiles only, no place */
 /* Two DMA_QUEUE sources -- SGDK stores the pointer until vblank.
  * Original pads to MODE_H32_COLS so cols 24-31 of a wrap row are never
- * leftover charset. */
+ * leftover charset, then restamps that HUD slice after the row DMA. */
 static u16 s_dma_row[2][MODE_H32_COLS];
 static u8  s_dma_flip;
 static TransferMethod s_row_tm = DMA_QUEUE;
@@ -559,11 +559,6 @@ static u16 tile_attr(u8 tid)
                           (u16)(s_bg_base + (tid & 0xFF)));
 }
 
-/*
- * One nametable row (24 playfield tiles). Gameplay uses DMA_QUEUE so the
- * transfer lands in vblank (~24 words, not 576 XY pokes). Boot uses DMA
- * while the display is off.
- */
 /* NT row in screen Y 8-15 (top letterbox) at a given scroll_px.
  * VSCROLL = -(scroll_px + 16); plane_y(8) = 8 - off. */
 static u8 hidden_wrap_nt_at(u16 scroll_px)
@@ -574,6 +569,12 @@ static u8 hidden_wrap_nt_at(u16 scroll_px)
     return (u8)(py >> 3);
 }
 
+/*
+ * One nametable row. Gameplay uses DMA_QUEUE so the transfer lands in
+ * vblank (not 576 XY pokes). Boot uses DMA while the display is off.
+ * Original writes 32 cols so wrap/peek cannot leave leftover charset
+ * in BG_B cols 24-31 (WINDOW 0x20 CT bg=0 punches through to BG_B).
+ */
 static void dma_nt_row(u8 nt_y, const u8 *src, TransferMethod tm)
 {
     u8 x;
@@ -599,6 +600,15 @@ static void dma_nt_row(u8 nt_y, const u8 *src, TransferMethod tm)
         width = MODE_H32_COLS;
     }
     VDP_setTileMapDataRow(BG_B, dst, nt_y, 0, width, tm);
+    /* 32-col wrap/peek DMA overwrites hud_fill_bar_backing on this NT
+     * row. Restore cols 24-31 after the row write so a queued full-row
+     * DMA cannot leave map/leftover in the WINDOW punch-through
+     * (0x4BDF six 0x20, CT bg=0). Same tm: DMA_QUEUE restore commits
+     * after the row. One row x 8 tiles -- not a playfield fill, not a
+     * per-tick letterbox (those hitch 60Hz). */
+    if (mode_get() == MODE_ORIGINAL)
+        VDP_setTileMapDataRow(BG_B, dst + MODE_BAR_COL, nt_y,
+                              MODE_BAR_COL, MODE_BAR_W, tm);
     /* DMA_QUEUE keeps the source pointer until vblank -- do not reuse. */
     if (tm == DMA_QUEUE)
         s_dma_flip ^= 1;
