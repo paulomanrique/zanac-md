@@ -79,5 +79,7 @@ void entity_inc_encounter_b(void);
 u8   entity_e12e(void);
 u8   entity_e132(void);
 u8   entity_e130(void);
+/* player_ship_handler 0x7606: zero E130 on every ship spawn (incl. respawn). */
+void entity_zero_e130(void);
 
 #endif

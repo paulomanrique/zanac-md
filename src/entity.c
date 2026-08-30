@@ -5889,6 +5889,11 @@ u8 entity_e130(void)
     return s_e130;
 }
 
+void entity_zero_e130(void)
+{
+    s_e130 = 0;
+}
+
 void entity_on_shot_fired(u8 cadence)
 {
     u8 adv;
