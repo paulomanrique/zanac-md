@@ -176,9 +176,10 @@
  *           29->41 C=0x04 heading base+4 may still read offset. Anim table
  *           0x7E68/0x7E70 pats 43-46 (+0d/+0e=4, +0x10=4); 71f6 marker
  *           SAT=parent+0x10 (pats 47-50).
- *           +04 body: A 0x8E (7e68), B 0x87 (7e70) via sat_col remap.
- *           Port: dest/bind/script/timer 8.8; aux=child, clock=fire;
- *           spr FRAME_SPINNER_0..3 + FRAME_SPINNER_C* (71f6 dual-SAT).
+ *           7e55 CALL 4898: unsigned Y>=0xD0 / X>=0xD1 (not signed s32 /
+ *           playfield max_y). +04 body: A 0x8E (7e68), B 0x87 (7e70)
+ *           via sat_col remap. Port: dest/bind/script/timer 8.8; aux=child,
+ *           clock=fire; spr FRAME_SPINNER_0..3 + FRAME_SPINNER_C* (71f6).
  *   30/32   gswoop 7e9c: 8.8 Yvel 0180 (32: FF00 + Y=D0 sense), Xvel 0180
  *           (32 flip 0100); +0c=1 Y then 2 X; pair child type+1 at X=C0
  *           Xvel FE80 (32: FF00). Port: dest/bind/script/timer 8.8; aux=sib,
@@ -3502,8 +3503,6 @@ static void swoop_step(Slot *e)
      * Y_homing_sub: B=+17=1, accel=+15=0x07, tgt=+13=0.
      * anim_sub 4912: every 4f cycle pats 43-46; 71f6 marker = sat+0x10. */
     u16 yvel = e->bind;
-    s32 xpos;
-    s32 ypos;
     u8 si = (u8)(e - s_en);
 
     if ((u8)e->y != 0)
@@ -3513,17 +3512,11 @@ static void swoop_step(Slot *e)
     }
     e->bind = yvel;
 
-    ypos = ((s32)e->y << 8) | (u8)e->timer;
-    ypos += (s16)yvel;
-    e->timer = (u8)ypos;
-    e->y = (s16)(ypos >> 8);
-
-    xpos = ((s32)e->x << 8) | (u8)e->script;
-    xpos += (s16)e->dest;
-    e->script = (u8)xpos;
-    e->x = (s16)(xpos >> 8);
-    e->vx = 0;
-    e->vy = 0;
+    /* 7e55 CALL 4898: +0c=0x0F Y|X 8.8. Unsigned Y>=0xD0 / X>=0xD1.
+     * Signed s32 + 192+8 cull killed Y=201..207 and let rise-wrap
+     * Y=0+0xFD00 sit at -3; X>=0xD1 stayed live past 0xD1. */
+    if (step_88_4898(e))
+        return;
 
     /* anim_sub 4912 (+0c bit2): DEC +0d; reload +0e=4; apply table[afi]
      * then INC (wrap +10=4). Port keeps afi = displayed frame; advance first
@@ -5152,7 +5145,11 @@ static void update_enemies(void)
                 continue;
         }
         else if (e->kind == KIND_SWOOP)
+        {
             swoop_step(e);
+            if (!e->alive)
+                continue;
+        }
         else if (e->kind == KIND_TRACKER)
         {
             tracker_step(e);
@@ -5333,7 +5330,7 @@ static void update_enemies(void)
         /* Type 69 retires on count==0 only (7abc entity_clear); u8 X wrap
          * at bounce must not trip playfield cull. Luster 16-18, duster/teruzo/sig,
          * stealth 34/65/66, type44 ground, type67 med_circle, 8.8 leads/bars
-         * 20/21/37/38/41/42/43/45, umber 7-9, veybar 22-25, and 4898 Y-only 36/61/62/72/83 use
+         * 20/21/37/38/41/42/43/45, umber 7-9, veybar 22-25, swoop 26-29, and 4898 Y-only 36/61/62/72/83 use
          * unsigned Y>=0xD0 (letterbox is draw-only). Exclude them so
          * Y=201..207 is not culled 7px early. */
         if (e->kind != KIND_SPAWNER
@@ -5354,6 +5351,7 @@ static void update_enemies(void)
             && e->kind != KIND_FLASH
             && e->kind != KIND_GROUND
             && e->kind != KIND_CIRCLE
+            && e->kind != KIND_SWOOP
             && e->kind != KIND_VEYBAR
             && e->kind != KIND_UMBER
             && !(e->kind == KIND_EBULLET
