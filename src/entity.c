@@ -188,6 +188,10 @@
  *           clock=+0c|sense|lock|xor. +04^=0x06/frame (sat_col); merge
  *           unsigned (pair.X-own.X)<0x0B (7f54 SUB/CP/JR NC, not abs):
  *           +03=0xf4, sib->type40, X+5, +0c=1, SET lock (7f5b-7f78).
+ *           7f73 then 7f7b CALL 4898: +0c=1 Y>=0xD0 / +0c=2 X>=0xD1
+ *           (not signed s32 / playfield max_x+16). Type30 parent
+ *           X=0x30+0x0180 reaches 0xD1 when the pair is gone;
+ *           signed s32 kept X=0xD1..0xFF (playfield X>256 does not).
  *   31/33   tracker - 7f84 run (no +01 write): leftover Y=0. Y-then-X
  *           (playerY CP + bit6 CCF); +04^=0x06 @ 7f73; pat 51 sat 0xCC.
  *           Stream ~7f99/807c X+dir, no volley, Y leftover 0 (top).
@@ -3774,25 +3778,24 @@ static void gswoop_step(Slot *e)
 
     if (mode & 1)
     {
-        s32 ypos = ((s32)e->y << 8) | (u8)e->timer;
+        /* 7f7b CALL 4898 +0c=1: Y_motion_sub unsigned Y>=0xD0. */
+        if (step_88_y_4898(e))
+            return;
+    }
+    if (mode & 2)
+    {
+        /* 7f7b CALL 4898 +0c=2: X_motion_sub unsigned X>=0xD1. */
+        u16 xpos = (u16)(((u16)((u8)e->x) << 8) | (u8)e->script);
 
-        ypos += (s16)e->bind;
-        e->timer = (u8)ypos;
-        e->y = (s16)(ypos >> 8);
-        /* Y_motion_sub: unsigned Y >= 0xD0 -> entity_clear. */
-        if ((u8)e->y >= 0xD0)
+        xpos = (u16)(xpos + e->dest);
+        e->script = (u8)xpos;
+        e->x = (s16)(u8)(xpos >> 8);
+        e->vx = 0;
+        if ((u8)e->x >= 0xD1)
         {
             spr_kill(e);
             return;
         }
-    }
-    if (mode & 2)
-    {
-        s32 xpos = ((s32)e->x << 8) | (u8)e->script;
-
-        xpos += (s16)e->dest;
-        e->script = (u8)xpos;
-        e->x = (s16)(xpos >> 8);
     }
     e->vx = 0;
     e->vy = 0;
@@ -5343,7 +5346,7 @@ static void update_enemies(void)
          * at bounce must not trip playfield cull. Luster 16-18, duster/teruzo/sig,
          * stealth 34/65/66, type44 ground, type67 med_circle, 8.8 leads/bars
          * 20/21/37/38/41/42/43/45, umber 7-9, veybar 22-25, swoop 26-29,
-         * tracker 31/33, box 4/5/6 / chip 63, and 4898 Y-only 36/61/62/72/83 use
+         * tracker 31/33, gswoop 30/32, box 4/5/6 / chip 63, and 4898 Y-only 36/61/62/72/83 use
          * unsigned Y>=0xD0 (letterbox is draw-only). Exclude them so
          * Y=201..207 is not culled 7px early. */
         if (e->kind != KIND_SPAWNER
@@ -5366,6 +5369,7 @@ static void update_enemies(void)
             && e->kind != KIND_CHIP
             && e->kind != KIND_GROUND
             && e->kind != KIND_CIRCLE
+            && e->kind != KIND_GSWOOP
             && e->kind != KIND_TRACKER
             && e->kind != KIND_SWOOP
             && e->kind != KIND_VEYBAR
