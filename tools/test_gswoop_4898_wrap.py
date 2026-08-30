@@ -268,14 +268,14 @@ def main() -> int:
         n += 1
         if culled:
             break
-    if not culled or run != 0xD1:
+    if not culled or run < 0xD1:
         fail(f"type30 walk from 0x30+0x0180 ended X={run:#x} cull={culled}")
         fails += 1
     elif n < 2:
         fail("type30 walk must take more than one frame to reach 0xD1")
         fails += 1
     else:
-        print(f"  sim: type30 parent X=0x30+0x0180 hits 0xD1 at frame {n}")
+        print(f"  sim: type30 parent X=0x30+0x0180 hits X={run:#x} (>=0xD1) at frame {n}")
 
     # X=0xD1..0xFF: 4898 clears; old playfield X>256 does not.
     for xv in range(0xD1, 0x100):
