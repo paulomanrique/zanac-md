@@ -231,6 +231,33 @@ def main() -> int:
             fails += 1
         else:
             print("  update_enemies: type 36 still in 4898 Y-only set")
+        # KIND_UMBER is an extra != term. The ebullet exclude must stay
+        # !(KIND_EBULLET && variants), not !(KIND_EBULLET) then a
+        # separate variant AND (that would skip the cull for almost
+        # every non-ebullet).
+        if re.search(
+            r"e->kind != KIND_UMBER\s*"
+            r"&&\s*!\(e->kind == KIND_EBULLET\)\s*"
+            r"&&\s*\(e->variant == 20",
+            upd,
+        ):
+            fail(
+                "playfield cull must not split !(KIND_EBULLET) from variants"
+            )
+            fails += 1
+        elif not re.search(
+            r"e->kind != KIND_UMBER\s*"
+            r"&&\s*!\(e->kind == KIND_EBULLET\s*"
+            r"&&\s*\(e->variant == 20",
+            upd,
+        ):
+            fail(
+                "playfield cull must keep "
+                "!(KIND_EBULLET && variants) after KIND_UMBER"
+            )
+            fails += 1
+        else:
+            print("  update_enemies: ebullet exclude is !(KIND_EBULLET && variants)")
 
     y4898 = fn_span(ent, "static int step_88_y_4898(Slot *e)")
     if not y4898 or "(u8)e->y >= 0xD0" not in y4898:

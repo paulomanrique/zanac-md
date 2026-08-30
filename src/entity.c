@@ -5352,7 +5352,7 @@ static void update_enemies(void)
             && e->kind != KIND_GROUND
             && e->kind != KIND_CIRCLE
             && e->kind != KIND_UMBER
-            && !(e->kind == KIND_EBULLET)
+            && !(e->kind == KIND_EBULLET
                 && (e->variant == 20 || e->variant == 21 || e->variant == 37
                     || e->variant == 38 || e->variant == 41 || e->variant == 42
                     || e->variant == 43 || e->variant == 45))
