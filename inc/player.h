@@ -21,6 +21,8 @@ s16  player_y(void);
 u8   player_lives(void);
 u8   player_shot_level(void);
 u8   player_fire_num(void);
+/* fire_init_table 0x751F byte 1 → E14E. 44D4 AND 1 / 44F9 BIT 1. */
+u8   player_fire_mode(void);
 u8   player_invincible(void);
 u8   player_dead(void);
 u8   player_is_over(void);
