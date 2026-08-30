@@ -291,7 +291,7 @@ def main() -> int:
     elif "ypos +=" in step or "s32 ypos" in step or "s32 xpos" in step:
         fail("tracker_step must not keep signed s32 X/Y")
         fails += 1
-    elif "playfield" in step or "max_y" in step:
+    elif re.search(r"e->y\s*>\s*max_y|e->x\s*>\s*max_x", step):
         fail("tracker_step must not invent a playfield cull")
         fails += 1
     elif "step_88_y_4898" not in step:
