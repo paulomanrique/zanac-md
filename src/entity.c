@@ -207,7 +207,9 @@
  *           4898 u8 wrap-cull Y>=0xD0 / X>=0xD1 (no s32 X).
  *   37      lead_bullet 84dd/84e3: +0c=3 +17=3, player_pos_snapshot 4c8b
  *           (= aim_4c91 + set_velocity_from_dir 8.8 speed 3). Plain 37 no XOR.
- *           Port: dest/bind/script/timer; apply_dir_88; 4898 u8 Y>=0xD0/X>=0xD1.
+ *           84f6 SET 7 / 84fa RET (no 4898). Armed 84fb CALL 4898 / 44a6.
+ *           Port: dest/bind/script/timer; apply_dir_88; skip first step;
+ *           then 4898 u8 Y>=0xD0/X>=0xD1.
  *   42      proto_bullet 85cc: CALL 84e3 (type37 init), type:=0xA5, XOR R into
  *           X/Y vel low (8.8); port keeps variant 42 + 8.8 step. Type 79 every-4th.
  *           4898 u8 wrap-cull like 37.
@@ -216,17 +218,20 @@
  *           74/77 C from +0x13 (vx), 76 DEC+mirror, 79 INC+&3 (ROM cadence).
  *           4898 u8 wrap-cull like 38.
  *   21      light_bar 863b: +0x17=4, dir=+0x1a&0x0F, set_vel 8.8, SFX ev0x16;
- *           SAT 0x18 pat 6. Init writes no +04. Active 8659: R-nibble|0x80
- *           then 4898 / 44ba (EC bit7 so mode_draw_x is SAT-32). Port: spr
- *           FRAME_LIGHT_BAR; 8659 then 4898 u8 wrap-cull.
+ *           SAT 0x18 pat 6. Init writes no +04. 8650 SET 7 / 8656 JP 5189
+ *           (no 8659, no 4898). Active 8659: R-nibble|0x80 then 4898 / 44ba
+ *           (EC bit7 so mode_draw_x is SAT-32). Port: spr FRAME_LIGHT_BAR;
+ *           skip first step; 8659 then 4898 u8 wrap-cull.
  *           Child of guns 46-55 / type 85-86. Not in spawn_type_list 0xBECC;
  *           stream path (is_port_type) uses 71c5 + leftover +0x1a=0.
  *   38      burst_fragment 8507: +0x17=3, dir=+0x1a&0x0F, set_vel 8.8 (42/43 path sans XOR)
- *           Port: 4898 u8 wrap-cull.
+ *           8520 SET 7 / 8524 RET (no 4898). Armed JR 84fb. Port: skip first
+ *           step; then 4898 u8 wrap-cull.
  *   41      pair_fragment 852f: child of umber-8 / swoop-29. Not in 0xBECC.
- *           Init 4cf7 speed 2, LDIR +08..+0b -> +1c..+1f, +17=4, RET.
- *           857f: heading +/-1 every 2f, 4cf7 speed 4, ADD HL bias, 4898.
- *           Port: clock=+0x1a; dest/bind = speed4 + speed2 init heading;
+ *           Init 4cf7 speed 2, LDIR +08..+0b -> +1c..+1f, +17=4, RET 857e
+ *           (no 857f, no 4898). 857f: heading +/-1 every 2f, 4cf7 speed 4,
+ *           ADD HL bias, 4898. Port: clock=+0x1a; skip first step so +15
+ *           stays 2; dest/bind = speed4 + speed2 on the armed visit;
  *           step_88_4898 (not s32 / invented cull).
  *           Stream path: 71c5 Y=0 then 852f leftover +0x1a=0 (heading 4).
  *   45      light_bar_var 85ee/8608: 3 HP, speed (R&1)+2 via apply_dir_88,
@@ -392,6 +397,10 @@ static Slot s_en[ENEMY_SLOTS];
 /* 8709 BIT 7: init 870f-8727 RET, no 8728 / 4898. Armed after
  * become_riser (8385 type 0x3E write). Next riser_step is 8728. */
 static u8  s_riser_init_ret[ENEMY_SLOTS];
+/* 84fa/8524/857e/8656: types 37/38/41/21 init SET 7 then RET
+ * (21: JP 5189). No 4898 / 8659 / 857f on that visit. Armed in
+ * init_frag (8ddb / stream / box drop). Next step is the armed path. */
+static u8  s_ebullet_init_ret[ENEMY_SLOTS];
 /* explode_enemies 0x8A26 wait_frames B=5 with R7 BD=15. */
 static u8  s_flash_left;
 
@@ -1853,6 +1862,12 @@ static void spawn_ebullet_dir(s16 x, s16 y, u8 dir)
     e->alive = 1;
     e->sat_col = 0x8F;          /* 84eb type37 +04; TMS EC bit7 */
     spr_place(e, FRAME_LEAD);
+    /* 84fa RET: same first-visit skip as init_frag variant 37. */
+    {
+        u8 idx = (u8)(e - s_en);
+        if (idx < ENEMY_SLOTS)
+            s_ebullet_init_ret[idx] = 1;
+    }
 }
 
 static void spawn_fireup(Slot *e)
@@ -3131,6 +3146,14 @@ static void init_frag(Slot *e, s16 x, s16 y, u8 dir, u8 variant)
         e->sat_col = 0x8F;
     /* 21: SAT 0x18 pat 6. 45: 850b writes 0x1C then 8625 pulses 0x18/0x20. */
     spr_place(e, (variant == 21 || variant == 45) ? FRAME_LIGHT_BAR : FRAME_LEAD);
+    /* 37 84fa / 38 8524 / 41 857e / 21 8656: SET 7 RET. Type 20 init
+     * falls into 4898; 42/43 XOR+RET and 45 fall-through stay as-is. */
+    if (variant == 21 || variant == 37 || variant == 38 || variant == 41)
+    {
+        u8 idx = (u8)(e - s_en);
+        if (idx < ENEMY_SLOTS)
+            s_ebullet_init_ret[idx] = 1;
+    }
 }
 
 static void spawn_frag(s16 x, s16 y, u8 dir, u8 variant)
@@ -5183,6 +5206,18 @@ static void update_enemies(void)
                 e->script = 1;
             }
         }
+        else if (e->kind == KIND_EBULLET
+            && (e->variant == 21 || e->variant == 37 || e->variant == 38
+                || e->variant == 41)
+            && s_ebullet_init_ret[i])
+        {
+            /* 84fa / 8524 / 857e / 8656: SET 7 RET. No 4898, no 8659,
+             * no 857f DEC +15. SAT stays at spawn XY this visit. */
+            s_ebullet_init_ret[i] = 0;
+            if (e->spr || e->mspr)
+                spr_sync(e);
+            continue;
+        }
         else if (e->kind == KIND_EBULLET && e->variant == 20)
         {
             /* +0c=0x0B: Y_homing + Y_motion + X_motion (no X_homing bit4).
@@ -5790,6 +5825,7 @@ void entity_init(void)
     s_fire7_life_ticked = 0;
     memset(s_shot_init_ret, 0, sizeof(s_shot_init_ret));
     memset(s_riser_init_ret, 0, sizeof(s_riser_init_ret));
+    memset(s_ebullet_init_ret, 0, sizeof(s_ebullet_init_ret));
     s_base_left = 0;
     s_e150 = 0;
     s_e130 = 0;
