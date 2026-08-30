@@ -148,6 +148,8 @@
  *           (hitbox 0xDC 12x14 vs 0xE0 14x16). Type 9 active is 7a12, no morph.
  *           Burst at Yvel==0: 7x38 / 2x41 at parent XY (7 writes IX+01/+02;
  *           8 copies both; 9 8ddb type20); type9 +1d=8 -> type20.
+ *           79ae CALL 4898 +0c=0x09: unsigned Y>=0xD0 (rise wrap
+ *           0+0xFD00 -> 0xFD), not signed s32 / playfield max_y.
  *           Port: dest/bind/script/timer 8.8; clock=+1d. Stream Y=0.
  *   11/69   spawner - 7ad4 writes type 0x45 SAT 0x28 (interval) then
  *           7a67; 97bc LDIR emit/count/interval into +01/+02/+03.
@@ -3230,9 +3232,8 @@ static void umber_step(Slot *e)
     /* Active 0x7954: 795d SAT morph on Yvel.hi, then burst when the
      * Yvel word == 0 (before entity_update). Type9 0x7a12: DEC +0x1d,
      * reload 8, 8ddb type20 at parent XY (no 795d morph).
-     * entity_update +0c=0x09: Y_homing_sub (tgt0, accel 0x10, B=1) then Y 8.8. */
+     * 79ae CALL 4898 +0c=0x09: Y_homing_sub then Y_motion_sub. */
     u16 yvel;
-    s32 ypos;
 
     if (e->variant == 7 || e->variant == 8)
     {
@@ -3271,10 +3272,11 @@ static void umber_step(Slot *e)
         yvel = (u16)(yvel - 0x0010);
     e->bind = yvel;
 
-    ypos = ((s32)e->y << 8) | (u8)e->timer;
-    ypos += (s16)yvel;
-    e->timer = (u8)ypos;
-    e->y = (s16)(ypos >> 8);
+    /* 79ae CALL 4898 +0c=0x09: Y_homing then Y_motion_sub.
+     * Unsigned 8.8 + Y>=0xD0. Signed s32 + 192+8 cull killed
+     * Y=201..207 and let rise-wrap Y=0+0xFD00 sit at -3. */
+    if (step_88_y_4898(e))
+        return;
     e->vx = 0;
     e->vy = 0;
 }
@@ -5139,7 +5141,11 @@ static void update_enemies(void)
                 continue;
         }
         else if (e->kind == KIND_UMBER)
+        {
             umber_step(e);
+            if (!e->alive)
+                continue;
+        }
         else if (e->kind == KIND_VEYBAR)
             veybar_step(e);
         else if (e->kind == KIND_SWOOP)
@@ -5324,7 +5330,7 @@ static void update_enemies(void)
         /* Type 69 retires on count==0 only (7abc entity_clear); u8 X wrap
          * at bounce must not trip playfield cull. Luster 16-18, duster/teruzo/sig,
          * stealth 34/65/66, type44 ground, type67 med_circle, 8.8 leads/bars
-         * 20/21/37/38/41/42/43/45, and 4898 Y-only 36/61/62/72/83 use
+         * 20/21/37/38/41/42/43/45, umber 7-9, and 4898 Y-only 36/61/62/72/83 use
          * unsigned Y>=0xD0 (letterbox is draw-only). Exclude them so
          * Y=201..207 is not culled 7px early. */
         if (e->kind != KIND_SPAWNER
@@ -5345,7 +5351,8 @@ static void update_enemies(void)
             && e->kind != KIND_FLASH
             && e->kind != KIND_GROUND
             && e->kind != KIND_CIRCLE
-            && !(e->kind == KIND_EBULLET
+            && e->kind != KIND_UMBER
+            && !(e->kind == KIND_EBULLET)
                 && (e->variant == 20 || e->variant == 21 || e->variant == 37
                     || e->variant == 38 || e->variant == 41 || e->variant == 42
                     || e->variant == 43 || e->variant == 45))
