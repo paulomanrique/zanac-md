@@ -4516,9 +4516,10 @@ static void spawn_tick(void)
     }
     if (s_e125 & 0x01)
     {
-        /* sub_bfa0: alloc type 44, RES 0,(E125), RET. */
-        s_e125 = (u8)(s_e125 & (u8)~0x01);
-        spawn_from_type(44);
+        /* BFA0: CALL 4496 / RET C / then RES 0,(E125) / LD (HL),0x44.
+         * A full table must keep the husk latch (84c6) for the next tick. */
+        if (spawn_from_type(44))
+            s_e125 = (u8)(s_e125 & (u8)~0x01);
         return;
     }
     if (s_spawn_ctrl & 0x08)
