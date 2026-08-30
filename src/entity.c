@@ -190,6 +190,9 @@
  *           (playerY CP + bit6 CCF); +04^=0x06 @ 7f73; pat 51 sat 0xCC.
  *           Stream ~7f99/807c X+dir, no volley, Y leftover 0 (top).
  *           Also gswoop 30/32 child (own+1) pre-init sat 0xf0 degid_right.
+ *           7f7b CALL 4898: +0c=1 Y>=0xD0 / +0c=2 X>=0xD1 (not signed
+ *           s32 / playfield max_y). Type32 child Y=0xD0+0xFF00 -> 0xCF
+ *           stays live; left-wrap X=0+FE80 -> 0xFE clears.
  *   34      stealth - 7f99 shared 65/66: 807c X, leftover Y=0 (top);
  *           cruise 8.8 speed 1; 3x38 volley; +04 sat_col 0x88; SAT 0xCC solid.
  *           4898 u8 wrap-cull Y>=0xD0 / X>=0xD1.
@@ -3597,7 +3600,11 @@ static void spawn_tracker(Slot *e, u8 type)
 static void tracker_step(Slot *e)
 {
     /* 7f84: playerY CP entityY; BIT6 +05 -> CCF; NC keep Y, CY -> +0c=2.
-     * 7f73: +04 ^= 0x06; entity_update 4898. No merge (parent 7f20 only). */
+     * 7f73: +04 ^= 0x06; 7f7b CALL 4898. No merge (parent 7f20 only).
+     * +0c=1 Y_motion_sub unsigned Y>=0xD0; +0c=2 X_motion_sub
+     * unsigned X>=0xD1. Signed s32 + playfield max_y=200 killed
+     * type32 child first rise (Y=0xD0+0xFF00 -> 0xCF) and left-wrap
+     * X=0+FE80 -> 0xFE. */
     s16 py = player_y();
     u8 mode = (u8)(e->clock & 3);
     u8 past;
@@ -3619,24 +3626,22 @@ static void tracker_step(Slot *e)
 
     if (mode & 1)
     {
-        s32 ypos = ((s32)e->y << 8) | (u8)e->timer;
+        if (step_88_y_4898(e))
+            return;
+    }
+    if (mode & 2)
+    {
+        u16 xpos = (u16)(((u16)((u8)e->x) << 8) | (u8)e->script);
 
-        ypos += (s16)e->bind;
-        e->timer = (u8)ypos;
-        e->y = (s16)(ypos >> 8);
-        if ((u8)e->y >= 0xD0)
+        xpos = (u16)(xpos + e->dest);
+        e->script = (u8)xpos;
+        e->x = (s16)(u8)(xpos >> 8);
+        e->vx = 0;
+        if ((u8)e->x >= 0xD1)
         {
             spr_kill(e);
             return;
         }
-    }
-    if (mode & 2)
-    {
-        s32 xpos = ((s32)e->x << 8) | (u8)e->script;
-
-        xpos += (s16)e->dest;
-        e->script = (u8)xpos;
-        e->x = (s16)(xpos >> 8);
     }
     e->vx = 0;
     e->vy = 0;
@@ -5330,7 +5335,8 @@ static void update_enemies(void)
         /* Type 69 retires on count==0 only (7abc entity_clear); u8 X wrap
          * at bounce must not trip playfield cull. Luster 16-18, duster/teruzo/sig,
          * stealth 34/65/66, type44 ground, type67 med_circle, 8.8 leads/bars
-         * 20/21/37/38/41/42/43/45, umber 7-9, veybar 22-25, swoop 26-29, and 4898 Y-only 36/61/62/72/83 use
+         * 20/21/37/38/41/42/43/45, umber 7-9, veybar 22-25, swoop 26-29,
+         * tracker 31/33, and 4898 Y-only 36/61/62/72/83 use
          * unsigned Y>=0xD0 (letterbox is draw-only). Exclude them so
          * Y=201..207 is not culled 7px early. */
         if (e->kind != KIND_SPAWNER
@@ -5351,6 +5357,7 @@ static void update_enemies(void)
             && e->kind != KIND_FLASH
             && e->kind != KIND_GROUND
             && e->kind != KIND_CIRCLE
+            && e->kind != KIND_TRACKER
             && e->kind != KIND_SWOOP
             && e->kind != KIND_VEYBAR
             && e->kind != KIND_UMBER
