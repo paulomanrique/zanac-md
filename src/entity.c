@@ -39,8 +39,8 @@
  *           Not an instant no-entity nuke (that was invented).
  *   7 High Speed - comet, fire0_dir_table, +17=0xC3 4cf7
  *           (bit6*3 * bit7*4 * count3 = *36 -> 18 px cardinal),
- *           728f CALL 730B then 4cf7; 7306 CALL 730B then 72de + 4898.
- *           Port: apply_dir_4cf7.
+ *           7253 BIT 7: init 728f XOR update 7306 (each CALL 730B once).
+ *           Port: apply_dir_4cf7; spawn-frame skip so 730B is not 2x.
  *           Type19 expire 7306 (update): piercing.
  * Enemies: G group-1 airborne + round-1 pickups that the spawn_table emits
  *   4-6     box     - 7826: DEC +03 SAT countdown (0 wraps 255f) then
@@ -376,6 +376,8 @@ typedef struct {
 
 static Slot s_shot[SHOT_SLOTS];
 static Slot s_fire;
+/* 7253 BIT 7: 728F init XOR 7306 update. Set when spawn already ran 730B. */
+static u8  s_fire7_life_ticked;
 static Slot s_en[ENEMY_SLOTS];
 /* explode_enemies 0x8A26 wait_frames B=5 with R7 BD=15. */
 static u8  s_flash_left;
@@ -4495,7 +4497,11 @@ static void update_fire(void)
     u8 cycle;
 
     if (!f->alive)
+    {
+        /* Failed spr_place after 728F must not leak the skip into later 7306. */
+        s_fire7_life_ticked = 0;
         return;
+    }
 
     fn = player_fire_num();
     if (fn == 2)
@@ -4579,9 +4585,16 @@ static void update_fire(void)
     {
         /* 72de -> 4898: +0c=3 X|Y 8.8, unsigned Y>=0xD0 / X>=0xD1.
          * Fire 0 speed 0xC2; fire 7 speed 0xC3.
-         * 7306: CALL 730B then JR 72de. Underflow skips motion. */
-        if (fn == 7 && player_fire_life_tick())
-            return;
+         * 7306: CALL 730B then JR 72de. Underflow skips motion.
+         * 7253 BIT 7 mutex: spawn 728F already ticked 730B this frame. */
+        if (fn == 7)
+        {
+            u8 skip = s_fire7_life_ticked;
+
+            s_fire7_life_ticked = 0;
+            if (!skip && player_fire_life_tick())
+                return;
+        }
         if (step_88_4898(f))
         {
             fire_offscreen_reset(fn);
@@ -5682,6 +5695,7 @@ void entity_init(void)
     s_e124 = 6;
     s_e125 = 0;
     s_fireup_seq = 0;
+    s_fire7_life_ticked = 0;
     s_base_left = 0;
     s_e150 = 0;
     s_e130 = 0;
@@ -6065,9 +6079,11 @@ void entity_try_spawn_fire(s16 x, s16 y, u8 xvel_sel)
         /* High Speed 0x728F: CALL 730B first; underflow skips 72bc.
          * SAT 0x08 comet, fire0_dir_table, +17=0xC3.
          * 4cf7 at 72db (not 7306): bit6*3, bit7*4, count 3 -> *36
-         * = 18 px/frame cardinal 8.8. Do not drop bit6 (that is 6 px). */
+         * = 18 px/frame cardinal 8.8. Do not drop bit6 (that is 6 px).
+         * 7253 BIT 7: this frame is init, not 7306. Flag skips update 730B. */
         if (player_fire_life_tick())
             return;
+        s_fire7_life_ticked = 1;
         dir = k_fire7_dir[xvel_sel];
         apply_dir_4cf7(&s_fire, dir, 0xC3);
         frame = FRAME_COMET;
