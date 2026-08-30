@@ -78,7 +78,7 @@
  *           Collect 78cc/78d0: +05 bit7 + +1B=0x40 (type60 86a4 cancel);
  *           78d4 bfc8. Shot INC is 78d7.
  *   68      proto_box -> 3 boxes (types 4/5/6)
- *   80      husk    - 8e14: bfb3+ev18+849c first frame (84d1 + 4912), then 8f45 / clear
+ *   80      husk    - 8e14: bfb3+ev18+849c first frame (84d1 + 4912 + 84bc E124), then 8f45 / clear
  *   83      fire-up - 8e3a: Yvel FFE0 8.8; SAT 0x24/0x81 blank vs 0x04/8eaf[+1c];
  *           4898 +0c=1 unsigned Y>=0xD0; collect: +1B=0 + SET 7 +05
  *           (86a4 cancel; 7710 DEC wraps 0→255), fire_select, bfc8
@@ -1945,22 +1945,39 @@ static void become_husk(Slot *e, u8 orig)
 /*
  * handler_type80 8e14:
  *   first frame (bit7 clear): bfb3, ev18, SET 7, +0x0c=0, JP 849c
- *     (score + anim +0x0d/0e/0f/10 then entity_update)
+ *     (score + 84bc E124/E125 + anim +0x0d/0e/0f/10 then entity_update)
  *   later: 8f45 scroll-off (Y>=0xD0 -> bfab + clear); +0x0f ? 4898 : 48d0
+ *
+ * 8e2a JP 849c is the same tail as type35 after 8498. There is no
+ * skip of 84bc: a husk DECs E124 and may latch E125 for BFA0 type 44.
  */
 static void entity_inc_encounter_a(void);
 static int step_8f45(Slot *e);
 static int step_8f25_unarmed(Slot *e);
 
+/* 84bc: DEC E124; Z -> E124=0x10, E125=1 (BFA0 type 44 next spawn_tick).
+ * Shared by type35 8446 and type80 8e2a JP 849c. */
+static void tick_e124_84bc(void)
+{
+    if (s_e124)
+        s_e124--;
+    if (!s_e124)
+    {
+        s_e124 = 0x10;
+        s_e125 = 1;
+    }
+}
+
 static void husk_step(Slot *e)
 {
     if (!e->script)
     {
-        /* 8e14: bfb3, ev18, SET 7, +0c=0, JP 849c (score + 84d1 arm).
+        /* 8e14: bfb3, ev18, SET 7, +0c=0, JP 849c (score + 84bc + 84d1).
          * 8f45 starts next tick (BIT 7 already set). */
         entity_dec_encounter_a();
         sound_play_event(SND_EV_EXPLODE);
         award_subtype((u8)e->dest);
+        tick_e124_84bc();
         e->script = 1;
         e->ground = 1;
         e->vx = 0;
@@ -4898,17 +4915,10 @@ static void update_enemies(void)
                 s_e142 = 0;
                 s_e141 = 0;
 
-                /* 8495 ev17 + 849c add_score_for_subtype(+0x18). */
+                /* 8495 ev17 + 849c add_score_for_subtype(+0x18) + 84bc. */
                 sound_play_event(SND_EV_EHIT);
                 award_subtype(e->variant);
-
-                if (s_e124)
-                    s_e124--;
-                if (!s_e124)
-                {
-                    s_e124 = 0x10;
-                    s_e125 = 1;
-                }
+                tick_e124_84bc();
                 /* 84a3-84b9: +0D=1,+0E=4,+0F=1,+10=6, table 84d1.
                  * 84c9 JP 4898 same frame: 4912 writes table[1]. */
                 e->clock = 1;
