@@ -164,8 +164,11 @@
  *           0x58, morph spawns type37 only (no re-aim / X-arm; already on).
  *           Morph SAT telegraph 7d73: when clock<0x40 and (RRCA x2) only
  *           bits 2-3 set, (IX+03)=0x94-E and marker +0x14; fire @0xa0.
- *           Port: dest/bind/script/timer 8.8; clock=+1d; aux=flags(22/23)
- *           or X-tgt(24/25); spr FRAME_VEYBAR_0..4 + FRAME_VEYBAR_C*.
+ *           7d83 CALL 4898: Y-only until SET +0c.1; 24/25 already X|Y.
+ *           Unsigned Y>=0xD0 / X>=0xD1 (when bit1), not signed s32 /
+ *           playfield max_y. Port: dest/bind/script/timer 8.8; clock=+1d;
+ *           aux=flags(22/23) or X-tgt(24/25); spr FRAME_VEYBAR_0..4 +
+ *           FRAME_VEYBAR_C*.
  *   26-29   swooper 7de2/7e78: 8.8 Xvel (FF40/00C0/FE00/0200), Yvel 0280,
  *           +0c=0x0F (Y|X motion|anim|Y_homing), accel +15=07 iters +17=1,
  *           Y tgt +13 unset (0); fire +1e (18/18/04/04)->20; child +1d 37/20/59/41
@@ -3333,8 +3336,6 @@ static void veybar_step(Slot *e)
      * -> SAT 0x88/0x8c/0x90/0x94 (pats 34-37). */
     u16 yvel = e->bind;
     u16 xvel = e->dest;
-    s32 xpos;
-    s32 ypos;
     u8 fast = (u8)(e->variant >= 24);
     u8 y_accel = 0x14;
     u8 x_on = fast ? 1 : (u8)(e->aux & 2);
@@ -3418,19 +3419,17 @@ static void veybar_step(Slot *e)
     }
     e->dest = xvel;
 
-    ypos = ((s32)e->y << 8) | (u8)e->timer;
-    ypos += (s16)yvel;
-    e->timer = (u8)ypos;
-    e->y = (s16)(ypos >> 8);
-
+    /* 7d83 CALL 4898: +0c=0x09 Y-only until morph SET +0c.1;
+     * 24/25 +0c=0x1b already X|Y. Unsigned 8.8 + Y>=0xD0 / X>=0xD1.
+     * Signed s32 + 192+8 cull killed Y=201..207 and let rise-wrap
+     * Y=0+0xFD00 sit at -3; X>=0xD1 stayed live past 0xD1. */
     if (x_on)
     {
-        xpos = ((s32)e->x << 8) | (u8)e->script;
-        xpos += (s16)xvel;
-        e->script = (u8)xpos;
-        e->x = (s16)(xpos >> 8);
+        if (step_88_4898(e))
+            return;
     }
-
+    else if (step_88_y_4898(e))
+        return;
     e->vx = 0;
     e->vy = 0;
 }
@@ -5147,7 +5146,11 @@ static void update_enemies(void)
                 continue;
         }
         else if (e->kind == KIND_VEYBAR)
+        {
             veybar_step(e);
+            if (!e->alive)
+                continue;
+        }
         else if (e->kind == KIND_SWOOP)
             swoop_step(e);
         else if (e->kind == KIND_TRACKER)
@@ -5330,7 +5333,7 @@ static void update_enemies(void)
         /* Type 69 retires on count==0 only (7abc entity_clear); u8 X wrap
          * at bounce must not trip playfield cull. Luster 16-18, duster/teruzo/sig,
          * stealth 34/65/66, type44 ground, type67 med_circle, 8.8 leads/bars
-         * 20/21/37/38/41/42/43/45, umber 7-9, and 4898 Y-only 36/61/62/72/83 use
+         * 20/21/37/38/41/42/43/45, umber 7-9, veybar 22-25, and 4898 Y-only 36/61/62/72/83 use
          * unsigned Y>=0xD0 (letterbox is draw-only). Exclude them so
          * Y=201..207 is not culled 7px early. */
         if (e->kind != KIND_SPAWNER
@@ -5351,6 +5354,7 @@ static void update_enemies(void)
             && e->kind != KIND_FLASH
             && e->kind != KIND_GROUND
             && e->kind != KIND_CIRCLE
+            && e->kind != KIND_VEYBAR
             && e->kind != KIND_UMBER
             && !(e->kind == KIND_EBULLET
                 && (e->variant == 20 || e->variant == 21 || e->variant == 37
