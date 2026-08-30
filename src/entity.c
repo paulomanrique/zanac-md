@@ -177,7 +177,8 @@
  *   30/32   gswoop 7e9c: 8.8 Yvel 0180 (32: FF00 + Y=D0 sense), Xvel 0180
  *           (32 flip 0100); +0c=1 Y then 2 X; pair child type+1 at X=C0
  *           Xvel FE80 (32: FF00). Port: dest/bind/script/timer 8.8; aux=sib,
- *           clock=+0c|sense|lock|xor. +04^=0x06/frame (sat_col); merge |dx|<0x0B:
+ *           clock=+0c|sense|lock|xor. +04^=0x06/frame (sat_col); merge
+ *           unsigned (pair.X-own.X)<0x0B (7f54 SUB/CP/JR NC, not abs):
  *           +03=0xf4, sib->type40, X+5, +0c=1, SET lock (7f5b-7f78).
  *   31/33   tracker - 7f84 run (no +01 write): leftover Y=0. Y-then-X
  *           (playerY CP + bit6 CCF); +04^=0x06 @ 7f73; pat 51 sat 0xCC.
@@ -3751,13 +3752,12 @@ static void gswoop_step(Slot *e)
                 sib->clock = (u8)((sib->clock & (u8)~3) | 2);
         }
 
-        /* Parent: |pair.X - own.X| < 0x0B -> 7f5b reveal/merge. */
+        /* Parent: unsigned (pair.X - own.X) < 0x0B -> 7f5b.
+         * 7f54 SUB (IX+02); CP 0x0B; JR NC 7f73. After the pair
+         * crosses left, A wraps (>=0x0B) and merge is refused. */
         if (sib && (e->variant == 30 || e->variant == 32))
         {
-            s16 dx = (s16)(sib->x - e->x);
-            if (dx < 0)
-                dx = (s16)(-dx);
-            if (dx < 0x0B)
+            if ((u8)((u8)sib->x - (u8)e->x) < 0x0B)
             {
                 /* SET lock; +03=0xf4; sib->type40; X+5; +0c=1. */
                 e->clock = (u8)((e->clock & (u8)~3) | 0x81);
