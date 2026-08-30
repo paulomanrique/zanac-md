@@ -11,6 +11,8 @@
  *
  * Shots: type 2, Y-only. 7243 CPL E10E -> Yvel high = ~(n) = -(n+1),
  *           +0c=1 then 4898. Port: bind=(u8)~n<<8, step_88_y_4898.
+ *           7221 BIT 7: init 7228-7252 RET (no 4898). Next frame JP 4898.
+ *           Port spawn is player_update; skip first update_shots step.
  * Fire:  type 3, E380.
  *   0 All-Range  - xvel_table[E10C] dir, 4cf7 speed 0xC2 8.8
  *           (bit6*3 * bit7*4 * count2 = *24 -> 12 px cardinal),
@@ -378,6 +380,9 @@ static Slot s_shot[SHOT_SLOTS];
 static Slot s_fire;
 /* 7253 BIT 7: 728F init XOR 7306 update. Set when spawn already ran 730B. */
 static u8  s_fire7_life_ticked;
+/* 7221 BIT 7: init RET, no 4898. Set when entity_spawn_shot already ran
+ * 7228-724e this frame (player_update then entity_update). */
+static u8  s_shot_init_ret[SHOT_SLOTS];
 static Slot s_en[ENEMY_SLOTS];
 /* explode_enemies 0x8A26 wait_frames B=5 with R7 BD=15. */
 static u8  s_flash_left;
@@ -4528,6 +4533,16 @@ static void update_shots(void)
         Slot *s = &s_shot[i];
         if (!s->alive)
             continue;
+        /* 7221 BIT 7 clear: init SET 7 RET. 7225 JP 4898 is the
+         * already-armed path only. Spawn wrote type 2 at ship XY;
+         * 44F9 CP 0x82 then hits that SAT, not one vel-step up. */
+        if (s_shot_init_ret[i])
+        {
+            s_shot_init_ret[i] = 0;
+            if (s->spr)
+                spr_sync(s);
+            continue;
+        }
         /* 7225 -> 4898: +0c=1 Y-only, unsigned Y>=0xD0. */
         if (step_88_y_4898(s))
             continue;
@@ -5748,6 +5763,7 @@ void entity_init(void)
     s_e125 = 0;
     s_fireup_seq = 0;
     s_fire7_life_ticked = 0;
+    memset(s_shot_init_ret, 0, sizeof(s_shot_init_ret));
     s_base_left = 0;
     s_e150 = 0;
     s_e130 = 0;
@@ -5981,6 +5997,7 @@ bool entity_spawn_shot(s16 x, s16 y)
     u8 cap;
     u8 frame;
     u8 n;
+    u8 free_i = 0;
     Slot *free = NULL;
 
     lvl = player_shot_level();
@@ -5995,7 +6012,10 @@ bool entity_spawn_shot(s16 x, s16 y)
         if (s_shot[i].alive)
             live++;
         else if (!free)
+        {
             free = &s_shot[i];
+            free_i = i;
+        }
     }
     if (live >= cap || !free)
         return FALSE;
@@ -6022,6 +6042,8 @@ bool entity_spawn_shot(s16 x, s16 y)
         free->alive = 0;
         return FALSE;
     }
+    /* 7221: type is now 0x82 (SET 7) but 4898 waits until next dispatch. */
+    s_shot_init_ret[free_i] = 1;
     /* 0x76e8: INC (E140) after a free slot actually spawned. Z80 wrap
      * 255→0. E141 at 76bc is the saturating counter (INC / JR NZ / DEC);
      * E140 has no such restore. Type 61 gate 8374 is (E140&0x3F)==
