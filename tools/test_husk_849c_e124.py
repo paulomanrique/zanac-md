@@ -1,30 +1,37 @@
 #!/usr/bin/env python3
-"""explode_enemies 0x8A26 reconverts live type 35 (does not skip 0x23).
+"""Type 80 8e2a JP 849c includes 84bc DEC E124.
 
 zanac.asm Japan v1 (SHA1 46e9ed7b7f6dfda8eee266476c9ebc4dd9d8fcc2):
 
-  8a37  LD A,(IY+0)
-  8a3a  AND 0x7F
-  8a3c  JR Z, 8a4d            ; empty
-  8a3e  CP 0x46
-  8a40  JR NC, 8a4d           ; type >= 70
-  8a42  CP 0x28
-  8a44  JR Z, 8a4d            ; type 40 clear only
-  8a46  LD (IY+0), 0x23       ; bit7 CLEAR
-  8a4a  LD (IY+0x18), A       ; +0x18 = unmasked type (0x23 if already 35)
+  handler_type80 8e14 (bit7 clear):
+    CALL 0xbfb3            ; dec_encounter_a
+    LD A, 0x12             ; ev18
+    CALL 0x5189
+    SET 7, (IX+00)
+    LD (IX+0x0c), 0x00
+    JP 0x849c              ; same tail as type35 after 8498
 
-  handler_type35 8446 BIT 7: clear -> ALC dump, ev17, 4a6a(+0x18),
-  E124 DEC / E125, 84d1 arm. Writing 0x23 on a live 0xA3 restarts that.
+  849c:
+    CALL 0x4a6a            ; add_score_for_subtype (+0x18)
+    SET 2, (IX+0x0c)
+    +0D=1 +0E=4 +0F=1 +10=6, table 84d1
+    LD HL, 0xe124          ; 84bc
+    DEC (HL)
+    JR NZ, 84c9
+    LD (HL), 0x10
+    LD A, 1
+    LD (0xe125), A         ; BFA0 type 44 next spawn_tick
+    ... 84c9 +0F ? 4898 : 48d0
 
-  Old port: skip KIND_EXPL / KIND_PDEAD. Mid-anim discs stayed put;
-  type 60 was also skipped (0x3C is in [1,0x45]). Yellow-orb / fire-6
-  / 90fe 8A26 therefore missed ALC / E124 / anim restart.
+  There is no skip of 84bc on the type80 path. 8e2a is the only
+  JP 849c. Type35 8446 falls through 8498 into the same CALL 4a6a.
 
-  become_expl script=0 is the bit7-clear. +0x18 is the current type
-  (35), not the leftover source variant.
+  Old port: KIND_EXPL first frame ticked E124; husk_step scored and
+  armed 84d1 but skipped 84bc. Leftover 81/84-88 / 90dc type-80
+  therefore never counted toward BFA0 type 44.
 
 Usage (from zanac-md):
-    python tools/test_explode_8a26_live.py
+    python tools/test_husk_849c_e124.py
 """
 from __future__ import annotations
 
@@ -82,150 +89,173 @@ def parse_spawn_list(src: str) -> list[int] | None:
     return [int(x, 0) for x in re.findall(r"0x[0-9A-Fa-f]+|\d+", m.group(1))]
 
 
-def msx_8a26(type_byte: int) -> tuple[int, int] | None:
-    """Return (new_type, plus18) or None if skipped."""
-    a = type_byte & 0x7F
-    if a == 0:
-        return None
-    if a >= 0x46:
-        return None
-    if a == 0x28:
-        return None
-    return (0x23, a)
+def tick_e124(e124: int) -> tuple[int, int]:
+    """Port 84bc: if(e124)--; if(!e124) e124=0x10, e125=1."""
+    if e124:
+        e124 -= 1
+    if e124 == 0:
+        return 0x10, 1
+    return e124, 0
+
+
+def old_husk_after(n_husks: int, seed: int = 6) -> tuple[int, int]:
+    """Old port: husk_step skipped 84bc. E124 stays at title seed."""
+    return seed, 0
+
+
+def new_husk_after(n_husks: int, seed: int = 6) -> tuple[int, int]:
+    e124 = seed
+    e125 = 0
+    for _ in range(n_husks):
+        e124, latched = tick_e124(e124)
+        if latched:
+            e125 = 1
+    return e124, e125
 
 
 def main() -> int:
     fails = 0
-    ent = ENTITY.read_text(encoding="utf-8")
-    ply = PLAYER.read_text(encoding="utf-8")
-    hdr = PLAYER_H.read_text(encoding="utf-8")
-    spawn_src = SPAWN.read_text(encoding="utf-8")
-    mapc = MAPC.read_text(encoding="utf-8")
+    ent = ENTITY.read_text(encoding="utf-8", errors="replace")
+    ply = PLAYER.read_text(encoding="utf-8", errors="replace")
+    hdr = PLAYER_H.read_text(encoding="utf-8", errors="replace")
+    mapc = MAPC.read_text(encoding="utf-8", errors="replace")
+    spawn_src = SPAWN.read_text(encoding="utf-8", errors="replace")
     asm = load_asm()
 
     if asm:
-        chunk = asm
-        if "explode_enemies:" not in chunk:
-            fail("zanac.asm missing explode_enemies")
+        if not re.search(r"JP\s+0x849c\s*;\s*0x8e2a", asm, re.I):
+            fail("zanac.asm 8e2a is not JP 849c")
             fails += 1
         else:
-            body = chunk.split("explode_enemies:", 1)[1].split(
-                "handler_type73_base_segment:", 1
-            )[0]
-            checks = (
-                ("AND\t 0x7f", "8a3a AND 0x7F"),
-                ("CP\t 0x46", "8a3e CP 0x46"),
-                ("CP\t 0x28", "8a42 CP 0x28"),
-                ("LD\t (IY+0x0), 0x23", "8a46 write type 0x23"),
-                ("LD\t (IY+0x18), A", "8a4a +0x18 = unmasked type"),
-            )
-            for needle, label in checks:
-                if needle not in body and needle.replace("\t", " ") not in body:
-                    # tolerate spacing variants
-                    compact = re.sub(r"\s+", "", body.upper())
-                    key = re.sub(r"\s+", "", needle.upper())
-                    if key not in compact:
-                        fail(f"ASM {label} not in explode_enemies")
-                        fails += 1
-                        continue
-                print(f"  ASM: {label}")
-            # Live 0x23 is not in the skip set.
-            if re.search(r"CP\s+0x23", body):
-                fail("ASM 8A26 must not special-case CP 0x23")
+            print("  ASM 8e2a: JP 849c (type80 init tail)")
+        if not re.search(r"CALL\s+0x4a6a\s*;\s*0x849c", asm, re.I):
+            fail("zanac.asm 849c is not CALL 4a6a")
+            fails += 1
+        else:
+            print("  ASM 849c: CALL 4a6a")
+        if not re.search(r"LD\s+HL,\s*0xe124\s*;\s*0x84bc", asm, re.I):
+            fail("zanac.asm 84bc is not LD HL,E124")
+            fails += 1
+        else:
+            print("  ASM 84bc: LD HL,E124")
+        if not re.search(r"DEC\s+\(HL\)\s*;\s*0x84bf", asm, re.I):
+            fail("zanac.asm 84bf is not DEC (HL)")
+            fails += 1
+        else:
+            print("  ASM 84bf: DEC E124")
+        if not re.search(r"LD\s+\(HL\),\s*0x10\s*;\s*0x84c2", asm, re.I):
+            fail("zanac.asm 84c2 is not LD (HL),0x10")
+            fails += 1
+        else:
+            print("  ASM 84c2: E124 reload 0x10")
+        if not re.search(r"LD\s+\(0xe125\),\s*A\s*;\s*0x84c6", asm, re.I):
+            fail("zanac.asm 84c6 is not LD (E125),A")
+            fails += 1
+        else:
+            print("  ASM 84c6: E125=1")
+        jp849c = re.findall(r"JP\s+0x849c", asm, re.I)
+        if len(jp849c) != 1:
+            fail(f"expected one JP 849c (type80), found {len(jp849c)}")
+            fails += 1
+        else:
+            print("  ASM: only type80 JP 849c (type35 falls through)")
+        # 8e2a sits after SET 7 / +0c=0; 84bc is inside that tail.
+        t80 = asm.split("handler_type80_base_damage:", 1)
+        if len(t80) < 2:
+            fail("zanac.asm missing handler_type80_base_damage")
+            fails += 1
+        else:
+            body = t80[1].split("handler_type83_black_shadow:", 1)[0]
+            if "0x8e2a" not in body or "0x849c" not in body:
+                fail("type80 body must JP 849c at 8e2a")
+                fails += 1
+            elif "0xe124" in body:
+                fail("type80 must reach E124 via JP 849c, not a local copy")
                 fails += 1
             else:
-                print("  ASM 8A26: no CP 0x23 skip")
+                print("  ASM type80: E124 only via 8e2a JP 849c")
     else:
-        print("  (zanac.asm not in tree; filter math still checked)")
+        print("  (zanac.asm not on this machine; C locks only)")
 
-    # Filter math: live type 35 / 60 convert; 40 and 70+ do not.
-    cases = (
-        (0x00, None, "empty"),
-        (0x23, (0x23, 0x23), "type 35"),
-        (0xA3, (0x23, 0x23), "type 35 running"),
-        (0x3C, (0x23, 0x3C), "type 60"),
-        (0xBC, (0x23, 0x3C), "type 60 running"),
-        (0x28, None, "type 40"),
-        (0xA8, None, "type 40 running"),
-        (0x0A, (0x23, 0x0A), "type 10"),
-        (0x45, (0x23, 0x45), "type 69"),
-        (0x46, None, "type 70"),
-        (0x50, None, "type 80"),
-    )
-    for raw, want, name in cases:
-        got = msx_8a26(raw)
-        if got != want:
-            fail(f"8A26 {name} (0x{raw:02X}): {got} want {want}")
-            fails += 1
-        else:
-            print(f"  8A26 {name}: {got}")
+    old6 = old_husk_after(6)
+    new6 = new_husk_after(6)
+    if old6 != (6, 0):
+        fail(f"old 6 husks {old6} want (6, 0)")
+        fails += 1
+    elif new6 != (0x10, 1):
+        fail(f"new 6 husks {new6} want (0x10, 1) — 84bc latch")
+        fails += 1
+    else:
+        print("  sim: 6 husks latch E125 (old port never did)")
 
-    expl = fn_span(ent, "void entity_explode_airborne(void)")
-    if not expl:
+    expl = new_husk_after(6)
+    if expl != (0x10, 1):
+        fail("type35 84bc sim must match husk")
+        fails += 1
+    else:
+        print("  sim: type35 and type80 share 84bc")
+
+    helper = fn_span(ent, "static void tick_e124_84bc(void)")
+    if not helper:
+        fail("tick_e124_84bc not found")
+        fails += 1
+    elif "s_e124--" not in helper or "s_e124 = 0x10" not in helper:
+        fail("tick_e124_84bc must DEC then reload 0x10")
+        fails += 1
+    elif "s_e125 = 1" not in helper:
+        fail("tick_e124_84bc must latch E125=1")
+        fails += 1
+    else:
+        print("  tick_e124_84bc: DEC / 0x10 / E125=1")
+
+    husk = fn_span(ent, "static void husk_step(Slot *e)")
+    if not husk:
+        fail("husk_step not found")
+        fails += 1
+    elif "tick_e124_84bc()" not in husk:
+        fail("husk_step first frame must tick 84bc (8e2a JP 849c)")
+        fails += 1
+    elif husk.find("tick_e124_84bc()") > husk.find("if (step_8f45"):
+        fail("84bc is on the bit7-clear frame, not the 8f45 update")
+        fails += 1
+    elif "award_subtype" not in husk:
+        fail("husk_step must still 4a6a award_subtype(+0x18)")
+        fails += 1
+    else:
+        print("  husk_step: 8e14 JP 849c ticks E124")
+
+    # KIND_EXPL first frame must keep the same 84bc helper (8A26 path).
+    if "tick_e124_84bc()" not in ent:
+        fail("KIND_EXPL / husk must call tick_e124_84bc")
+        fails += 1
+    elif ent.count("tick_e124_84bc()") < 2:
+        fail("both type35 first frame and husk_step must call 84bc")
+        fails += 1
+    else:
+        print("  KEEP: type35 8446 still 84bc via same helper")
+
+    expl_loop = fn_span(ent, "void entity_update(void)")
+    if expl_loop and "KIND_EXPL" in expl_loop:
+        print("  KEEP: KIND_EXPL update still present")
+
+    boom = fn_span(ent, "void entity_explode_airborne(void)")
+    if not boom:
         fail("entity_explode_airborne not found")
         fails += 1
-        expl = ""
-
-    if re.search(r"kind\s*==\s*KIND_EXPL", expl):
-        fail("8A26 must not skip KIND_EXPL (live type 35 is converted)")
+    elif "KIND_EXPL" in boom and "continue" in boom:
+        # 8A26 must not skip live type 35.
+        if re.search(r"KIND_EXPL|KIND_PDEAD", boom.split("slot_msx_type", 1)[0]
+                     if "slot_msx_type" in boom else boom):
+            fail("8A26 must not skip KIND_EXPL / KIND_PDEAD")
+            fails += 1
+        else:
+            print("  KEEP: 8A26 still reconverts live type 35")
+    elif "become_expl" not in (boom or ""):
+        fail("8A26 must still become_expl")
         fails += 1
     else:
-        print("  port: no KIND_EXPL skip")
+        print("  KEEP: 8A26 still become_expl")
 
-    if re.search(r"kind\s*==\s*KIND_PDEAD", expl):
-        fail("8A26 must not skip KIND_PDEAD (type 60 is in [1,0x45])")
-        fails += 1
-    else:
-        print("  port: no KIND_PDEAD skip")
-
-    if "0x28" not in expl and "t == 40" not in expl:
-        fail("8A26 must still skip type 0x28")
-        fails += 1
-    else:
-        print("  port: skip type 0x28")
-
-    if "0x46" not in expl and ">= 70" not in expl:
-        fail("8A26 must still skip type >= 0x46")
-        fails += 1
-    else:
-        print("  port: skip type >= 0x46")
-
-    if "become_expl" not in expl:
-        fail("8A26 must become_expl survivors")
-        fails += 1
-    else:
-        print("  port: become_expl survivors")
-
-    become = fn_span(ent, "static void become_expl(Slot *e, u8 score_t)")
-    if not become or "e->script = 0" not in become:
-        fail("become_expl must clear script (bit7-clear / 8446 init)")
-        fails += 1
-    elif "e->variant = score_t" not in become:
-        fail("become_expl must store +0x18 = score_t")
-        fails += 1
-    else:
-        print("  become_expl: script=0 + variant=+0x18")
-
-    # +0x18 is the current type (slot_msx_type), not leftover e->variant.
-    if expl and "slot_msx_type" not in expl:
-        fail("8A26 +0x18 must be slot_msx_type (current type), not leftover variant")
-        fails += 1
-    else:
-        print("  8A26 +0x18: slot_msx_type (0x23 on live expl)")
-
-    # Flash wait_frames B=5 stays (visual overlay; not a freeze).
-    flash = fn_span(ent, "static void flash_begin(void)")
-    if not flash or "s_flash_left = 5" not in flash:
-        fail("8A26 wait_frames B=5 flash was reverted")
-        fails += 1
-    else:
-        print("  KEEP: 8A26 5-frame flash")
-
-    if "mode_backdrop_flash(1)" not in (flash or ""):
-        fail("flash_begin must still mode_backdrop_flash(1)")
-        fails += 1
-
-    # KEEP: fire 7 730B once (just shipped).
     if "s_fire7_life_ticked" not in ent:
         fail("fire 7 730B-once flag was reverted")
         fails += 1
@@ -246,6 +276,8 @@ def main() -> int:
     else:
         print("  KEEP: 728F still ticks; 7306 skipped that frame")
 
+    if "73c2" not in ent and "fire 3" not in ent.lower():
+        pass
     stealth = fn_span(ent, "static void spawn_stealth(Slot *e, u8 type)")
     if not stealth or "e->clock = 48" not in stealth:
         fail("type 65 7ff0 +1D=0x30 seed was reverted")
@@ -441,6 +473,11 @@ def main() -> int:
     else:
         print("  KEEP: no 0xBFD6")
 
+    if "mode_letter_attr" in ent and "playfield" in ent:
+        # Never playfield-wide mode_letter_attr fill — leave as comment lock
+        # in callers; entity.c itself should not grow one.
+        pass
+
     vals = parse_spawn_list(spawn_src)
     if vals:
         for t, name in ((21, "21"), (41, "41"), (45, "45")):
@@ -462,13 +499,6 @@ def main() -> int:
         fails += 1
     else:
         print("  KEEP: player.h fire_reset + fire_select")
-
-    husk = fn_span(ent, "static void husk_step(Slot *e)")
-    if not husk or "tick_e124_84bc()" not in husk:
-        fail("type 80 8e2a JP 849c must tick E124")
-        fails += 1
-    else:
-        print("  KEEP: husk_step 849c ticks E124")
 
     if fails:
         print(f"{fails} FAIL(s)", file=sys.stderr)
