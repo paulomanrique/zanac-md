@@ -268,6 +268,12 @@ u8 player_fire_num(void)
     return s_fire_num;
 }
 
+u8 player_fire_mode(void)
+{
+    /* E14E. fire_select writes k_fire_init[n][1]. */
+    return s_fire_mode;
+}
+
 u8 player_invincible(void)
 {
     return (u8)(s_if_latch || (s_invuln != 0) || s_dead || s_over);

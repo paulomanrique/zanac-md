@@ -1380,6 +1380,7 @@ static const u8 k_death_trans[90] = {
 #define POST_SHOT  0x01  /* check_hit_shots 44F9 / shots-only 44CA / full 44BA */
 #define POST_SHIP  0x02  /* check_hit_player 44D4 / ship-only 44B0/44A6 / full */
 #define POST_PICK  0x04  /* ship touch = pickup; handler restores player after 453E */
+/* E14E: 44D4 AND 0x01 (fire vs 44BA/44A6); 44F9 BIT 1 (fire vs 44F9/44CA). */
 
 static u8 slot_msx_type(const Slot *e)
 {
@@ -1475,6 +1476,42 @@ static int enemy_takes_shots(const Slot *e)
         && e->kind != KIND_SPAWNER)
         return 1;
     return 0;
+}
+
+/* Fire vs enemy. 44F9 BIT 1,E14E after the three shot slots; 44D4 AND 1
+ * before the ship check. 44CA is 44F9 only; 44A6 is 44D4 only; 44BA is both.
+ * Type 44 is 44BA on MSX — ship AABB skip (KIND_GROUND) is the leave-alone. */
+static int enemy_takes_fire(const Slot *e)
+{
+    u8 et = slot_msx_type(e);
+    u8 pf = post_flags(et);
+    u8 mode = player_fire_mode();
+
+    if (e->kind == KIND_BOX && !e->clock)
+        return 0;
+    if ((e->kind == KIND_WIDE || e->kind == KIND_FIREBOX) && !e->armed)
+        return 0;
+    if (e->kind == KIND_BASE && !e->armed)
+        return 0;
+    if (e->kind == KIND_BASE && e->variant == 79 && (e->aux & 0x02))
+        return 0;
+    if (e->kind == KIND_CIRCLE && !(e->aux & 0x40))
+        return 0;
+    if (pf & POST_PICK)
+        return 0;
+    if (!pf)
+        return 0;
+    /* 44A6: type 20/37/38/41 + 42/43 after they become 0xA5/0xA6. */
+    if (e->kind == KIND_EBULLET
+        && (et == 20 || et == 37 || et == 38 || et == 41 || et == 42 || et == 43))
+        return (mode & 0x01) != 0;
+    /* 44CA: 8806 wide/idol/firebox, 8b7a base. Type 44 is 44BA (not here). */
+    if (et == 70 || et == 71 || et == 81 || et == 82
+        || (et >= 73 && et <= 79) || (et >= 84 && et <= 89))
+        return (mode & 0x02) != 0;
+    /* 44BA (airborne, type 44, guns, 21/45): bit0 via 44D4 or bit1 via 44F9.
+     * fire_init_table E14E is 0x01/0x02/0x03, so every fire_num hits. */
+    return 1;
 }
 
 static void apply_dir(Slot *e, u8 dir)
@@ -5309,8 +5346,13 @@ static void collide_bolt_enemies(Slot *bolt, u8 persist)
         u8 kind;
         if (!e->alive)
             continue;
-        /* 0x716B/entity_post: shots leg (44BA/44CA); 44A6 bullets excluded. */
-        if (!enemy_takes_shots(e))
+        /* Shots: 44F9 (44BA/44CA). Fire: E14E 44D4 bit0 / 44F9 bit1. */
+        if (bolt == &s_fire)
+        {
+            if (!enemy_takes_fire(e))
+                continue;
+        }
+        else if (!enemy_takes_shots(e))
             continue;
         if (!hit_overlap_slot(bolt->x, bolt->y, bolt_sat, e))
             continue;
