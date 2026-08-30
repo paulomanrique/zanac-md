@@ -51,6 +51,7 @@
  *           849c next tick); type 4 in-place 38 + 2x8ddb; else type 63.
  *           proto_box 77a1: X=(H&3F)+0x38 +0x20/child; types 77ea;
  *           SAT countdown 7808. Port: dest/bind/script/timer 8.8.
+ *           784d CALL 4898 +0c=1: unsigned Y>=0xD0 (not playfield max_y).
  *   10      duster  - 7a2a: Yvel 8.8 0300, +0c=0x13 (Y|X|X-homing),
  *           x_accel +16=8 tgt +14 (X<0x88?FF:00), +17=1; random_x 71c5.
  *           Port: dest/bind/script/timer 8.8 (like type20/26); aux=+14 tgt.
@@ -79,6 +80,7 @@
  *           color 0x8F. 4560 half 3,3 => 10x10 (not SAT 0 / 0x40 14x12).
  *           Collect 78cc/78d0: +05 bit7 + +1B=0x40 (type60 86a4 cancel);
  *           78d4 bfc8. Shot INC is 78d7.
+ *           78af CALL 4898 +0c=1: unsigned Y>=0xD0 (box-6 keeps 00C0).
  *   68      proto_box -> 3 boxes (types 4/5/6)
  *   80      husk    - 8e14: bfb3+ev18+849c first frame (84d1 + 4912 + 84bc E124), then 8f45 / clear
  *   83      fire-up - 8e3a: Yvel FFE0 8.8; SAT 0x24/0x81 blank vs 0x04/8eaf[+1c];
@@ -2385,8 +2387,6 @@ static void box_step(Slot *e)
     /* entity_update 4898 Y_motion (+0c=1): 8.8 via bind/timer;
      * shared pass inert. Types 4/5/6 share handler_type4_box.
      * First-frame 782c: DEC +03, RET NZ (no move / no SAT / no hit). */
-    s32 ypos;
-
     if (e->kind == KIND_BOX && !e->clock)
     {
         e->sat--;
@@ -2401,10 +2401,10 @@ static void box_step(Slot *e)
         /* 784d entity_update same frame after SET 7 */
     }
 
-    ypos = ((s32)e->y << 8) | (u8)e->timer;
-    ypos += (s16)e->bind;
-    e->timer = (u8)ypos;
-    e->y = (s16)(ypos >> 8);
+    /* 784d CALL 4898 +0c=1: unsigned 8.8 + Y>=0xD0.
+     * Signed s32 + playfield max_y=200 killed Y=201..207. */
+    if (step_88_y_4898(e))
+        return;
     e->vx = 0;
     e->vy = 0;
 }
@@ -2412,12 +2412,11 @@ static void box_step(Slot *e)
 /* 0x78af handler_type63_power_chip: Y 8.8 only. No box frame, no SAT blink. */
 static void chip_step(Slot *e)
 {
-    s32 ypos;
-
-    ypos = ((s32)e->y << 8) | (u8)e->timer;
-    ypos += (s16)e->bind;
-    e->timer = (u8)ypos;
-    e->y = (s16)(ypos >> 8);
+    /* 78af CALL 4898 +0c=1: unsigned 8.8 + Y>=0xD0.
+     * Box-6 convert keeps bind=0x00C0; signed s32 + max_y=200
+     * killed Y=201..207. */
+    if (step_88_y_4898(e))
+        return;
     e->vx = 0;
     e->vy = 0;
 }
@@ -5065,9 +5064,17 @@ static void update_enemies(void)
             spr_set_sat_col(e, (u8)(e->sat_col ^ 0x09));
         }
         else if (e->kind == KIND_BOX)
+        {
             box_step(e);
+            if (!e->alive)
+                continue;
+        }
         else if (e->kind == KIND_CHIP)
+        {
             chip_step(e);
+            if (!e->alive)
+                continue;
+        }
         else if (e->kind == KIND_GROUND)
         {
             /* type44 82f9 CALL 4898 +0c=3: u8 8.8 wrap-cull
@@ -5336,7 +5343,7 @@ static void update_enemies(void)
          * at bounce must not trip playfield cull. Luster 16-18, duster/teruzo/sig,
          * stealth 34/65/66, type44 ground, type67 med_circle, 8.8 leads/bars
          * 20/21/37/38/41/42/43/45, umber 7-9, veybar 22-25, swoop 26-29,
-         * tracker 31/33, and 4898 Y-only 36/61/62/72/83 use
+         * tracker 31/33, box 4/5/6 / chip 63, and 4898 Y-only 36/61/62/72/83 use
          * unsigned Y>=0xD0 (letterbox is draw-only). Exclude them so
          * Y=201..207 is not culled 7px early. */
         if (e->kind != KIND_SPAWNER
@@ -5355,6 +5362,8 @@ static void update_enemies(void)
             && e->kind != KIND_DESCEND
             && e->kind != KIND_FIREUP
             && e->kind != KIND_FLASH
+            && e->kind != KIND_BOX
+            && e->kind != KIND_CHIP
             && e->kind != KIND_GROUND
             && e->kind != KIND_CIRCLE
             && e->kind != KIND_TRACKER
