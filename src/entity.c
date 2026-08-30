@@ -211,12 +211,14 @@
  *           Port: dest/bind/script/timer; apply_dir_88; skip first step;
  *           then 4898 u8 Y>=0xD0/X>=0xD1.
  *   42      proto_bullet 85cc: CALL 84e3 (type37 init), type:=0xA5, XOR R into
- *           X/Y vel low (8.8); port keeps variant 42 + 8.8 step. Type 79 every-4th.
- *           4898 u8 wrap-cull like 37.
- *   43      proto_fragment 85d6: CALL 8507 (type38 init), type:=0xA6, same XOR;
- *           port keeps variant 43 + 8.8 step. Base fire 74/76/77/78 via 8dd9;
- *           74/77 C from +0x13 (vx), 76 DEC+mirror, 79 INC+&3 (ROM cadence).
- *           4898 u8 wrap-cull like 38.
+ *           X/Y vel low (8.8), RET 85ed (no 4898). Next visit is type 0xA5
+ *           (37 armed) 84fb. Port keeps variant 42; skip first 4898 then
+ *           8.8 step. Type 79 every-4th. 4898 u8 wrap-cull like 37.
+ *   43      proto_fragment 85d6: CALL 8507 (type38 init), type:=0xA6, same XOR
+ *           then 85ed RET (no 4898). Next visit is type 0xA6 (38 armed) 84fb.
+ *           Port keeps variant 43; skip first 4898 then 8.8 step.
+ *           Base fire 74/76/77/78 via 8dd9; 74/77 C from +0x13 (vx),
+ *           76 DEC+mirror, 79 INC+&3 (ROM cadence). 4898 u8 wrap-cull like 38.
  *   21      light_bar 863b: +0x17=4, dir=+0x1a&0x0F, set_vel 8.8, SFX ev0x16;
  *           SAT 0x18 pat 6. Init writes no +04. 8650 SET 7 / 8656 JP 5189
  *           (no 8659, no 4898). Active 8659: R-nibble|0x80 then 4898 / 44ba
@@ -3086,15 +3088,15 @@ static void init_frag(Slot *e, s16 x, s16 y, u8 dir, u8 variant)
     {
         /* handler_type42_proto_bullet 0x85cc:
          * CALL 84e3 (type37 init body), LD (IX+0)=0xA5, XOR R into
-         * IX+0x0a / IX+0x08 (X/Y vel low bytes), RET. Runs as type 37.
-         * Port: keep variant 42; 8.8 step + vel-low XOR. */
+         * IX+0x0a / IX+0x08 (X/Y vel low bytes), RET 85ed. No 4898.
+         * Next visit is type 0xA5 (37 armed). Port keeps variant 42. */
         apply_dir_88_xor(e, aim_4c91(x, y));
     }
     else if (variant == 43)
     {
         /* handler_type43_proto_fragment 0x85d6 (falls into 0x85dd XOR):
-         * CALL 8507 (type38 init), LD (IX+0)=0xA6, XOR R vel lows.
-         * Dir from +0x1a (spawn arg); port keeps variant 43 + 8.8 step. */
+         * CALL 8507 (type38 init), LD (IX+0)=0xA6, XOR R vel lows, RET 85ed.
+         * Next visit is type 0xA6 (38 armed). Dir from +0x1a. Port keeps 43. */
         apply_dir_88_xor(e, dir);
     }
     else if (variant == 41)
@@ -3146,9 +3148,11 @@ static void init_frag(Slot *e, s16 x, s16 y, u8 dir, u8 variant)
         e->sat_col = 0x8F;
     /* 21: SAT 0x18 pat 6. 45: 850b writes 0x1C then 8625 pulses 0x18/0x20. */
     spr_place(e, (variant == 21 || variant == 45) ? FRAME_LIGHT_BAR : FRAME_LEAD);
-    /* 37 84fa / 38 8524 / 41 857e / 21 8656: SET 7 RET. Type 20 init
-     * falls into 4898; 42/43 XOR+RET and 45 fall-through stay as-is. */
-    if (variant == 21 || variant == 37 || variant == 38 || variant == 41)
+    /* 37 84fa / 38 8524 / 41 857e / 21 8656: SET 7 RET.
+     * 42/43: CALL 84e3/8507 (those RETs return into XOR) then 85ed RET.
+     * Type 20 init falls into 4898; type 45 CALL 850b then 8608/82a4. */
+    if (variant == 21 || variant == 37 || variant == 38 || variant == 41
+        || variant == 42 || variant == 43)
     {
         u8 idx = (u8)(e - s_en);
         if (idx < ENEMY_SLOTS)
@@ -5208,11 +5212,12 @@ static void update_enemies(void)
         }
         else if (e->kind == KIND_EBULLET
             && (e->variant == 21 || e->variant == 37 || e->variant == 38
-                || e->variant == 41)
+                || e->variant == 41 || e->variant == 42 || e->variant == 43)
             && s_ebullet_init_ret[i])
         {
-            /* 84fa / 8524 / 857e / 8656: SET 7 RET. No 4898, no 8659,
-             * no 857f DEC +15. SAT stays at spawn XY this visit. */
+            /* 84fa / 8524 / 857e / 8656: SET 7 RET.
+             * 42/43 85ed: XOR then RET (type already 0xA5/0xA6). No 4898,
+             * no 8659, no 857f DEC +15. SAT stays at spawn XY this visit. */
             s_ebullet_init_ret[i] = 0;
             if (e->spr || e->mspr)
                 spr_sync(e);

@@ -1,48 +1,37 @@
 #!/usr/bin/env python3
-"""Types 21/37/38/41 first-visit RET: no 4898 on the init handler visit.
+"""Types 42/43 first-visit XOR+RET: no 4898 on the init handler visit.
 
 zanac.asm Japan v1 (SHA1 46e9ed7b7f6dfda8eee266476c9ebc4dd9d8fcc2):
 
-  handler_type37 0x84dd:
-    BIT 7,(IX+00) / JR NZ,0x84fb
-    ... +17=3 / SAT / +04=0x8F / 4c8b ...
-    SET 7,(IX+00)          ; 0x84f6
-    RET                    ; 0x84fa  no 4898
-  84fb  CALL 0x4898 / JP 0x44a6          ; armed only
+  8dd5  LD A,0x2A / JR 8ddb     ; type 42, bit7 clear
+  8dd9  LD A,0x2B               ; type 43
+  8ddb  IY type=A, +1a=C, copy parent XY, RET
 
-  handler_type38 0x8501:
-    BIT 7 / JR NZ,0x84fb
-    ... +17=3 / dir=+1a / 4cf7 ...
-    SET 7,(IX+00)          ; 0x8520
-    RET                    ; 0x8524  no 4898
+  handler_type42 0x85cc:
+    CALL 0x84e3                ; type37 init body (SET 7 RET from CALL)
+    LD (IX+00),0xA5            ; 0x85cf  now type 37 armed
+    JP 0x85dd                  ; 0x85d3
 
-  handler_type41 0x852f:
-    BIT 7 / JR NZ,0x857f
-    ... 4cf7 speed 2 / LDIR vel / +15=2 / +17=4 ...
-    SET 7,(IX+00)          ; 0x8572
-    RET                    ; 0x857e  no 857f, no 4898
-  857f  DEC +15 / 4cf7 speed 4 / ADD HL bias / CALL 0x4898
+  handler_type43 0x85d6:
+    CALL 0x8507                ; type38 init body (SET 7 RET from CALL)
+    LD (IX+00),0xA6            ; 0x85d9  now type 38 armed
 
-  handler_type21 0x8635:
-    BIT 7 / JR NZ,0x8659
-    ... +17=4 / 4cf7 / +0c=3 / SET 7 ...
-    LD A,0x16 / JP 0x5189  ; 0x8656  tail-call SFX; no 8659, no 4898
-  8659  R-nibble|0x80 / CALL 0x4898 / JP 0x44ba
+  LAB_ram_85dd:
+    LD A,R / XOR (IX+0x0a)     ; X vel low
+    LD A,R / XOR (IX+0x08)     ; Y vel low
+    RET                        ; 0x85ed  no 4898
 
-  8ddb writes type (bit7 clear) + parent XY and RETs. First handler
-  visit is always the SET 7 RET, regardless of whether the child slot
-  is before or after the parent in the dispatch walk.
+  Next visit is type 0xA5 / 0xA6 (37/38 armed): CALL 0x4898 at 84fb.
 
-  Old port: init_frag / spawn_frag during update_enemies (or spawn_tick
-  then update) always ran step_88_4898 — and type 41 also ran 857f
-  (DEC +15, speed4+2) — on that first visit.
+  Old port: init_frag XOR'd vel lows (correct) then update_enemies always
+  called step_88_4898 on that first visit. First SAT was one vel-step early.
 
   Type 20 init falls into 4898; type 45 CALL 850b then 8608/82a4 4898.
-  Those stay same-frame. Shot 7221 / type 62 8727 skips stay. Fire
-  still 4898 on the spawn frame.
+  Those stay same-frame. Shot 7221 / type 62 8727 / 21/37/38/41 skips stay.
+  Fire still 4898 on the spawn frame. Port keeps variant 42/43 (no convert).
 
 Usage (from zanac-md):
-    python tools/test_ebullet_init_ret.py
+    python tools/test_proto_xor_ret.py
 """
 from __future__ import annotations
 
@@ -112,87 +101,82 @@ def main() -> int:
     asm = load_asm()
 
     if asm:
-        if not re.search(r"SET\s+7,\s*\(IX\+0x00\)\s*;\s*0x84f6", asm, re.I):
-            fail("zanac.asm 84f6 is not SET 7")
+        if not re.search(r"CALL\s+0x84e3\s*;\s*0x85cc", asm, re.I):
+            fail("zanac.asm 85cc is not CALL 84e3")
             fails += 1
-        elif not re.search(r"RET\s*;\s*0x84fa", asm, re.I):
-            fail("zanac.asm 84fa is not RET")
+        elif not re.search(r"LD\s+\(IX\+0x00\),\s*0xa5\s*;\s*0x85cf", asm, re.I):
+            fail("zanac.asm 85cf is not type:=0xA5")
             fails += 1
         else:
-            print("  ASM 84f6/84fa: type 37 SET 7 RET")
-        if re.search(r"CALL\s+0x4898\s*;\s*0x84fa", asm, re.I):
-            fail("type 37 84fa must be RET, not CALL 4898")
+            print("  ASM 85cc/85cf: type 42 CALL 84e3 then type 0xA5")
+
+        if not re.search(r"CALL\s+0x8507\s*;\s*0x85d6", asm, re.I):
+            fail("zanac.asm 85d6 is not CALL 8507")
             fails += 1
+        elif not re.search(r"LD\s+\(IX\+0x00\),\s*0xa6\s*;\s*0x85d9", asm, re.I):
+            fail("zanac.asm 85d9 is not type:=0xA6")
+            fails += 1
+        else:
+            print("  ASM 85d6/85d9: type 43 CALL 8507 then type 0xA6")
+
+        if not re.search(r"XOR\s+\(IX\+0x0a\)\s*;\s*0x85df", asm, re.I):
+            fail("zanac.asm 85df is not XOR X vel low")
+            fails += 1
+        elif not re.search(r"XOR\s+\(IX\+0x08\)\s*;\s*0x85e7", asm, re.I):
+            fail("zanac.asm 85e7 is not XOR Y vel low")
+            fails += 1
+        else:
+            print("  ASM 85dd: XOR R into X/Y vel lows")
+
+        if not re.search(r"RET\s*;\s*0x85ed", asm, re.I):
+            fail("zanac.asm 85ed is not RET")
+            fails += 1
+        else:
+            print("  ASM 85ed: XOR+RET (no 4898)")
+        if re.search(r"CALL\s+0x4898\s*;\s*0x85ed", asm, re.I):
+            fail("type 42/43 85ed must be RET, not CALL 4898")
+            fails += 1
+
         if not re.search(r"CALL\s+0x4898\s*;\s*0x84fb", asm, re.I):
-            fail("zanac.asm 84fb is not CALL 4898")
+            fail("zanac.asm 84fb (37/38 armed, post-convert 42/43) is not CALL 4898")
             fails += 1
         else:
-            print("  ASM 84fb: type 37 4898 is the armed path")
+            print("  ASM 84fb: 37/38 armed 4898 is the next visit")
 
-        if not re.search(r"SET\s+7,\s*\(IX\+0x00\)\s*;\s*0x8520", asm, re.I):
-            fail("zanac.asm 8520 is not SET 7")
+        if not re.search(r"RET\s*;\s*0x84fa", asm, re.I):
+            fail("type 37 84fa RET was lost")
             fails += 1
-        elif not re.search(r"RET\s*;\s*0x8524", asm, re.I):
-            fail("zanac.asm 8524 is not RET")
+        if not re.search(r"RET\s*;\s*0x8524", asm, re.I):
+            fail("type 38 8524 RET was lost")
+            fails += 1
+        if not re.search(r"LD\s+A,\s*0x2a\s*;\s*0x8dd5", asm, re.I):
+            fail("zanac.asm 8dd5 is not type 42")
+            fails += 1
+        elif not re.search(r"LD\s+A,\s*0x2b\s*;\s*0x8dd9", asm, re.I):
+            fail("zanac.asm 8dd9 is not type 43")
             fails += 1
         else:
-            print("  ASM 8520/8524: type 38 SET 7 RET")
+            print("  ASM 8dd5/8dd9: spawn writes 42/43 bit7-clear")
+        if not re.search(r"RET\s*;\s*0x8df0", asm, re.I):
+            fail("8ddb must RET after writing type+XY")
+            fails += 1
 
-        if not re.search(r"SET\s+7,\s*\(IX\+0x00\)\s*;\s*0x8572", asm, re.I):
-            fail("zanac.asm 8572 is not SET 7")
-            fails += 1
-        elif not re.search(r"RET\s*;\s*0x857e", asm, re.I):
-            fail("zanac.asm 857e is not RET")
-            fails += 1
-        else:
-            print("  ASM 8572/857e: type 41 SET 7 RET (no 857f)")
-        if not re.search(r"DEC\s+\(IX\+0x15\)\s*;\s*0x857f", asm, re.I):
-            fail("zanac.asm 857f is not DEC +15")
-            fails += 1
-        elif not re.search(r"CALL\s+0x4898\s*;\s*0x85c6", asm, re.I):
-            fail("zanac.asm 85c6 is not CALL 4898")
-            fails += 1
-        else:
-            print("  ASM 857f/85c6: type 41 heading+4898 is armed only")
-
-        if not re.search(r"SET\s+7,\s*\(IX\+0x00\)\s*;\s*0x8650", asm, re.I):
-            fail("zanac.asm 8650 is not SET 7")
-            fails += 1
-        elif not re.search(r"JP\s+0x5189\s*;\s*0x8656", asm, re.I):
-            fail("zanac.asm 8656 is not JP 5189")
-            fails += 1
-        else:
-            print("  ASM 8650/8656: type 21 SET 7 / JP 5189 (no 8659)")
-        if not re.search(r"LD\s+A,\s*R\s*;\s*0x8659", asm, re.I):
-            fail("zanac.asm 8659 is not LD A,R")
-            fails += 1
-        elif not re.search(r"CALL\s+0x4898\s*;\s*0x8662", asm, re.I):
-            fail("zanac.asm 8662 is not CALL 4898")
-            fails += 1
-        else:
-            print("  ASM 8659/8662: type 21 color+4898 is armed only")
-
-        # Contrast: shot 7221 / type 62 stay RET; fire still falls through.
         if not re.search(r"RET\s*;\s*0x7252", asm, re.I):
             fail("shot 7252 RET was lost")
             fails += 1
-        else:
-            print("  ASM 7252: shot 7221 RET stays")
         if not re.search(r"RET\s*;\s*0x8727", asm, re.I):
             fail("type 62 8727 RET was lost")
             fails += 1
-        else:
-            print("  ASM 8727: type 62 RET stays")
         if not re.search(r"SET\s+7,\s*\(IX\+0x00\)\s*;\s*0x725a", asm, re.I):
             fail("zanac.asm 725a is not SET 7 (fire init)")
             fails += 1
         else:
-            print("  ASM 725a: fire init still falls through")
+            print("  ASM: shot 7221 / type 62 RET stay; fire still falls through")
     else:
         print("  ASM: zanac.asm not in tree (bytes checked in port)")
 
     if "s_ebullet_init_ret" not in ent:
-        fail("port must keep s_ebullet_init_ret (21/37/38/41 first-visit RET)")
+        fail("port must keep s_ebullet_init_ret")
         fails += 1
     else:
         print("  port: s_ebullet_init_ret")
@@ -208,22 +192,16 @@ def main() -> int:
         fail("init_frag must not 4898 (that is the armed visit)")
         fails += 1
     else:
-        if not re.search(
-            r"variant == 21 \|\| variant == 37 \|\| variant == 38 \|\| variant == 41",
-            initf,
-        ):
-            fail("init_frag must still arm 21/37/38/41")
+        if not re.search(r"variant == 42", initf) or not re.search(r"variant == 43", initf):
+            fail("init_frag must arm 42/43")
             fails += 1
         else:
-            print("  init_frag: arm skip for 21/37/38/41")
-        arm = re.search(
-            r"if \(variant == 21 \|\| variant == 37 \|\| variant == 38 \|\| variant == 41"
-            r"(?:\s*\|\|\s*variant == 42\s*\|\|\s*variant == 43)?\)\s*\{([^}]+)\}",
-            initf,
-        )
-        if not arm or "s_ebullet_init_ret[idx] = 1" not in arm.group(1):
-            fail("init_frag arm block must set s_ebullet_init_ret")
+            print("  init_frag: arm skip for 42/43")
+        if "apply_dir_88_xor" not in initf:
+            fail("init_frag must still XOR vel lows for 42/43")
             fails += 1
+        else:
+            print("  init_frag: XOR still at spawn (85dd)")
         if re.search(
             r"if \(variant == 21 \|\| variant == 37 \|\| variant == 38 \|\| variant == 41"
             r"\s*\|\|\s*variant == 45",
@@ -231,33 +209,25 @@ def main() -> int:
         ):
             fail("type 45 first visit falls through to 4898; do not skip")
             fails += 1
-        if re.search(
-            r"if \(variant == 20 \|\|",
-            initf,
-        ):
+        if re.search(r"if \(variant == 20 \|\|", initf):
             fail("type 20 must not use the ebullet init-RET skip")
             fails += 1
 
-    ebullet = fn_span(ent, "static void spawn_ebullet_dir(s16 x, s16 y, u8 dir)")
-    if ebullet and "s_ebullet_init_ret" not in ebullet:
-        fail("spawn_ebullet_dir type 37 must arm s_ebullet_init_ret")
-        fails += 1
-    elif ebullet:
-        print("  spawn_ebullet_dir: arm skip")
-
-    skip = re.search(
-        r"s_ebullet_init_ret\[i\]\)\s*\{([^}]+)\}", ent
-    )
+    skip = re.search(r"s_ebullet_init_ret\[i\]\)\s*\{([^}]+)\}", ent)
     if not skip:
         fail("update_enemies ebullet spawn-skip block not found")
         fails += 1
     else:
+        head = ent[max(0, skip.start() - 280) : skip.start()]
+        if "variant == 42" not in head or "variant == 43" not in head:
+            fail("update_enemies skip must include variants 42/43")
+            fails += 1
         body = skip.group(1)
         if "step_88_4898" in body:
             fail("ebullet skip must not call 4898")
             fails += 1
         if "spr_set_sat_col" in body:
-            fail("ebullet skip must not 8659 (type 21 color is armed only)")
+            fail("ebullet skip must not 8659")
             fails += 1
         if "k_unit_x" in body or "k_unit_y" in body:
             fail("ebullet skip must not run 857f 4cf7")
@@ -268,34 +238,20 @@ def main() -> int:
         if "continue" not in body:
             fail("ebullet skip must continue (init RET)")
             fails += 1
-        print("  update_enemies: init RET then 4898 / 8659 / 857f")
+        print("  update_enemies: 42/43 init RET then 4898")
 
-    # Armed paths still run after the skip.
-    if not re.search(
-        r"e->variant == 21\)\s*\n\s*spr_set_sat_col\(\s*e,\s*"
-        r"\(u8\)\(0x80\s*\|\s*\(rnd\(\)\s*&\s*0x0F\)\)\)",
+    armed = re.search(
+        r"else if \(e->kind == KIND_EBULLET\s*"
+        r"&& \(e->variant == 21 \|\| e->variant == 37 \|\| e->variant == 38\s*"
+        r"\|\| e->variant == 42 \|\| e->variant == 43 \|\| e->variant == 45\)\)",
         ent,
-    ):
-        fail("type 21 8659 was reverted")
-        fails += 1
-    else:
-        print("  KEEP: type 21 8659 R-nibble|0x80 on armed visit")
-
-    v41 = re.search(
-        r"else if \(e->kind == KIND_EBULLET && e->variant == 41\)\s*\{(.+?)\n        \}",
-        ent,
-        re.S,
     )
-    if not v41 or "step_88_4898" not in v41.group(1):
-        fail("type 41 armed 857f must still 4898")
-        fails += 1
-    elif "s_ebullet_init_ret" in v41.group(1):
-        fail("type 41 857f is the armed path; skip lives in the init-RET block")
+    if not armed:
+        fail("armed 8.8 path must still include 42/43")
         fails += 1
     else:
-        print("  type 41: armed 857f+4898")
+        print("  KEEP: 42/43 armed path is still 8.8 4898")
 
-    # Shot 7221 / type 62 must stay; fire must not use the ebullet skip.
     if "s_shot_init_ret" not in ent:
         fail("shot 7221 s_shot_init_ret was reverted")
         fails += 1
@@ -321,22 +277,25 @@ def main() -> int:
     else:
         print("  KEEP: fire still 4898 same frame")
 
-    become = fn_span(ent, "static void become_riser(Slot *e)")
-    if not become or "s_riser_init_ret" not in become:
-        fail("become_riser must still arm s_riser_init_ret")
-        fails += 1
-    else:
-        print("  KEEP: become_riser arms type 62 skip")
-
     if not initf or "variant != 21" not in initf:
         fail("init_frag type 21 no +04 (863b) was reverted")
         fails += 1
     else:
         print("  KEEP: type 21 init still no +04")
 
+    if not re.search(
+        r"e->variant == 21\)\s*\n\s*spr_set_sat_col\(\s*e,\s*"
+        r"\(u8\)\(0x80\s*\|\s*\(rnd\(\)\s*&\s*0x0F\)\)\)",
+        ent,
+    ):
+        fail("type 21 8659 was reverted")
+        fails += 1
+    else:
+        print("  KEEP: type 21 8659 R-nibble|0x80 on armed visit")
+
     collide = fn_span(ent, "static void collide_player(void)")
     if not collide or "KIND_GROUND" not in collide:
-        fail("collide_player must still skip KIND_GROUND (ship 44CA leave-alone)")
+        fail("collide_player must still skip KIND_GROUND")
         fails += 1
     else:
         print("  KEEP: ship AABB still skips KIND_GROUND")
@@ -474,6 +433,7 @@ def main() -> int:
     else:
         print("  KEEP: type 10 sat_col 0x89")
 
+    become = fn_span(ent, "static void become_riser(Slot *e)")
     grant_life = fn_span(ply, "void player_grant_life(void)")
     if grant_life and ("fire_select" in grant_life or "player_fire_select" in grant_life):
         fail("player_grant_life must stay lives-only")
