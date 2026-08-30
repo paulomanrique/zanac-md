@@ -6345,20 +6345,27 @@ void entity_explode_airborne(void)
 {
     u8 i;
 
-    /* explode_enemies 0x8A26: type & 0x7F in [1,0x45] except 0x28 -> 0x23.
-     * Keeps +0x18 so type35 4a6a scores the source type. */
+    /* explode_enemies 0x8A26: AND 0x7F, skip 0 / >=0x46 / ==0x28, else
+     * write type 0x23 (bit7 clear) and +0x18 = that unmasked type.
+     * Live type 35 (0xA3) is in range: init 8446 re-runs (ALC, ev17,
+     * 4a6a of type 35, E124). Type 60 (0x3C) is too; type 40 is not.
+     * become_expl script=0 is the bit7-clear. Live type 35 is converted. */
     flash_begin();
     for (i = 0; i < ENEMY_SLOTS; i++)
     {
         Slot *e = &s_en[i];
-        u8 score_t;
+        u8 t;
 
         if (!e->alive)
             continue;
-        if (e->kind >= 70 || e->kind == KIND_EXPL || e->kind == KIND_PDEAD)
+        t = (u8)(slot_msx_type(e) & 0x7F);
+        if (!t)
             continue;
-        score_t = slot_msx_type(e);
-        become_expl(e, score_t);
+        if (t >= 0x46)
+            continue;
+        if (t == 0x28)
+            continue;
+        become_expl(e, t);
     }
 }
 
