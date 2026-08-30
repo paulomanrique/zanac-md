@@ -131,8 +131,11 @@
  *           +0c=3 +17=3 HP5; +1b=0x78 +1c=0x1e. 83d8: SAT XOR 0x34/0x0c
  *           (0x20 pat 8 <-> 0x14 pat 5 small star). First +1b Z:
  *           SET +05.0, aim_4c91+set_vel speed 3, +04=0x8d, reload
- *           +1b=0x32+(R&0x1e); +05.1 stops reaim. Port: sat_col 0x86,
- *           idle XOR not vis; clock=+1b; aux=phase|mot|stop; 8.8;
+ *           +1b=0x32+(R&0x1e); +05.1 stops reaim. 83ee idle: JP 48b8
+ *           (no 4898). Armed 8424 JP NZ 4898 +0c=3: u8 wrap-cull
+ *           Y>=0xD0 / X>=0xD1 (not signed s32 / playfield max_y).
+ *           Port: sat_col 0x86, idle XOR not vis; clock=+1b;
+ *           aux=phase|mot|stop; step_88_4898;
  *           spr FRAME_MED_CIRCLE / FRAME_SMALL_STAR from SAT.
  *   73-79   base    - nametable-only (sat_col=0 like MSX); HP from base_segment_table
  *           8a5a: until BIT 7, Y+=8 per E700.1, RET until E150.1; then SET 7,
@@ -2940,7 +2943,7 @@ static void circle_step(Slot *e)
      * FRAME_SMALL_STAR. DEC +1b; NZ + bit0 clear -> 48b8 only.
      * Z: SET +05.0, DEC +1c, +1c==0 SET +05.1; else +04=0x8d,
      * +1b=0x32+(R&0x1e), aim_4c91 + set_velocity_from_dir speed 3.
-     * Bit0 gates 4898. */
+     * Bit0 gates 8424 JP 4898 (+0c=3). */
     u16 fr;
 
     e->sat ^= 0x34;
@@ -2971,20 +2974,14 @@ static void circle_step(Slot *e)
         e->aux = a;
     }
 
-    /* 83ee: BIT 0 of +05 (aux 0x40) else 48b8 -- no 4898 while idle. */
+    /* 83ee: BIT 0 of +05 (aux 0x40) else 48b8 -- no 4898 while idle.
+     * Armed 8424 JP NZ 4898 +0c=3: u8 8.8 wrap-cull Y>=0xD0 / X>=0xD1.
+     * Signed s32 + shared Y>200 killed Y=201..207 and let
+     * X=0xD1..0xFF live; rise-wrap Y went negative instead of 0xFF. */
     if (e->aux & 0x40)
     {
-        s32 xpos = ((s32)e->x << 8) | (u8)e->script;
-        s32 ypos = ((s32)e->y << 8) | (u8)e->timer;
-
-        xpos += (s16)e->dest;
-        ypos += (s16)e->bind;
-        e->script = (u8)xpos;
-        e->timer = (u8)ypos;
-        e->x = (s16)(xpos >> 8);
-        e->y = (s16)(ypos >> 8);
-        e->vx = 0;
-        e->vy = 0;
+        if (step_88_4898(e))
+            return;
     }
 }
 
@@ -5133,7 +5130,13 @@ static void update_enemies(void)
                 continue;
         }
         else if (e->kind == KIND_CIRCLE)
+        {
+            /* 83ee idle: JP 48b8 (XOR only). Armed 8424 JP 4898
+             * +0c=3: u8 wrap-cull Y>=0xD0 / X>=0xD1. */
             circle_step(e);
+            if (!e->alive)
+                continue;
+        }
         else if (e->kind == KIND_UMBER)
             umber_step(e);
         else if (e->kind == KIND_VEYBAR)
@@ -5319,9 +5322,10 @@ static void update_enemies(void)
         }
         /* Type 69 retires on count==0 only (7abc entity_clear); u8 X wrap
          * at bounce must not trip playfield cull. Luster 16-18, duster/teruzo/sig,
-         * stealth 34/65/66, type44 ground, 8.8 leads/bars 20/21/37/38/41/42/43/45, and
-         * 4898 Y-only 36/61/62/72/83 use unsigned Y>=0xD0 (letterbox is
-         * draw-only). Exclude them so Y=201..207 is not culled 7px early. */
+         * stealth 34/65/66, type44 ground, type67 med_circle, 8.8 leads/bars
+         * 20/21/37/38/41/42/43/45, and 4898 Y-only 36/61/62/72/83 use
+         * unsigned Y>=0xD0 (letterbox is draw-only). Exclude them so
+         * Y=201..207 is not culled 7px early. */
         if (e->kind != KIND_SPAWNER
             && e->kind != KIND_HUSK
             && e->kind != KIND_WIDE
@@ -5339,6 +5343,7 @@ static void update_enemies(void)
             && e->kind != KIND_FIREUP
             && e->kind != KIND_FLASH
             && e->kind != KIND_GROUND
+            && e->kind != KIND_CIRCLE
             && !(e->kind == KIND_EBULLET
                 && (e->variant == 20 || e->variant == 21 || e->variant == 37
                     || e->variant == 38 || e->variant == 41 || e->variant == 42
