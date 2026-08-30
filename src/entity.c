@@ -192,7 +192,8 @@
  *           Port: bind/timer 8.8; clock=+0d.
  *   36      flash   - 8296: Yvel 8.8 0080 (+0c=1), attr XOR 0x0e
  *           each frame, then entity_update + 7904 (HP16). SAT 0x34
- *           pat 13. Port: dest/bind/script/timer 8.8; spr FRAME_BOLT;
+ *           pat 13. 4898 Y-only: unsigned Y>=0xD0 (not playfield max_y).
+ *           Port: dest/bind/script/timer 8.8; spr FRAME_BOLT;
  *           vis toggle ~ XOR.
  *   57-58   pairdesc- 81d1/8247: 71c5 (Y=0, X=0x28..0xC6), E=4, JP 81ac
  *           (speed 5 dir 4, +0c=3, +1f=0x20) then 8207 ev21 + type 59.
@@ -3835,13 +3836,10 @@ static void spawn_flash(Slot *e)
 static void flash_step(Slot *e)
 {
     /* 0x829c: attr XOR 0x0e; entity_update Y_motion (+0c=1);
-     * entity_post + 7904 (shared hit path already decs HP). */
-    s32 ypos = ((s32)e->y << 8) | (u8)e->timer;
-
+     * Y_motion_sub unsigned CP 0xD0; entity_post + 7904. */
     spr_set_sat_col(e, (u8)(e->sat_col ^ 0x0e)); /* 0x8F<->0x81 */
-    ypos += (s16)e->bind;
-    e->timer = (u8)ypos;
-    e->y = (s16)(ypos >> 8);
+    if (step_88_y_4898(e))
+        return;
     e->vx = 0;
     e->vy = 0;
 }
@@ -5160,7 +5158,11 @@ static void update_enemies(void)
                 continue;
         }
         else if (e->kind == KIND_FLASH)
+        {
             flash_step(e);
+            if (!e->alive)
+                continue;
+        }
         else if (e->kind == KIND_PAIRDESC)
             pairdesc_step(e);
         else if (e->kind == KIND_SPAWNER)
@@ -5323,7 +5325,7 @@ static void update_enemies(void)
         /* Type 69 retires on count==0 only (7abc entity_clear); u8 X wrap
          * at bounce must not trip playfield cull. Luster 16-18, duster/teruzo/sig,
          * stealth 34/65/66, 8.8 leads/bars 20/21/37/38/41/42/43/45, and
-         * 4898 Y-only 61/62/72/83 use unsigned Y>=0xD0 (letterbox is
+         * 4898 Y-only 36/61/62/72/83 use unsigned Y>=0xD0 (letterbox is
          * draw-only). Exclude them so Y=201..207 is not culled 7px early. */
         if (e->kind != KIND_SPAWNER
             && e->kind != KIND_HUSK
@@ -5340,6 +5342,7 @@ static void update_enemies(void)
             && e->kind != KIND_RISER
             && e->kind != KIND_DESCEND
             && e->kind != KIND_FIREUP
+            && e->kind != KIND_FLASH
             && !(e->kind == KIND_EBULLET
                 && (e->variant == 20 || e->variant == 21 || e->variant == 37
                     || e->variant == 38 || e->variant == 41 || e->variant == 42
