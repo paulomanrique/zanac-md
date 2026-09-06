@@ -24,7 +24,7 @@ int main(bool hardReset)
      * every SAT/complement/tile in the active frame; one flush after
      * the wait copies them in that vblank. Do not drop work. */
     DMA_setAutoFlush(FALSE);
-    DMA_setMaxQueueSize(192);       /* default 80; 4-tile pad + NT + HUD */
+    DMA_setMaxQueueSize(192);       /* default 80; SAT remap + NT + HUD */
     DMA_setBufferSize(16384);       /* default 8192 NTSC; sat_col remap */
     DMA_setMaxTransferSize(0);      /* 0 = no cap; ToDefault is 7200 */
     DMA_setIgnoreOverCapacity(FALSE);

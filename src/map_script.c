@@ -135,6 +135,7 @@ static void dma_nt_row(u8 nt_y, const u8 *src, TransferMethod tm);
 static void peek_next_row_at(u16 map_row, u16 wrap_px);
 static void peek_next_row(u16 map_row);
 static u8 hidden_wrap_nt_at(u16 scroll_px);
+static int sat_to_nt(s16 x, s16 y, u8 *col, u8 *row);
 static void fill_letterbox_b(void);
 static void bg_set_vscroll(void);
 static void base_mode_11(void);
@@ -732,6 +733,7 @@ static void peek_next_row(u16 map_row)
 static void nt_put(u8 col, u8 row, u8 tid)
 {
     u8 vis;
+    u8 wrap;
 
     if (col >= PF_COLS)
         return;
@@ -749,6 +751,30 @@ static void nt_put(u8 col, u8 row, u8 tid)
         if (vis < BOOT_ROWS)
             s_e800[(u8)((s_e714 + vis) % BOOT_ROWS)][col] = tid;
     }
+    /* Wrap/letterbox NT (hidden_wrap_nt_at) is e800[e714] -- the newest
+     * map row. vis>=24 skipped that slot, so a later wrap DMA restored
+     * the live tiles and half the original sprite scrolled with the map. */
+    wrap = hidden_wrap_nt_at(s_scroll_px);
+    if (row == wrap)
+        s_e800[s_e714][col] = tid;
+}
+
+/* 8948: E800[(E714 + Y/8) mod 24][X/8] is the source wrap DMA reads.
+ * Write that slot first (MSX), then the NT cell now showing playfield Y. */
+static void punch_cell(u8 col, u8 screen_row, u8 tid)
+{
+    u8 nt_col;
+    u8 nt_row;
+
+    if (col >= PF_COLS || screen_row >= BOOT_ROWS)
+        return;
+    s_e800[(u8)((s_e714 + screen_row) % BOOT_ROWS)][col] = tid;
+    if (!sat_to_nt((s16)((u16)col << 3), (s16)((u16)screen_row << 3),
+                   &nt_col, &nt_row))
+        return;
+    (void)nt_col;
+    s_nt[nt_row][col] = tid;
+    VDP_setTileMapXY(BG_B, tile_attr(tid), col, nt_row);
 }
 
 /*
@@ -886,6 +912,7 @@ static void punch_bind(s16 x, s16 y, u8 variant)
         return;
     if (!sat_to_nt(x, (s16)(ysub & 0xF8), &col, &row))
         return;
+    (void)row;
     w = 1;
     h = 1;
     tiles[0] = 0xE7;
@@ -923,7 +950,9 @@ static void punch_bind(s16 x, s16 y, u8 variant)
         if ((u8)(((u8)(ysub & 0xF8) >> 3) + r) >= BOOT_ROWS)
             break;
         for (c = 0; c < w; c++)
-            nt_put((u8)(col + c), (u8)((row + r) & 31), tiles[(u8)(r * w + c)]);
+            punch_cell((u8)(col + c),
+                       (u8)(((u8)(ysub & 0xF8) >> 3) + r),
+                       tiles[(u8)(r * w + c)]);
     }
 }
 
@@ -1145,6 +1174,7 @@ static void punch_88ed(s16 x, s16 y, const u8 *d, s16 xadj, s16 yadj)
         return;
     if (!sat_to_nt(px, (s16)(ysub & 0xF8), &col0, &row0))
         return;
+    (void)row0;
 
     rows = *d++;
     for (r = 0; r < rows; r++)
@@ -1154,7 +1184,9 @@ static void punch_88ed(s16 x, s16 y, const u8 *d, s16 xadj, s16 yadj)
             break;
         w = *d++;
         for (c = 0; c < w; c++)
-            nt_put((u8)(col0 + c), (u8)((row0 + r) & 31), *d++);
+            punch_cell((u8)(col0 + c),
+                       (u8)(((u8)(ysub & 0xF8) >> 3) + r),
+                       *d++);
     }
 }
 
@@ -1193,6 +1225,52 @@ void map_script_punch_88d8(s16 x, s16 y)
 {
     /* 8874: SUB 0x28 / 0x18 vs 8854 SUB 0x20 / 0x10. */
     punch_88ed(x, y, k_88d8, -8, -8);
+}
+
+void map_script_clear_totem_face(s16 x, s16 y)
+{
+    u8 col0;
+    u8 row0;
+    u8 ysub;
+    u8 r;
+    u8 c;
+    s16 px = nt_from_sat_x(x);
+
+    /* 8833 has no 88ed dest. Stream stamps face 0x13/14 (plain) or
+     * 0x15/16 (smile) in a ~3x2 at the 8854 SAT-0x20 / Y-0x10 cell.
+     * Replace those live IDs with 0x28 (empty playfield) so the original
+     * cells cannot ride VSCROLL after the slot becomes type 72. */
+    ysub = (u8)((u8)y - 0x10);
+    if ((u8)(ysub >> 3) >= 0x18)
+        return;
+    if (!sat_to_nt(px, (s16)(ysub & 0xF8), &col0, &row0))
+        return;
+    for (r = 0; r < 2; r++)
+    {
+        u8 srow = (u8)(((u8)(ysub & 0xF8) >> 3) + r);
+
+        if (srow >= BOOT_ROWS)
+            break;
+        for (c = 0; c < 3; c++)
+        {
+            u8 col = (u8)(col0 + c);
+            u8 tid;
+            u8 nt_col;
+            u8 nt_row;
+
+            if (col >= PF_COLS)
+                continue;
+            tid = s_e800[(u8)((s_e714 + srow) % BOOT_ROWS)][col];
+            if (tid < 0x13 || tid > 0x16)
+            {
+                if (sat_to_nt((s16)((u16)col << 3), (s16)((u16)srow << 3),
+                              &nt_col, &nt_row))
+                    tid = s_nt[nt_row][col];
+            }
+            if (tid >= 0x13 && tid <= 0x16)
+                punch_cell(col, srow, 0x28);
+        }
+    }
 }
 
 /* 87e2: only type 82. H=X-0x28 L=Y-0x10 via 8948; write 0x30+(IX+0x1c).

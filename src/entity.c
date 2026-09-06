@@ -754,6 +754,17 @@ static int complement_frame_ok(u16 frame)
     return 1;
 }
 
+static void mspr_frame_cb(Sprite *sp)
+{
+    Slot *s = (Slot *)(u32)sp->data;
+
+    /* Own the upload so addSprite frame 0 (SHOT) cannot AUTO-tile over
+     * a flyer complement. */
+    sp->status &= (u16)~SPR_FLAG_AUTO_TILE_UPLOAD;
+    if (s)
+        mspr_upload(s);
+}
+
 static void mspr_upload(Slot *s)
 {
     Sprite *sp = s->mspr;
@@ -799,7 +810,11 @@ static void marker_place(Slot *s, u16 frame)
                                   SPR_FLAG_AUTO_VRAM_ALLOC);
         if (!s->mspr)
             return;
-        /* addSprite starts at frame 0 (shot). Frame + tiles first. */
+        /* addSprite starts at frame 0 (shot). Own tiles; hide until
+         * the complement SAT name is in VRAM. */
+        s->mspr->data = (u32)s;
+        SPR_setFrameChangeCallback(s->mspr, mspr_frame_cb);
+        s->mspr->status &= (u16)~SPR_FLAG_AUTO_TILE_UPLOAD;
         SPR_setVisibility(s->mspr, HIDDEN);
         SPR_setPriority(s->mspr, FALSE);
         SPR_setAnimAndFrame(s->mspr, 0, (s16)frame);
@@ -944,6 +959,28 @@ static void remap_tiles(u8 *dst, const u8 *src, u16 nbytes, u8 from, u8 to)
     }
 }
 
+/* 8a16 / 84d1 / 86F3 discs: gfx pats 7/8/9 are body bits only (0 or the
+ * baked nibble). SGDK rescomp may pack that nibble off 15. Remap every
+ * nonzero nibble to sat_col so the pulse is a clean disc, not leftover
+ * flyer-blue / shot tiles from a packed index that `from==15` missed. */
+static void orb_paint_body_nibbles(u8 *dst, const u8 *src, u16 nbytes, u8 want)
+{
+    u16 i;
+
+    for (i = 0; i < nbytes; i++)
+    {
+        u8 b = src ? src[i] : dst[i];
+        u8 hi = (u8)(b >> 4);
+        u8 lo = (u8)(b & 0x0F);
+
+        if (hi)
+            hi = want;
+        if (lo)
+            lo = want;
+        dst[i] = (u8)((hi << 4) | lo);
+    }
+}
+
 /* Type 72 discs are body 15 remapped to sat_col. A leftover nibble 4/5
  * (flyer blue) or 7 (PAL2 cyan) in an empty UL corner is the playtest
  * speck -- gfx pats 7/8 UL 4x4 are 0 bits; pat 9 UL 4x4 is the disc.
@@ -1010,55 +1047,49 @@ static void spr_upload_color(Slot *s)
     vaddr = (u16)((sp->attribut & TILE_INDEX_MASK) * 32);
     src = (const u8 *)FAR_SAFE(ts->tiles, nbytes);
 
-    /* 16x16 SAT is 4 tiles. AUTO_VRAM_ALLOC sizes to the sheet max (4).
-     * A nearly-empty LEAD (pat 7: 14 bits, UL 4x4 empty) can ship fewer
-     * tiles; leftover VRAM in the unused slot is flyer blue / cyan /
-     * shot interlacing. Pad every upload so a reused SAT cannot composite
-     * FRAME_SHOT / shot_t leftovers. 84d1 / 86F3 / 8a16 share the discs. */
+    /* Upload this frame's tileset only. A hardcoded 4-tile pad wrote past
+     * a 1-2 tile AUTO_VRAM slot and composited FRAME_SHOT into the next
+     * flyer. Disc leftover is orb_paint_body_nibbles, not VRAM pad. */
     {
-        u16 out = 128;
         u16 n;
+        u8 disc = (u8)(s->kind == KIND_ORB
+                       || s->kind == KIND_EXPL || s->kind == KIND_PDEAD
+                       || s->kind == KIND_HUSK);
 
-        if (nbytes > out)
-            out = nbytes;
-        buf = DMA_allocateAndQueueDma(DMA_VRAM, vaddr, (u16)(out / 2), 2);
+        buf = DMA_allocateAndQueueDma(DMA_VRAM, vaddr, (u16)(nbytes / 2), 2);
         if (!buf)
         {
             static u8 s_pad[128];
 
-            if (out > sizeof(s_pad))
-                out = sizeof(s_pad);
-            for (n = 0; n < out; n++)
-                s_pad[n] = 0;
-            if (want == baked)
+            if (nbytes > sizeof(s_pad))
+                nbytes = sizeof(s_pad);
+            if (disc)
+                orb_paint_body_nibbles(s_pad, src, nbytes, want);
+            else if (want == baked)
             {
-                for (n = 0; n < nbytes && n < out; n++)
+                for (n = 0; n < nbytes; n++)
                     s_pad[n] = src[n];
             }
             else
-                remap_tiles(s_pad, src, (nbytes < out) ? nbytes : out, baked, want);
-            if (s->kind == KIND_ORB
-                || s->kind == KIND_EXPL || s->kind == KIND_PDEAD
-                || s->kind == KIND_HUSK)
-                orb_keep_body_nibbles(s_pad, out, want);
-            DMA_queueDma(DMA_VRAM, s_pad, vaddr, (u16)(out / 2), 2);
+                remap_tiles(s_pad, src, nbytes, baked, want);
+            if (disc)
+                orb_keep_body_nibbles(s_pad, nbytes, want);
+            DMA_queueDma(DMA_VRAM, s_pad, vaddr, (u16)(nbytes / 2), 2);
             s->vram_fr = s->frame;
             s->vram_nib = want;
             return;
         }
-        for (n = 0; n < out; n++)
-            buf[n] = 0;
-        if (want == baked)
+        if (disc)
+            orb_paint_body_nibbles(buf, src, nbytes, want);
+        else if (want == baked)
         {
-            for (n = 0; n < nbytes && n < out; n++)
+            for (n = 0; n < nbytes; n++)
                 buf[n] = src[n];
         }
         else
             remap_tiles(buf, src, nbytes, baked, want);
-        if (s->kind == KIND_ORB
-            || s->kind == KIND_EXPL || s->kind == KIND_PDEAD
-            || s->kind == KIND_HUSK)
-            orb_keep_body_nibbles(buf, out, want);
+        if (disc)
+            orb_keep_body_nibbles(buf, nbytes, want);
         s->vram_fr = s->frame;
         s->vram_nib = want;
     }
@@ -1088,10 +1119,11 @@ static void spr_place(Slot *s, u16 frame)
     if (frame < FRAME_N)
         s->sat = k_frame_sat[frame];
     s->frame = (u8)frame;
-    /* Reused slot: leftover type39 mspr stays at SAT 0 / frame 0 (chip/shot)
-     * unless this spawn writes a new complement. Kill it before the first
-     * visible frame. marker_place re-adds when the SAT name is real. */
-    if (s->mspr && !s->marker)
+    /* Reused slot: leftover type39 mspr at FRAME_SHOT/CHIP (addSprite
+     * default) stays composited on the new flyer if we only kill when
+     * marker==0. Drop a complement whose SAT name is not real; a live
+     * 71f6 pair keeps marker + a valid FRAME_*_C and is left alone. */
+    if (s->mspr && (!s->marker || !complement_frame_ok(s->mframe)))
         marker_kill(s);
     if (!s->spr)
     {
@@ -1167,7 +1199,10 @@ static Slot *free_enemy(void)
         {
             /* Do not spr_kill: release+addSprite reallocates VRAM and
              * flashes objs frame 0 (shot) until tiles upload. Death
-             * already released. spr_place reuses or adds hidden. */
+             * already released. spr_place reuses or adds hidden.
+             * Leftover type39 mspr (shot/chip default) must not ride
+             * the next flyer -- 71f6 re-adds a real complement. */
+            marker_kill(&s_en[i]);
             return &s_en[i];
         }
     return NULL;
@@ -2307,7 +2342,14 @@ static void spawn_wide_at(Slot *e, u8 type, s16 x, s16 y, u16 dest)
         || (type >= 84 && type <= 86)
         || type == 87 || type == 88 || type == 89)
     {
-        e->spr = NULL;
+        /* Nametable-only. Release a reused SAT so a leftover flyer /
+         * shot sprite cannot stay composited on the structure. */
+        marker_kill(e);
+        if (e->spr)
+        {
+            SPR_releaseSprite(e->spr);
+            e->spr = NULL;
+        }
         e->mspr = NULL;
         if (type == 82)
             e->script = 0;      /* 87e2 after 8f25 BIT 7 */
@@ -5658,7 +5700,10 @@ static void collide_bolt_enemies(Slot *bolt, u8 persist)
                     return;
                 }
                 /* 8833: 70/71. 8810 this slot := type 72; bfc8; 4a6a;
-                 * child 0xD1 HP 0 SAT 0x24. No 88ed (bytes do not JP 8824). */
+                 * child 0xD1 HP 0 SAT 0x24. Bytes do not JP 8824 -- there
+                 * is no 88ed dest. Stream face 0x13-0x16 is the leftover
+                 * original cell; clear that 8854-aligned 3x2 to 0x28. */
+                map_script_clear_totem_face(sx, sy);
                 entity_inc_encounter_b();
                 award_subtype(drop);
                 e->kind = KIND_ORB;
@@ -5674,6 +5719,7 @@ static void collide_bolt_enemies(Slot *bolt, u8 persist)
                 e->vy = 0;
                 /* dest kept: +0x1c/1d warp ptr from idol table.
                  * Idol had no SAT; first 8a16 pair is SAT 0x1C / 0x8F. */
+                marker_kill(e);
                 e->vram_fr = 0xFF;
                 spr_place(e, FRAME_LEAD);
                 e->sat = k_orb_sat[0];
