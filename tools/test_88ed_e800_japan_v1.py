@@ -76,8 +76,8 @@ def main() -> None:
         fail("nt_put must persist wrap RAM even when vis>=24 (letterbox/wrap)")
     if "map_script_clear_totem_face" not in MH or "map_script_clear_totem_face" not in MS:
         fail("type 70/71 death is not JP 88ed — need explicit face-tile clear")
-    if "tid >= 0x13 && tid <= 0x16" not in MS:
-        fail("totem face tiles 0x13-0x16 must be replaced (stream 8854)")
+    if "for (c = 0; c < 3; c++)" not in MS or "for (r = 0; r < 2; r++)" not in MS:
+        fail("totem clear must punch the whole 8854 3x2 (junk on top)")
     if "punch_cell(col, srow, 0x28)" not in MS:
         fail("cleared face cells must become 0x28")
     if "SPR_setVisibility(sp, HIDDEN)" in MS:

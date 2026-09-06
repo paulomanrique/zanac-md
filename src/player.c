@@ -23,7 +23,7 @@ static const u8 k_fire_init[8][2] = {
 };
 
 static Sprite *s_spr;
-static Sprite *s_cspr;      /* pat 15 black complement; draw at white X+1 */
+static Sprite *s_cspr;      /* pat 15 black complement; same X/Y under white */
 static s16 s_x;             /* MSX SAT X (+02). Original draw: mode_draw_x 0x8F. */
 static s16 s_y;
 static u8  s_sat_col;       /* MSX SAT colour (+04); ship is 0x8F (EC). */
@@ -98,11 +98,12 @@ static s16 ship_draw_x(void)
     return mode_draw_x(s_x, s_sat_col);
 }
 
-/* Japan v1 pats 14/15: black complement covers more white hull at X+1
- * (overlap 48 vs same-X 29). Draw-only; collision stays SAT 0x38. */
+/* Japan v1 pats 14/15: black SAT is the same X/Y as white (under the
+ * hull). X+1 was a sign-error on the overlap count and drew a disjoint
+ * black ghost. Draw-only; collision stays SAT 0x38. */
 static s16 ship_compl_draw_x(void)
 {
-    return (s16)(mode_draw_x(s_x, 0x81) + 1);
+    return mode_draw_x(s_x, 0x81);
 }
 
 /* player_ship_update 0x7634 / 0x765A: add the 8.8 velocity to the position,
@@ -164,7 +165,7 @@ static void show_ship(int vis)
         {
             SPR_setPosition(s_cspr, cx, dy);
             s_cspr->status &= (u16)~SPR_FLAG_AUTO_DEPTH;
-            /* White SAT on top; black sits 1px right underneath. */
+            /* White SAT on top; black under at the same X/Y. */
             SPR_setDepth(s_cspr, 1);
         }
     }

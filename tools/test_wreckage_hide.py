@@ -40,10 +40,10 @@ def main() -> int:
         return fail("nt_put must persist wrap/letterbox NT into e800[e714]")
     if "map_script_clear_totem_face" not in hdr or "map_script_clear_totem_face" not in ent:
         return fail("type 70/71 must clear stream face 0x13-0x16 (8833 has no 88ed)")
-    if "tid >= 0x13 && tid <= 0x16" not in mp:
-        return fail("totem clear must only replace face tiles 0x13-0x16")
     if "punch_cell(col, srow, 0x28)" not in mp:
         return fail("cleared face cells must become 0x28 (empty playfield)")
+    if "for (c = 0; c < 3; c++)" not in mp or "for (r = 0; r < 2; r++)" not in mp:
+        return fail("totem clear must punch the whole 8854 3x2 (junk on top)")
     if "k_88ab_84" not in mp:
         return fail("88ed wreckage tables stay")
     if "map_script_punch_88ab" not in ent:

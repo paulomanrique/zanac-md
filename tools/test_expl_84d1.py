@@ -32,8 +32,12 @@ def main() -> int:
         return fail("k_t60_sat must stay 86F3 names")
     if "e->clock = 1" not in ent or "e->aux = 1" not in ent:
         return fail("type35 init +0D=1 +0F=1 skips 84d1[0]")
+    if "e->vx = 0" not in ent:
+        return fail("become_expl must zero leftover vel (type-35 only)")
+    if "e->ground = hide" not in ent:
+        return fail("become_expl must keep e->ground = hide (84d1 Y vs NT)")
 
-    print("ok: 84d1 / 86F3 explosion SAT tables locked")
+    print("ok: 84d1 / 86F3 SAT; leftover vel; ground hide")
     return 0
 
 

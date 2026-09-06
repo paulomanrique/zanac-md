@@ -355,16 +355,19 @@ def main() -> int:
         else:
             print("  KEEP: ebullet variants stay in the shared tail")
 
-    if "8 - off" not in map_c:
-        fail("hidden_wrap_nt_at must stay screen Y 8")
+    if "16 - off" not in map_c:
+        fail("hidden_wrap_nt_at must be playfield top (screen Y 16 / SAT Y 0)")
+        fails += 1
+    elif re.search(r"u8 py = \(u8\)\(8 - off\)", map_c):
+        fail("hidden_wrap Y=8 is the letterbox row (seam / south lens)")
         fails += 1
     else:
-        print("  KEEP: wrap Y 8")
-    if "peek_next_row_at((u16)(s_ms.row + 1), s_scroll_px)" not in map_c:
-        fail("boot peek must stay hidden_wrap_nt_at(s_scroll_px)")
+        print("  KEEP: wrap SAT Y=16 == sat_to_nt(0)")
+    if "peek_next_row_at((u16)(s_ms.row + 1), (u16)(s_scroll_px + 8))" not in map_c:
+        fail("boot peek must be hidden_wrap_nt_at(scroll_px+8) = NT 31")
         fails += 1
     else:
-        print("  KEEP: boot peek NT 31")
+        print("  KEEP: boot peek NT 31 via +8")
     if "0xBFD6" in ent or "0xbfd6" in ent:
         fail("must not CALL 0xBFD6")
         fails += 1
