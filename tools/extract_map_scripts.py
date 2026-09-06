@@ -469,7 +469,9 @@ def emit(out_root: Path, rom: bytearray, report: list):
                 (20, 1), (21, 1),  # loga_B SAT 0x50 / fire 0x54
                 (4, 15), (5, 15),  # SNOW SAT 0x10 / SMALL_STAR SAT 0x14
             ], "61 frames, type39 unfolded from gfx_sprite_patterns 0x6976")
-            # pat 14 white + pat 15 black (two 16x16 frames). Same X/Y under white.
+            # pat 14 white + pat 15 black (two 16x16 frames).
+            # Japan SAT: same X, complement Y = primary Y+2 (0x7735 ADD 0xF1
+            # vs 0x48C0 SUB 0x11). Same-X/same-Y overlap=29; Y+2 overlap=0.
             write_strip(spr_dir / "ship.png", [(14, 15), (15, 1)],
                         "pat 14 white + pat 15 black complement")
         else:

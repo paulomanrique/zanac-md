@@ -3,7 +3,7 @@
 
 Unfolds body vs complement into separate frames so entity.c can draw a
 second MD sprite (type39 / 71f6) without overlaying black on a fold.
-Does not write ship.png (player.c draws pat 14 + pat 15 at the same X/Y).
+Does not write ship.png (player.c draws pat 14 + pat 15 at the same X, Y+2).
 
 Usage (from zanac-md):
     python tools/rebuild_sprites.py --asm PATH --out res/sprites/objs.png

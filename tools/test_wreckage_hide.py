@@ -5,7 +5,7 @@ PR #85 SPR_setVisibility(HIDDEN) left the nametable cells. Japan v1 8948
 writes E800[(E714+Y/8) mod 24]. A wrap-row punch that skipped e800 left
 HALF the original stream tiles scrolling with the map.
 
-Type 70/71 8833 has no dest; stream face 0x13-0x16 is cleared to 0x28.
+Type 70/71 8833 has no dest — do not punch 0x28 onto the totem.
 Flyer type-35 leftover SAT/velocity is leave-alone (item 1).
 
 Usage (from zanac-md):
@@ -38,12 +38,10 @@ def main() -> int:
         return fail("8948 E800[(E714+Y/8) mod 24] must be written for every dest cell")
     if "hidden_wrap_nt_at(s_scroll_px)" not in mp or "s_e800[s_e714][col] = tid" not in mp:
         return fail("nt_put must persist wrap/letterbox NT into e800[e714]")
-    if "map_script_clear_totem_face" not in hdr or "map_script_clear_totem_face" not in ent:
-        return fail("type 70/71 must clear stream face 0x13-0x16 (8833 has no 88ed)")
-    if "punch_cell(col, srow, 0x28)" not in mp:
-        return fail("cleared face cells must become 0x28 (empty playfield)")
-    if "for (c = 0; c < 3; c++)" not in mp or "for (r = 0; r < 2; r++)" not in mp:
-        return fail("totem clear must punch the whole 8854 3x2 (junk on top)")
+    if "map_script_clear_totem_face" in hdr or "map_script_clear_totem_face" in ent:
+        return fail("8833 has no 88ed — do not punch totem face")
+    if "punch_cell(col, srow, 0x28)" in mp:
+        return fail("0x28 on the yellow totem is the blue/white junk")
     if "k_88ab_84" not in mp:
         return fail("88ed wreckage tables stay")
     if "map_script_punch_88ab" not in ent:
@@ -53,7 +51,7 @@ def main() -> int:
     if "Flyers keep leftover SAT until 8446" not in ent:
         return fail("flyer leftover SAT comment must stay (item 1)")
 
-    print("ok: 88ed persists e800; wrap NT updated; totem face 0x13-16 -> 0x28")
+    print("ok: 88ed persists e800; wrap NT updated; 8833 does not punch 0x28")
     return 0
 
 

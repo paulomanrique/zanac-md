@@ -23,7 +23,7 @@ static const u8 k_fire_init[8][2] = {
 };
 
 static Sprite *s_spr;
-static Sprite *s_cspr;      /* pat 15 black complement; same X/Y under white */
+static Sprite *s_cspr;      /* pat 15 black; Japan 0x7735 Y+2, same X, under white */
 static s16 s_x;             /* MSX SAT X (+02). Original draw: mode_draw_x 0x8F. */
 static s16 s_y;
 static u8  s_sat_col;       /* MSX SAT colour (+04); ship is 0x8F (EC). */
@@ -98,12 +98,23 @@ static s16 ship_draw_x(void)
     return mode_draw_x(s_x, s_sat_col);
 }
 
-/* Japan v1 pats 14/15: black SAT is the same X/Y as white (under the
- * hull). X+1 was a sign-error on the overlap count and drew a disjoint
- * black ghost. Draw-only; collision stays SAT 0x38. */
+/* Japan v1 0x772F after sprite_sat_write:
+ *   SAT Y = (IX+01)+0xF1   (ADD 0xF1 = entity Y-15)
+ *   SAT X = (IX+02)        (same as white)
+ *   name  0x3C  color 0x81
+ * sprite_sat_write 0x48C0 is SUB 0x11 (entity Y-17). Complement hardware
+ * Y is therefore 2px below the white hull. Pats 14/15 overlap:
+ *   same-X same-Y = 29 (black eats the hull — "desconjuntado")
+ *   X+1           = 35 (PR #85, worse)
+ *   same-X Y+2    =  0 (Japan SAT). Draw-only; collision stays SAT 0x38. */
 static s16 ship_compl_draw_x(void)
 {
     return mode_draw_x(s_x, 0x81);
+}
+
+static s16 ship_compl_draw_y(void)
+{
+    return (s16)(mode_draw_y(s_y) + 2);
 }
 
 /* player_ship_update 0x7634 / 0x765A: add the 8.8 velocity to the position,
@@ -134,12 +145,14 @@ static void show_ship(int vis)
     s16 dx;
     s16 cx;
     s16 dy;
+    s16 cdy;
 
     if (!s_spr)
         return;
     dx = ship_draw_x();
     cx = ship_compl_draw_x();
     dy = mode_draw_y(s_y);
+    cdy = ship_compl_draw_y();
     if (mode_hud_overlap(dx, MODE_SPR_W))
         vis = 0;
     if (mode_get() == MODE_ORIGINAL)
@@ -163,9 +176,9 @@ static void show_ship(int vis)
         SPR_setDepth(s_spr, 0);
         if (s_cspr)
         {
-            SPR_setPosition(s_cspr, cx, dy);
+            SPR_setPosition(s_cspr, cx, cdy);
             s_cspr->status &= (u16)~SPR_FLAG_AUTO_DEPTH;
-            /* White SAT on top; black under at the same X/Y. */
+            /* 0x772F appends after 4898; later SAT is behind. */
             SPR_setDepth(s_cspr, 1);
         }
     }
@@ -255,7 +268,7 @@ void player_init(void)
      * ship.png is 32x16: frame 0 = pat 14 white, frame 1 = pat 15 black. */
     s_spr = SPR_addSprite(a->ship, ship_draw_x(), mode_draw_y(s_y),
                           TILE_ATTR(PAL2, FALSE, FALSE, FALSE));
-    s_cspr = SPR_addSprite(a->ship, ship_compl_draw_x(), mode_draw_y(s_y),
+    s_cspr = SPR_addSprite(a->ship, ship_compl_draw_x(), ship_compl_draw_y(),
                            TILE_ATTR(PAL2, FALSE, FALSE, FALSE));
     if (s_spr)
     {

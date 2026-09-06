@@ -1,10 +1,11 @@
 #!/usr/bin/env python3
-"""Ship black complement is SAT-drawn at the same X/Y as white (under).
+"""Ship black complement is SAT-drawn at the same X, Y+2 (under).
 
-Japan v1 gfx_sprite_patterns pats 14/15. X+1 was a sign-error on the
-overlap count (X-1=48, X+1=35, same-X=29) and drew a disjoint black
-ghost. player.c draws frame 1 at the white draw X. Collision stays
-SAT 0x38. Do not invent SAT 0x3C.
+Japan v1 0x772F: SAT Y=(IX+01)+0xF1, X=(IX+02), name 0x3C, color 0x81.
+sprite_sat_write 0x48C0 is SUB 0x11. Complement hardware Y is +2.
+Pats 14/15 overlap: same-X/same-Y=29 (hull eat), X+1=35, same-X Y+2=0.
+Collision stays SAT 0x38. SAT name 0x3C is the complement write, not
+an invented player SAT.
 
 Usage (from zanac-md):
     python tools/test_ship_black_x1.py
@@ -35,12 +36,16 @@ def main() -> int:
         return fail("do not draw black at white X+1 (disjoint ghost)")
     if "return mode_draw_x(s_x, 0x81)" not in ply:
         return fail("complement draw X must be mode_draw_x(x, 0x81) same as white EC")
+    if "mode_draw_y(s_y) + 2" not in ply:
+        return fail("complement draw Y must be white Y+2 (Japan ADD 0xF1 vs SUB 0x11)")
     if "SPR_setAnimAndFrame(s_cspr, 0, 1)" not in ply:
         return fail("s_cspr must be ship.png frame 1 (pat 15)")
     if "SPR_setAnimAndFrame(s_spr, 0, 0)" not in ply:
         return fail("s_spr must be ship.png frame 0 (pat 14)")
-    if "SAT 0x3C" in ply:
-        return fail("do not invent SAT 0x3C; ship SAT stays 0x38")
+    if "SPR_setDepth(s_cspr, 1)" not in ply:
+        return fail("black SAT is after white (later index = behind)")
+    if "SPR_setDepth(s_spr, 0)" not in ply:
+        return fail("white SAT is first (on top)")
 
     if "[(14, 15), (15, 1)]" not in ex:
         return fail("extract must emit pat 14 white + pat 15 black frames")
@@ -65,7 +70,7 @@ def main() -> int:
     if 1 not in black:
         return fail("frame 1 must contain index-1 complement bits")
 
-    print("ok: ship black SAT draw at same X/Y; 32x16 two-frame; no SAT 0x3C")
+    print("ok: ship black SAT same X, Y+2; 32x16 two-frame; black behind")
     return 0
 
 
