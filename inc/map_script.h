@@ -100,10 +100,6 @@ void map_script_punch_88b1(s16 x, s16 y); /* 8892 type 87: X-0x20 Y-0x10 */
 void map_script_punch_88c2(s16 x, s16 y); /* 8824 type 81: X-0x24 Y-0x10 */
 void map_script_punch_88cb(s16 x, s16 y); /* 8892 type 88: X-0x20 Y-0x10 */
 void map_script_punch_88d8(s16 x, s16 y); /* 8874 type 82/89: X-0x28 Y-0x18 */
-/* 8833 type 70/71: no 88ed dest. Stream face 0x13-0x16 stays unless
- * the 8854-aligned 3x2 is cleared to 0x28 so the live totem cells
- * cannot scroll with the map after the slot becomes type 72. */
-void map_script_clear_totem_face(s16 x, s16 y);
 /* 87e2 type 82: stamp digit glyph 0x30+fire# (X-0x28 Y-0x10); no SAT. */
 void map_script_stamp_82_digit(s16 x, s16 y, u8 fire_num);
 /* Type-72 black orb: dest is a stream pointer. Boots that PC + resolved round. */

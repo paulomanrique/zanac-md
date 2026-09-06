@@ -1213,42 +1213,9 @@ void map_script_punch_88d8(s16 x, s16 y)
     punch_88ed(x, y, k_88d8, -8, -8);
 }
 
-void map_script_clear_totem_face(s16 x, s16 y)
-{
-    u8 col0;
-    u8 row0;
-    u8 ysub;
-    u8 r;
-    u8 c;
-    s16 px = nt_from_sat_x(x);
-
-    /* 8833 has no 88ed dest. Stream stamps face 0x13/14 (plain) or
-     * 0x15/16 (smile) in a ~3x2 at the 8854 SAT-0x20 / Y-0x10 cell.
-     * Replace those live IDs with 0x28 (empty playfield) so the original
-     * cells cannot ride VSCROLL after the slot becomes type 72. */
-    ysub = (u8)((u8)y - 0x10);
-    if ((u8)(ysub >> 3) >= 0x18)
-        return;
-    if (!sat_to_nt(px, (s16)(ysub & 0xF8), &col0, &row0))
-        return;
-    for (r = 0; r < 2; r++)
-    {
-        u8 srow = (u8)(((u8)(ysub & 0xF8) >> 3) + r);
-
-        if (srow >= BOOT_ROWS)
-            break;
-        for (c = 0; c < 3; c++)
-        {
-            u8 col = (u8)(col0 + c);
-
-            if (col >= PF_COLS)
-                continue;
-            /* Whole 3x2 → 0x28. Face 0x13-0x16 plus wrap/8c15 junk
-             * (blue/white on the yellow top) cannot ride VSCROLL. */
-            punch_cell(col, srow, 0x28);
-        }
-    }
-}
+/* 8833 type 70/71: CALL bfc8 / 4a6a / alloc child 0xD1. No JP 88ed.
+ * Punching a 3x2 of 0x28 (empty / blue sky) onto the yellow totem was
+ * the playtest junk on top. Japan leaves the stream face. */
 
 /* 87e2: only type 82. H=X-0x28 L=Y-0x10 via 8948; write 0x30+(IX+0x1c).
  * nt_from_sat_x is 8854's SAT-0x20; extra -8 = 8874/87e2 SAT-0x28.

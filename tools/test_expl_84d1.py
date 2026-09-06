@@ -34,8 +34,10 @@ def main() -> int:
         return fail("type35 init +0D=1 +0F=1 skips 84d1[0]")
     if "e->vx = 0" not in ent:
         return fail("become_expl must zero leftover vel (type-35 only)")
-    if "e->ground = hide" not in ent:
-        return fail("become_expl must keep e->ground = hide (84d1 Y vs NT)")
+    if "e->ground = hide" in ent:
+        return fail("do not force become_expl ground=1 on 4898 type44/guns")
+    if "sat_space" not in ent:
+        return fail("become_expl must treat KIND_GROUND/GUN as SAT-space")
 
     print("ok: 84d1 / 86F3 SAT; leftover vel; ground hide")
     return 0

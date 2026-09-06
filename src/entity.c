@@ -707,8 +707,9 @@ static void spr_sync(Slot *s)
      * the hardware SAT offset). Later SAT index draws behind on TMS. */
     if (!s->mspr)
         return;
-    /* 71f6 X = parent X, color 0x81 (EC). Same draw X as a 0x8x primary.
-     * Do not add ship X+1 -- that mis-seated the green flyer complement. */
+    /* 71f6 X = parent X, color 0x81 (EC). Same draw X/Y as a 0x8x primary
+     * (SUB 0x11 == 48C0). Do not add ship X+1 or ship Y+2 -- those
+     * mis-seat the green flyer complement. */
     mdx = mode_draw_x(s->x, 0x81);
     mdy = dy;
     SPR_setPosition(s->mspr, mdx, mdy);
@@ -1336,9 +1337,9 @@ static void anim_sub_4912(Slot *e, const u8 *sats, const u8 *cols,
 /* Remap living slot -> type 0x23. score_t is +0x18 for 4a6a (0 = scatter). */
 static void become_expl(Slot *e, u8 score_t)
 {
-    u8 hide = (u8)(e->kind == KIND_GROUND || e->kind == KIND_GUN
-                   || e->kind == KIND_WIDE || e->kind == KIND_FIREBOX
-                   || e->kind == KIND_BASE);
+    u8 sat_space = (u8)(e->kind == KIND_GROUND || e->kind == KIND_GUN);
+    u8 nt_locked = (u8)(e->kind == KIND_WIDE || e->kind == KIND_FIREBOX
+                        || e->kind == KIND_BASE);
 
     marker_kill(e);
     e->kind = KIND_EXPL;
@@ -1346,18 +1347,19 @@ static void become_expl(Slot *e, u8 score_t)
     e->hp = 0;
     e->timer = 0;
     e->script = 0;          /* first frame: ALC + SFX + score + 84d1 arm */
-    /* NT-locked kinds ride VSCROLL frac so 84d1 sits ON the art, not
-     * 8px south (letterbox wrap vs SAT Y). Flyers stay SAT-space. */
-    e->ground = hide;
+    /* 84d1 keeps live SAT Y via sprite_sat_write. Forcing ground=1 on
+     * 4898 type44/guns added VSCROLL frac and printed the disc BELOW
+     * the sprite. 8f25 WIDE/FIREBOX/BASE already have ground=1. */
+    if (sat_space)
+        e->ground = 0;
     e->aux = 0;
     e->clock = 0;
     e->vx = 0;
     e->vy = 0;
     /* Flyers keep leftover SAT until 8446+84c9 4912 writes 84d1[1]
-     * (item 1 type-35 velocity / SAT). Ground / gun / wide leftovers
-     * are the original body and would scroll with the map — hide now. */
-    if (hide && e->spr)
-        SPR_setVisibility(e->spr, HIDDEN);
+     * (item 1 type-35 velocity / SAT). SAT-space leftovers (type 44 /
+     * guns) also keep leftover SAT — Japan 48B8 writes the live SAT Y.
+     * Hide only NT-locked leftovers (8f25 wide/base/firebox). */
 }
 
 /* handler_type60 0x869E: fire_reset + SRL E132/E12E + ev16 + arm 86F3.
@@ -5712,10 +5714,9 @@ static void collide_bolt_enemies(Slot *bolt, u8 persist)
                     return;
                 }
                 /* 8833: 70/71. 8810 this slot := type 72; bfc8; 4a6a;
-                 * child 0xD1 HP 0 SAT 0x24. Bytes do not JP 8824 -- there
-                 * is no 88ed dest. Stream face 0x13-0x16 is the leftover
-                 * original cell; clear that 8854-aligned 3x2 to 0x28. */
-                map_script_clear_totem_face(sx, sy);
+                 * child 0xD1 HP 0 SAT 0x24. Bytes do not JP 88ed --
+                 * punching 3x2 to 0x28 painted blue/white on the yellow
+                 * totem. Japan leaves the stream face; only the orb drops. */
                 entity_inc_encounter_b();
                 award_subtype(drop);
                 e->kind = KIND_ORB;

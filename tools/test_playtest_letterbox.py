@@ -7,11 +7,12 @@ photo-proven set:
   A) One 0xBF+phase lens per pod (75-78 1x1). 8948 H is unsigned SUB 0x20
      (Japan 8a92). R1 left-eye open is 964C 8-bit SAT X (test_left_eye_open).
      hidden_wrap == sat_to_nt(0).
-  B) Ship black complement same X/Y under white (not X+1 ghost).
-  C) become_expl keeps e->ground so 84d1 sits ON NT art.
+  B) Ship black complement same X, Y+2 (Japan 0x7735 ADD 0xF1 vs
+     0x48C0 SUB 0x11). Not X+1; not same-Y (29-bit hull eat).
+  C) become_expl does not force ground=1 on 4898 type44/guns.
   D) Orb discs re-paint every place; no 4-tile 128-byte pad.
-  E) Totem face punches the whole 3x2 to 0x28.
-  F) 71f6 complement is parent X / color 0x81 (no ship X+1).
+  E) 8833 has no 88ed — do not punch totem 3x2 to 0x28 (blue junk).
+  F) 71f6 complement is parent X / color 0x81 (no ship X+1 / no Y+2).
   G) Wrap is SAT Y 0 (screen 16), not letterbox Y 8. Boot peek +8 = NT 31.
      HUD BG_B restore stays; no playfield letter fill; no opaque 0x20.
 
@@ -95,9 +96,13 @@ def main() -> int:
         return fail("B: do not draw ship black at white X+1")
     if "return mode_draw_x(s_x, 0x81)" not in ply:
         return fail("B: ship complement must share white draw X")
+    if "mode_draw_y(s_y) + 2" not in ply:
+        return fail("B: ship complement Y must be white Y+2 (Japan ADD 0xF1)")
 
-    if "e->ground = hide" not in ent:
-        return fail("C: become_expl must keep e->ground = hide")
+    if "e->ground = hide" in ent:
+        return fail("C: do not force become_expl ground=1 on 4898 type44/guns")
+    if "if (sat_space)" not in ent or "e->ground = 0" not in ent:
+        return fail("C: become_expl must clear ground on 4898 SAT-space")
     if "e->vx = 0" not in ent:
         return fail("KEEP: become_expl still zeros type-35 leftover vel")
 
@@ -112,10 +117,10 @@ def main() -> int:
     if "s->kind == KIND_ORB" not in place.group(1):
         return fail("D: spr_place must invalidate disc VRAM cache")
 
-    if "for (c = 0; c < 3; c++)" not in mp or "for (r = 0; r < 2; r++)" not in mp:
-        return fail("E: totem clear must punch the whole 3x2")
-    if "punch_cell(col, srow, 0x28)" not in mp:
-        return fail("E: totem cells must become 0x28")
+    if "map_script_clear_totem_face" in mp or "map_script_clear_totem_face" in ent:
+        return fail("E: 8833 must not punch totem face (no 88ed)")
+    if "punch_cell(col, srow, 0x28)" in mp:
+        return fail("E: 0x28 on the yellow totem is the blue/white junk")
 
     if "Do not add ship X+1" not in ent:
         return fail("F: 71f6 must stay parent X / 0x81 (no ship X+1)")
@@ -138,7 +143,7 @@ def main() -> int:
     if "KIND_GROUND" not in ent or "44CA" not in ent:
         return fail("KEEP: ship AABB skip KIND_GROUND")
 
-    print("ok: playtest A-G + KEEP (wrap=sat_to_nt(0), 1x1 eyes, ship XY, expl)")
+    print("ok: playtest A-G + KEEP (wrap=sat_to_nt(0), 1x1 eyes, ship Y+2, expl)")
     return 0
 
 

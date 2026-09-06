@@ -8,8 +8,8 @@ PR #85 hide-SAT left live tiles in wrap RAM. When dma_nt_row copies e800
 on wrap, the original ground-enemy face scrolls back in — half leftover
 if only one dest row missed the wrap write.
 
-Type 70/71 8833 has no JP 88ed (CALL bfc8 / 4a6a / type 72). Stream face
-0x13-0x16 must be cleared to 0x28.
+Type 70/71 8833 has no JP 88ed (CALL bfc8 / 4a6a / type 72). Do not
+punch a 3x2 of 0x28 onto the yellow totem (blue/white junk).
 
 Fails on 8428438: no punch_cell, no e800 persist in nt_put.
 """
@@ -74,12 +74,10 @@ def main() -> None:
         fail("punch_cell must also poke displayed NT")
     if "s_e800[s_e714][col] = tid" not in MS:
         fail("nt_put must persist wrap RAM even when vis>=24 (letterbox/wrap)")
-    if "map_script_clear_totem_face" not in MH or "map_script_clear_totem_face" not in MS:
-        fail("type 70/71 death is not JP 88ed — need explicit face-tile clear")
-    if "for (c = 0; c < 3; c++)" not in MS or "for (r = 0; r < 2; r++)" not in MS:
-        fail("totem clear must punch the whole 8854 3x2 (junk on top)")
-    if "punch_cell(col, srow, 0x28)" not in MS:
-        fail("cleared face cells must become 0x28")
+    if "map_script_clear_totem_face" in MH or "map_script_clear_totem_face" in MS:
+        fail("8833 has no 88ed — do not punch totem face to 0x28")
+    if "punch_cell(col, srow, 0x28)" in MS:
+        fail("0x28 on the yellow totem is the blue/white junk")
     if "SPR_setVisibility(sp, HIDDEN)" in MS:
         fail("do not re-ship SAT-hide as the wreckage fix")
 
