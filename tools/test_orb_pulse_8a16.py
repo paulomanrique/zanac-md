@@ -1,9 +1,9 @@
 #!/usr/bin/env python3
 """Totem white bomb (type 72) is 8a16 cyan/yellow pulse, four SAT names.
 
-1C/20/24/20 lead/med/lg/med. Mid 0x83 -> PAL2[7] cyan. Disc pixels are
-repainted from every nonzero nibble (SGDK may pack baked 15 off 15).
-spr_place cadence is not the fix. Half-greens PAL2[2]/[3] stay.
+1C/20/24/20 lead/med/lg/med. Mid 0x83 -> PAL2[7] cyan. Pixels are
+Japan pats 7/8/9 encoded into the 16x16 FRAME_CIRCLE vehicle.
+FRAME_LEAD spr_place is the 8x8 UL shard. Half-greens PAL2[2]/[3] stay.
 
 Usage (from zanac-md):
     python tools/test_orb_pulse_8a16.py
@@ -33,16 +33,18 @@ def main() -> int:
         return fail("8a16 yellow colours 8F/83/8A/8B")
     if "k_orb_mid_pal = 7" not in ent:
         return fail("mid pulse 0x83 uses PAL2[7] cyan")
-    if "orb_paint_body_nibbles" not in ent:
-        return fail("type 72 must paint every nonzero nibble to sat_col")
-    if "if (hi)\n            hi = want" not in ent and "if (hi)\n                hi = want" not in ent:
-        return fail("orb_paint_body_nibbles must not require from==15")
+    if "orb_encode_japan_tiles" not in ent or "orb_upload_japan" not in ent:
+        return fail("type 72 must encode Japan pats 7/8/9 (not SGDK LEAD tileset)")
+    if "spr_place(e, k_orb_frame[idx])" in ent:
+        return fail("orb_step must not spr_place FRAME_LEAD (8x8 UL shard)")
+    if "k_japan_pat7" not in ent:
+        return fail("Japan pat 7 bytes must be embedded")
     if "u16 out = 128" in ent:
         return fail("do not re-ship 4-tile pad as the orb fix")
     if "orb_keep_body_nibbles" not in ent:
-        return fail("orb sanitize stays")
+        return fail("orb sanitize stays for 84d1/86F3")
 
-    print("ok: 8a16 pulse locked; disc remap is all-nonzero, not spr_place cadence")
+    print("ok: 8a16 pulse locked; Japan pats in 16x16 vehicle, not LEAD shard")
     return 0
 
 
