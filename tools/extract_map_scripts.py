@@ -463,13 +463,15 @@ def emit(out_root: Path, rom: bytearray, report: list):
                 (13, 15),
                 (6, 4),
                 (26, 15), (27, 15),
-                (8, 6),
+                (8, 15),
                 (29, 11), (31, 1),
                 (56, 7), (58, 1),
                 (20, 1), (21, 1),  # loga_B SAT 0x50 / fire 0x54
-            ], "59 frames, type39 unfolded from gfx_sprite_patterns 0x6976")
-            # player ship is MSX pattern 14 (SAT 0x38). pat 15 is the unused complement.
-            write_strip(spr_dir / "ship.png", [(14, 15)], "pat 14 player_ship")
+                (4, 15), (5, 15),  # SNOW SAT 0x10 / SMALL_STAR SAT 0x14
+            ], "61 frames, type39 unfolded from gfx_sprite_patterns 0x6976")
+            # pat 14 white + pat 15 black (two 16x16 frames). Draw black at X+1.
+            write_strip(spr_dir / "ship.png", [(14, 15), (15, 1)],
+                        "pat 14 white + pat 15 black complement")
         else:
             report.append("sprite size mismatch — keeping existing pngs")
     except Exception as e:

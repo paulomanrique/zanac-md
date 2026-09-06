@@ -978,6 +978,73 @@ static void base_nt_cell(s16 x, s16 y, u8 dc, u8 dr, u8 tid)
     nt_put((u8)(col + dc), (u8)((row + dr) & 31), tid);
 }
 
+int map_script_8948_cell(s16 sat_x, s16 sat_y_pre, u8 *col, u8 *row)
+{
+    u8 ysub = (u8)sat_y_pre;
+
+    /* 8948 L is SAT Y before 8a7d +0x10. C = Y/8; C>=0x18 no write. */
+    if ((u8)(ysub >> 3) >= 0x18)
+        return 0;
+    return sat_to_nt((s16)(sat_x - 0x20), (s16)(ysub & 0xF8), col, row);
+}
+
+void map_script_base_8c15_at(u8 col, u8 row, u8 variant, u8 phase)
+{
+    u8 p = (u8)(phase & 3);
+    u8 t0;
+    u8 rows;
+    u8 cols;
+    u8 step;
+    u8 r;
+    u8 c;
+
+    if (variant == 79)
+        return;
+    if (variant == 73)
+    {
+        t0 = (u8)(0xD3 + p * 4);
+        rows = 2;
+        cols = 2;
+        step = 1;
+    }
+    else if (variant == 74)
+    {
+        t0 = (u8)(0xC3 + p * 4);
+        rows = 2;
+        cols = 2;
+        step = 1;
+    }
+    else
+    {
+        t0 = (u8)(0xBF + p);
+        step = 0;
+        if (variant == 75)
+        {
+            rows = 1;
+            cols = 1;
+        }
+        else if (variant == 76)
+        {
+            rows = 1;
+            cols = 2;
+        }
+        else if (variant == 77)
+        {
+            rows = 2;
+            cols = 1;
+        }
+        else
+        {
+            rows = 2;
+            cols = 2;
+        }
+    }
+    for (r = 0; r < rows; r++)
+        for (c = 0; c < cols; c++)
+            nt_put((u8)(col + c), (u8)((row + r) & 31),
+                   (u8)(t0 + (step ? (u8)(r * cols + c) : 0)));
+}
+
 void map_script_base_8c15(s16 x, s16 y, u8 variant, u8 phase)
 {
     /* x,y are 8948 SAT, not live SAT after k_base xo/yo. Type 75

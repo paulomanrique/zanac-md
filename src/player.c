@@ -23,6 +23,7 @@ static const u8 k_fire_init[8][2] = {
 };
 
 static Sprite *s_spr;
+static Sprite *s_cspr;      /* pat 15 black complement; draw at white X+1 */
 static s16 s_x;             /* MSX SAT X (+02). Original draw: mode_draw_x 0x8F. */
 static s16 s_y;
 static u8  s_sat_col;       /* MSX SAT colour (+04); ship is 0x8F (EC). */
@@ -97,6 +98,13 @@ static s16 ship_draw_x(void)
     return mode_draw_x(s_x, s_sat_col);
 }
 
+/* Japan v1 pats 14/15: black complement covers more white hull at X+1
+ * (overlap 48 vs same-X 29). Draw-only; collision stays SAT 0x38. */
+static s16 ship_compl_draw_x(void)
+{
+    return (s16)(mode_draw_x(s_x, 0x81) + 1);
+}
+
 /* player_ship_update 0x7634 / 0x765A: add the 8.8 velocity to the position,
  * then clamp the integer part and zero the fraction (0x763C / 0x7662). */
 static s16 step_axis(s16 pos, u8 *frac, s16 vel, s16 lo, s16 hi)
@@ -123,17 +131,20 @@ static s16 step_axis(s16 pos, u8 *frac, s16 vel, s16 lo, s16 hi)
 static void show_ship(int vis)
 {
     s16 dx;
+    s16 cx;
+    s16 dy;
 
     if (!s_spr)
         return;
     dx = ship_draw_x();
+    cx = ship_compl_draw_x();
+    dy = mode_draw_y(s_y);
     if (mode_hud_overlap(dx, MODE_SPR_W))
         vis = 0;
     if (mode_get() == MODE_ORIGINAL)
     {
         s16 y0 = (s16)mode_y_off();
         s16 y1 = (s16)(y0 + 192);
-        s16 dy = mode_draw_y(s_y);
 
         /* SAT Y 0xB8 -> draw 200; ship occupies 200-215 over the bar
          * at 208. Hide only when fully past the 192; high-pri letterbox
@@ -142,11 +153,20 @@ static void show_ship(int vis)
             vis = 0;
     }
     SPR_setVisibility(s_spr, vis ? VISIBLE : HIDDEN);
+    if (s_cspr)
+        SPR_setVisibility(s_cspr, vis ? VISIBLE : HIDDEN);
     if (vis)
     {
-        SPR_setPosition(s_spr, dx, mode_draw_y(s_y));
+        SPR_setPosition(s_spr, dx, dy);
         s_spr->status &= (u16)~SPR_FLAG_AUTO_DEPTH;
         SPR_setDepth(s_spr, 0);
+        if (s_cspr)
+        {
+            SPR_setPosition(s_cspr, cx, dy);
+            s_cspr->status &= (u16)~SPR_FLAG_AUTO_DEPTH;
+            /* White SAT on top; black sits 1px right underneath. */
+            SPR_setDepth(s_cspr, 1);
+        }
     }
 }
 
@@ -230,16 +250,27 @@ void player_init(void)
 
     PAL_setPalette(PAL2, a->ship->palette->data, CPU);
     s_sat_col = 0x8F;
-    /* EC before first frame: 0x75EB SAT colour 0x8F, hardware X = SAT-32. */
+    /* EC before first frame: 0x75EB SAT colour 0x8F, hardware X = SAT-32.
+     * ship.png is 32x16: frame 0 = pat 14 white, frame 1 = pat 15 black. */
     s_spr = SPR_addSprite(a->ship, ship_draw_x(), mode_draw_y(s_y),
                           TILE_ATTR(PAL2, FALSE, FALSE, FALSE));
+    s_cspr = SPR_addSprite(a->ship, ship_compl_draw_x(), mode_draw_y(s_y),
+                           TILE_ATTR(PAL2, FALSE, FALSE, FALSE));
     if (s_spr)
     {
         SPR_setPriority(s_spr, FALSE);
+        SPR_setAnimAndFrame(s_spr, 0, 0);
         /* entity_dispatch 0x445F: E300 writes SAT first (on top).
          * Depth 0 beats leftover Y if SGDK still Y-sorts. */
         s_spr->status &= (u16)~SPR_FLAG_AUTO_DEPTH;
         SPR_setDepth(s_spr, 0);
+    }
+    if (s_cspr)
+    {
+        SPR_setPriority(s_cspr, FALSE);
+        SPR_setAnimAndFrame(s_cspr, 0, 1);
+        s_cspr->status &= (u16)~SPR_FLAG_AUTO_DEPTH;
+        SPR_setDepth(s_cspr, 1);
     }
 }
 
@@ -796,6 +827,11 @@ void player_draw_over(void)
 
 void player_release(void)
 {
+    if (s_cspr)
+    {
+        SPR_releaseSprite(s_cspr);
+        s_cspr = NULL;
+    }
     if (s_spr)
     {
         SPR_releaseSprite(s_spr);

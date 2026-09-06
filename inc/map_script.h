@@ -86,6 +86,11 @@ void map_script_base_no_segments(void);
 /* 8c15: paint from 8948 bind SAT (post Y+0x10, pre table xo/yo), not live SAT.
  * 8c39 uses IX+06/+07 from 8a95; 8ac7 xo/yo is hitbox only. */
 void map_script_base_8c15(s16 x, s16 y, u8 variant, u8 phase);
+/* 8948 once at arm: L=SAT_Y pre +0x10, H=SAT_X-0x20. Store NT cell
+ * like IX+06/+07 so later 8c15 does not re-bind against live VSCROLL
+ * (eyes 16px south / 4th eye C>=0x18 skip). */
+int  map_script_8948_cell(s16 sat_x, s16 sat_y_pre, u8 *col, u8 *row);
+void map_script_base_8c15_at(u8 col, u8 row, u8 variant, u8 phase);
 /* 8c80: type 79 88ed stages. HP>=0x15 -> 8ced; NZ -> 8cfa; 0 -> 8d07. */
 void map_script_punch_79_hp(s16 x, s16 y, u8 hp);
 /* 8854/88ed: punch 0x88ab destroyed-tile desc for types 84-86 at SAT x,y. */

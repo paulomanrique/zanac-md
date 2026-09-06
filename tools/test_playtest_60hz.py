@@ -61,6 +61,9 @@ def main() -> int:
         return fail("DMA_flushQueue before the wait is a second retrace")
     if "DMA_setMaxQueueSize(" not in main_c:
         return fail("raise DMA command queue; default 80 fills mid-frame")
+    m_q = re.search(r"DMA_setMaxQueueSize\((\d+)\)", main_c)
+    if not m_q or int(m_q.group(1)) < 192:
+        return fail("DMA queue must be >=192 (4-tile pad + NT + HUD restore)")
     if "DMA_setBufferSize(" not in main_c or "DMA_setMaxTransferSize(0)" not in main_c:
         return fail("raise DMA buffer / unlimited transfer; do not cap at 7200")
     if re.search(r"SYS_setFPS|setMaxFPS|30\s*\*\s*FPS|fps\s*=\s*30", main_c, re.I):

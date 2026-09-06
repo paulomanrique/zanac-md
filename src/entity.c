@@ -414,6 +414,7 @@ static Slot s_shot[SHOT_SLOTS];
 static Slot s_fire;
 /* 7253 BIT 7: 728F init XOR 7306 update. Set when spawn already ran 730B. */
 static u8  s_fire7_life_ticked;
+static u8  s_fire7_cram;        /* PAL2[13] borrowed for 72de cycle */
 /* 7221 BIT 7: init RET, no 4898. Set when entity_spawn_shot already ran
  * 7228-724e this frame (player_update then entity_update). */
 static u8  s_shot_init_ret[SHOT_SLOTS];
@@ -584,6 +585,9 @@ static void base_8c15(const Slot *e);
 static void flash_begin(void);
 static void flash_tick(void);
 static void fire4_expire_hit(Slot *f);
+static void fire7_cram_restore(void);
+static void fire7_bind_cram(Slot *f);
+static void fire7_cycle_cram(Slot *f);
 static s16 sat_depth_primary(const Slot *s);
 static s16 sat_depth_marker(const Slot *s);
 
@@ -1008,11 +1012,9 @@ static void spr_upload_color(Slot *s)
 
     /* 16x16 SAT is 4 tiles. AUTO_VRAM_ALLOC sizes to the sheet max (4).
      * A nearly-empty LEAD (pat 7: 14 bits, UL 4x4 empty) can ship fewer
-     * tiles; leftover VRAM in the unused slot is flyer blue / cyan.
-     * 84d1 / 86F3 use the same SAT 0x1C/0x20/0x24 discs as type 72. */
-    if (s->kind == KIND_ORB
-        || s->kind == KIND_EXPL || s->kind == KIND_PDEAD
-        || s->kind == KIND_HUSK)
+     * tiles; leftover VRAM in the unused slot is flyer blue / cyan /
+     * shot interlacing. Pad every upload so a reused SAT cannot composite
+     * FRAME_SHOT / shot_t leftovers. 84d1 / 86F3 / 8a16 share the discs. */
     {
         u16 out = 128;
         u16 n;
@@ -1022,7 +1024,26 @@ static void spr_upload_color(Slot *s)
         buf = DMA_allocateAndQueueDma(DMA_VRAM, vaddr, (u16)(out / 2), 2);
         if (!buf)
         {
-            DMA_queueDma(DMA_VRAM, (void *)src, vaddr, (u16)(nbytes / 2), 2);
+            static u8 s_pad[128];
+
+            if (out > sizeof(s_pad))
+                out = sizeof(s_pad);
+            for (n = 0; n < out; n++)
+                s_pad[n] = 0;
+            if (want == baked)
+            {
+                for (n = 0; n < nbytes && n < out; n++)
+                    s_pad[n] = src[n];
+            }
+            else
+                remap_tiles(s_pad, src, (nbytes < out) ? nbytes : out, baked, want);
+            if (s->kind == KIND_ORB
+                || s->kind == KIND_EXPL || s->kind == KIND_PDEAD
+                || s->kind == KIND_HUSK)
+                orb_keep_body_nibbles(s_pad, out, want);
+            DMA_queueDma(DMA_VRAM, s_pad, vaddr, (u16)(out / 2), 2);
+            s->vram_fr = s->frame;
+            s->vram_nib = want;
             return;
         }
         for (n = 0; n < out; n++)
@@ -1034,30 +1055,13 @@ static void spr_upload_color(Slot *s)
         }
         else
             remap_tiles(buf, src, nbytes, baked, want);
-        orb_keep_body_nibbles(buf, out, want);
+        if (s->kind == KIND_ORB
+            || s->kind == KIND_EXPL || s->kind == KIND_PDEAD
+            || s->kind == KIND_HUSK)
+            orb_keep_body_nibbles(buf, out, want);
         s->vram_fr = s->frame;
         s->vram_nib = want;
-        return;
     }
-
-    if (want == baked)
-    {
-        DMA_queueDma(DMA_VRAM, (void *)src, vaddr, (u16)(nbytes / 2), 2);
-        s->vram_fr = s->frame;
-        s->vram_nib = want;
-        return;
-    }
-
-    buf = DMA_allocateAndQueueDma(DMA_VRAM, vaddr, (u16)(nbytes / 2), 2);
-    if (!buf)
-    {
-        /* Raw tiles only. Do not cache want -- retry remap next frame. */
-        DMA_queueDma(DMA_VRAM, (void *)src, vaddr, (u16)(nbytes / 2), 2);
-        return;
-    }
-    remap_tiles(buf, src, nbytes, baked, want);
-    s->vram_fr = s->frame;
-    s->vram_nib = want;
 }
 
 static void spr_frame_cb(Sprite *sp)
@@ -1287,6 +1291,10 @@ static void anim_sub_4912(Slot *e, const u8 *sats, const u8 *cols,
 /* Remap living slot -> type 0x23. score_t is +0x18 for 4a6a (0 = scatter). */
 static void become_expl(Slot *e, u8 score_t)
 {
+    u8 hide = (u8)(e->kind == KIND_GROUND || e->kind == KIND_GUN
+                   || e->kind == KIND_WIDE || e->kind == KIND_FIREBOX
+                   || e->kind == KIND_BASE);
+
     marker_kill(e);
     e->kind = KIND_EXPL;
     e->variant = score_t;
@@ -1298,8 +1306,11 @@ static void become_expl(Slot *e, u8 score_t)
     e->clock = 0;
     e->vx = 0;
     e->vy = 0;
-    /* Keep leftover SAT until 8446+84c9 4912 writes 84d1[1].
-     * setAnimAndFrame(FRAME_LEAD) without spr_place flashed shot. */
+    /* Flyers keep leftover SAT until 8446+84c9 4912 writes 84d1[1]
+     * (item 1 type-35 velocity / SAT). Ground / gun / wide leftovers
+     * are the original body and would scroll with the map — hide now. */
+    if (hide && e->spr)
+        SPR_setVisibility(e->spr, HIDDEN);
 }
 
 /* handler_type60 0x869E: fire_reset + SRL E132/E12E + ev16 + arm 86F3.
@@ -2028,7 +2039,10 @@ static void become_husk(Slot *e, u8 orig)
     e->dest = orig;
     e->vx = 0;
     e->vy = 0;
-    /* 8e14 next tick: 849c arms 84d1. Do not invent FRAME_BOX. */
+    /* 8e14 next tick: 849c arms 84d1. Do not invent FRAME_BOX.
+     * Hide leftover body so the original sprite cannot ride VSCROLL. */
+    if (e->spr)
+        SPR_setVisibility(e->spr, HIDDEN);
 }
 
 /*
@@ -2192,10 +2206,12 @@ static void orb_step(Slot *e)
     e->vy = 0;
 
     /* anim_sub 0x4912: +0E=4, table 8a16 then 8a1e. aux>>2 is that reload.
-     * Lock SAT name to 8a16 (0x1C/0x20/0x24/0x20). Dirty VRAM so the
-     * med-circle remaps 15 -> 8F / k_orb_mid_pal / 8A/8B or 81 every tick. */
+     * Lock SAT name to 8a16 (0x1C/0x20/0x24/0x20). Only spr_place when
+     * the SAT frame changes so leftover flyer VRAM is not remapped every
+     * tick (cyan/yellow pulse, no garbage frames). */
     idx = (u8)((e->aux >> 2) & 3);
-    spr_place(e, k_orb_frame[idx]);
+    if (!e->spr || e->frame != k_orb_frame[idx])
+        spr_place(e, k_orb_frame[idx]);
     e->sat = k_orb_sat[idx];
     spr_set_sat_col(e, e->script ? k_orb_yel_col[idx] : k_orb_blk_col[idx]);
     e->aux++;
@@ -2495,8 +2511,11 @@ static void gun_fire(Slot *e)
      * Marker +03 := 0x54 (pat 21). */
     spr_place(e, FRAME_LOGA_C);
     marker_place(e, FRAME_LOGA_D);
-    /* 816d -> 8ddb: copy parent Y/X (IX+01/+02), no SAT centering offset. */
-    spawn_child_dir(e->x, e->y, stype, dir);
+    /* 816d -> 8ddb: copy parent Y/X. Japan v1 loga A|B peak is SAT
+     * (X+8,Y) — first set row of pat 18|20 is y=0 xs mid 8. SAT origin
+     * is the top-left vertex; spawn from the peak so shots leave the
+     * diamond tip, not a corner. */
+    spawn_child_dir((s16)(e->x + 8), e->y, stype, dir);
 }
 
 static void gun_step(Slot *e)
@@ -4160,11 +4179,13 @@ static void base_finish_death(Slot *e)
         map_script_base_no_segments();
 }
 
-/* 8c15 / 8c39: VRAM from 8948 bind (packed in e->bind), not live SAT. */
+/* 8c15 / 8c39: VRAM from 8948 bind stored at arm (NT col/row), not live SAT. */
 static void base_8c15(const Slot *e)
 {
-    map_script_base_8c15((s16)(u8)(e->bind >> 8), (s16)(u8)e->bind,
-                         e->variant, (u8)(e->script & 3));
+    if (!(e->bind & 0x8000))
+        return;
+    map_script_base_8c15_at((u8)((e->bind >> 8) & 31), (u8)(e->bind & 31),
+                            e->variant, (u8)(e->script & 3));
 }
 
 static void base_step(Slot *e)
@@ -4190,19 +4211,28 @@ static void base_step(Slot *e)
         e->armed = 1;
         {
             u8 ypre = (u8)e->y;
+            u8 col;
+            u8 row;
 
             /* 8a7d L=Y then Y+=0x10; 8948 uses L (pre-+0x10), H=X-0x20
-             * before table xo/yo at 8ac7. 8c15 reads +06/+07 from that
-             * bind, not live SAT. Pack SAT after +0x10 / before xo/yo
-             * so base_nt_cell's Y-0x10 / X-0x20 matches 8948 HL. */
+             * before table xo/yo at 8ac7. Store the NT cell like +06/+07
+             * so later 8c15 paints the same tiles as the body (no live
+             * VSCROLL re-bind → 16px south / 4th eye C>=0x18 skip). */
             e->y = (s16)(u8)(ypre + 0x10);
             if (idx > 6)
                 idx = 0;
-            e->bind = (u16)(((u16)(u8)e->x << 8) | (u8)e->y);
+            if (map_script_8948_cell(e->x, (s16)ypre, &col, &row))
+                e->bind = (u16)(0x8000 | ((u16)col << 8) | row);
+            else
+                e->bind = 0;
             e->y = (s16)(u8)((u8)e->y + k_base[idx][2]);
             e->x = (s16)(u8)((u8)e->x + k_base[idx][3]);
         }
         e->script = (u8)(e->script | 0x80);
+        /* MSX first 8c15 is the first phase step. Paint phase 0 on arm
+         * so all four eyes exist (closed) before the first carry; the
+         * 4th eye was never opened if its later C>=0x18 skip fired. */
+        base_8c15(e);
     }
 
     /* 8ae8 BIT 1 +05: type 79 last-hit 8ba1 SET +05.1 keep 0xCF, then 8bb6.
@@ -4612,6 +4642,7 @@ static void update_fire(void)
     {
         /* Failed spr_place after 728F must not leak the skip into later 7306. */
         s_fire7_life_ticked = 0;
+        fire7_cram_restore();
         return;
     }
 
@@ -4728,7 +4759,12 @@ static void update_fire(void)
      * stays graphic overlap. 3/4/5 stay 0x8F. */
     cycle = (u8)(fn == 0 || fn == 1 || fn == 2 || fn == 7);
     if (cycle)
-        spr_set_sat_col(f, (u8)(0x80 | ((f->sat_col + 1) & 0x0F)));
+    {
+        if (fn == 7)
+            fire7_cycle_cram(f);
+        else
+            spr_set_sat_col(f, (u8)(0x80 | ((f->sat_col + 1) & 0x0F)));
+    }
     if (f->spr)
     {
         s16 fdx = mode_draw_x(f->x, f->sat_col);
@@ -5844,6 +5880,51 @@ static const u16 k_flyer_green_dim[2] = {
     RGB24_TO_VDPCOLOR(0x2F6E3C)
 };
 
+/* TMS9918 approx sRGB. Fire 7 72de INC cycles SAT colour; MSX writes
+ * one SAT byte. MD tile remap every frame starves NT DMA (blue tear).
+ * Bind comet tiles to PAL2[13] once and cycle that CRAM index. */
+#define FIRE7_CRAM_NIB  13
+static const u16 k_tms_vdp[16] = {
+    RGB24_TO_VDPCOLOR(0x000000), RGB24_TO_VDPCOLOR(0x000000),
+    RGB24_TO_VDPCOLOR(0x21C842), RGB24_TO_VDPCOLOR(0x5EDC78),
+    RGB24_TO_VDPCOLOR(0x5455ED), RGB24_TO_VDPCOLOR(0x7D76FC),
+    RGB24_TO_VDPCOLOR(0xD4524D), RGB24_TO_VDPCOLOR(0x42EBF5),
+    RGB24_TO_VDPCOLOR(0xFC5554), RGB24_TO_VDPCOLOR(0xFF7978),
+    RGB24_TO_VDPCOLOR(0xD4C154), RGB24_TO_VDPCOLOR(0xE6CE80),
+    RGB24_TO_VDPCOLOR(0x21B03B), RGB24_TO_VDPCOLOR(0xC95BBA),
+    RGB24_TO_VDPCOLOR(0xCCCCCC), RGB24_TO_VDPCOLOR(0xFFFFFF)
+};
+
+static void fire7_cram_restore(void)
+{
+    if (!s_fire7_cram)
+        return;
+    PAL_setColor((u16)((PAL2 * 16) + FIRE7_CRAM_NIB), k_tms_vdp[FIRE7_CRAM_NIB]);
+    s_fire7_cram = 0;
+}
+
+static void fire7_bind_cram(Slot *f)
+{
+    u8 saved = f->sat_col;
+
+    f->sat_col = (u8)(0x80 | FIRE7_CRAM_NIB);
+    if (f->spr && f->spr->frame)
+        spr_upload_color(f);
+    f->sat_col = saved;
+    PAL_setColor((u16)((PAL2 * 16) + FIRE7_CRAM_NIB),
+                 k_tms_vdp[saved & 0x0F]);
+    s_fire7_cram = 1;
+}
+
+static void fire7_cycle_cram(Slot *f)
+{
+    u8 n;
+
+    f->sat_col = (u8)(0x80 | ((f->sat_col + 1) & 0x0F));
+    n = (u8)(f->sat_col & 0x0F);
+    PAL_setColor((u16)((PAL2 * 16) + FIRE7_CRAM_NIB), k_tms_vdp[n]);
+}
+
 void entity_init(void)
 {
     memset(s_shot, 0, sizeof(s_shot));
@@ -5862,6 +5943,7 @@ void entity_init(void)
     s_e125 = 0;
     s_fireup_seq = 0;
     s_fire7_life_ticked = 0;
+    s_fire7_cram = 0;
     memset(s_shot_init_ret, 0, sizeof(s_shot_init_ret));
     memset(s_riser_init_ret, 0, sizeof(s_riser_init_ret));
     memset(s_ebullet_init_ret, 0, sizeof(s_ebullet_init_ret));
@@ -6286,6 +6368,8 @@ void entity_try_spawn_fire(s16 x, s16 y, u8 xvel_sel)
         s_fire.alive = 0;
         return;
     }
+    if (fn == 7)
+        fire7_bind_cram(&s_fire);
     /* 7331/73ce SAT 0x10. FRAME_SNOW is pat 4; 4560 uses +03. */
     if (fn == 3 || fn == 6)
         s_fire.sat = 0x10;
@@ -6294,6 +6378,7 @@ void entity_try_spawn_fire(s16 x, s16 y, u8 xvel_sel)
 
 void entity_kill_fire(void)
 {
+    fire7_cram_restore();
     spr_kill(&s_fire);
 }
 
