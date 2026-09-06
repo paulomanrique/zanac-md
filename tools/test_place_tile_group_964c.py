@@ -2,7 +2,7 @@
 """Ground-base SAT X is 0x964C. Do not invent stacking offsets.
 
 place_tile_group / place_ctrl_at:
-  SAT X = ybase*8 + blob_X - 0x20
+  SAT X = (u8)(ybase*8 + blob_X - 0x20)   /* Japan 964C 8-bit wrap */
 proto_box 77a1: X=(H&0x3F)+0x38, +0x20 per child, Y leftover 0.
 k_base xo/yo apply at arm (8ac7), not at place.
 
@@ -32,12 +32,12 @@ def main() -> int:
     map_c = MAPC.read_text(encoding="utf-8")
     ent = ENT.read_text(encoding="utf-8")
 
-    formula = "x = (s16)st->ybase * 8 + (s16)r[2] - 0x20"
-    formula_st = "x = (s16)st.ybase * 8 + (s16)r[2] - 0x20"
-    if formula not in map_c:
-        return fail("place_tile_group SAT X must stay ybase*8 + blob_X - 0x20")
-    if formula_st not in map_c:
-        return fail("place_ctrl_at SAT X must stay ybase*8 + blob_X - 0x20")
+    if "sat_x_964c(st->ybase, r[2])" not in map_c:
+        return fail("place_tile_group SAT X must be sat_x_964c (8-bit 964C)")
+    if "sat_x_964c(st.ybase, r[2])" not in map_c:
+        return fail("place_ctrl_at SAT X must be sat_x_964c (8-bit 964C)")
+    if "(s16)st->ybase * 8 + (s16)r[2] - 0x20" in map_c:
+        return fail("16-bit 964C rejects the R1 left eye (SAT 368→248)")
 
     proto = re.search(r"static void spawn_proto_box\(void\)\s*\{(.*?)^\}", ent, re.S | re.M)
     if not proto:
