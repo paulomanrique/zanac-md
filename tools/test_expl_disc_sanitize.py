@@ -1,11 +1,11 @@
 #!/usr/bin/env python3
-"""84d1 / 86F3 discs share the type-72 leftover-VRAM sanitizer.
+"""84d1 / 86F3 discs share the type-72 leftover-nibble sanitizer.
 
 Same SAT 0x1C/0x20/0x24 as 8a16 (lead / med / lg). Frame 0 of 84d1 is
 JP 48D0 (0xD0,0x48) and stays skipped. 86F3 stays 11 pairs. Do not
-invent frames. KIND_ORB path stays; explosions use the same 4-tile
-zero-pad + body-nibble keep because AUTO_VRAM_ALLOC leftover is flyer
-blue in the empty UL of pat 7 (14 bits).
+invent frames. KIND_ORB path stays; explosions paint every nonzero
+nibble then keep 0/sat_col. A 4-tile VRAM pad wrote past 1-2 tile
+AUTO_VRAM slots and composited FRAME_SHOT into the next flyer.
 
 Usage (from zanac-md):
     python tools/test_expl_disc_sanitize.py
@@ -39,12 +39,14 @@ def main() -> int:
         return fail("type35 init +0D=1 +0F=1 skips 84d1[0]")
     if "orb_keep_body_nibbles" not in ent:
         return fail("disc upload must sanitize leftover PAL2 nibbles")
-    if "u16 out = 128" not in ent:
-        return fail("disc upload must zero-pad to 4 tiles")
+    if "orb_paint_body_nibbles" not in ent:
+        return fail("disc upload must paint every nonzero nibble (not from==15)")
+    if "u16 out = 128" in ent:
+        return fail("do not re-ship 4-tile pad; it overruns flyer VRAM")
     if "s->kind == KIND_EXPL" not in ent or "KIND_PDEAD" not in ent:
-        return fail("84d1/86F3 kinds must use the 4-tile disc pad")
+        return fail("84d1/86F3 kinds must use the disc paint path")
     if "s->kind == KIND_HUSK" not in ent:
-        return fail("type 80 849c 84d1 must use the 4-tile disc pad")
+        return fail("type 80 849c 84d1 must use the disc paint path")
     if "s->kind == KIND_ORB" not in ent:
         return fail("KIND_ORB sanitizer must stay")
     if "static const u8 k_orb_mid_pal = 7" not in ent:
@@ -52,7 +54,7 @@ def main() -> int:
     if "FRAME_SMALL_STAR" not in ent:
         return fail("FRAME_SMALL_STAR must stay")
 
-    print("ok: 84d1/86F3 tables locked; expl/pdead/husk share disc pad")
+    print("ok: 84d1/86F3 tables locked; expl/pdead/husk share disc paint")
     return 0
 
 

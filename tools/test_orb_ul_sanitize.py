@@ -37,8 +37,10 @@ def main() -> int:
         return fail("orb upload must sanitize leftover PAL2 nibbles")
     if "s->kind == KIND_ORB" not in ent:
         return fail("sanitize must run on type 72 uploads")
-    if "u16 out = 128" not in ent:
-        return fail("orb upload must zero-pad to 4 tiles (leftover UL VRAM)")
+    if "orb_paint_body_nibbles" not in ent:
+        return fail("orb upload must paint every nonzero nibble (not from==15)")
+    if "u16 out = 128" in ent:
+        return fail("do not re-ship 4-tile pad as the orb fix")
     if "if (hi && hi != keep)" not in ent:
         return fail("sanitizer must drop any nibble that is not 0 or SAT color")
     if "PAL_setColor((u16)((PAL2 * 16) + 2), k_flyer_green_dim[0])" not in ent:
@@ -48,7 +50,7 @@ def main() -> int:
     if "if fi in (6, 52):" not in reb:
         return fail("rebuild must force-zero LEAD/MED UL 4x4 (pat 7/8 empty)")
 
-    print("ok: orb sanitize drops non-body nibbles; 4-tile pad; mid pal 7")
+    print("ok: orb sanitize drops non-body nibbles; all-nonzero paint; mid pal 7")
     return 0
 
 

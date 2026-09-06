@@ -1,6 +1,10 @@
 #!/usr/bin/env python3
 """Lock k_frame_sat to Japan v1 SAT names (pat << 2). Do not invent ids.
 
+Flyer interlacing is leftover type39 mspr at FRAME_SHOT/CHIP, not a
+4-tile VRAM pad. free_enemy / spr_place must drop that complement;
+marker_place owns AUTO_TILE_UPLOAD so addSprite frame 0 cannot stick.
+
 zanac-re zanac-sprite-names.md + handler LD (IX+0x03),imm.
 objs.png must stay 61 frames (rebuild_sprites FRAMES / extract).
 
@@ -65,10 +69,18 @@ def main() -> int:
             return fail("k_frame_sat[%d] must be 0x%02X (Japan v1), got 0x%02X"
                         % (idx, sat, nums[idx]))
 
-    if "u16 out = 128" not in ent:
-        return fail("spr_upload_color must 4-tile zero-pad (no interlaced leftover)")
+    if "u16 out = 128" in ent:
+        return fail("do not re-ship 4-tile pad as the flyer interlacing fix")
     if "frame == FRAME_SHOT || frame == FRAME_CHIP" not in ent:
         return fail("complement_frame_ok must reject SHOT/CHIP")
+    if "marker_kill(&s_en[i])" not in ent:
+        return fail("free_enemy must marker_kill leftover type39")
+    if "complement_frame_ok(s->mframe)" not in ent:
+        return fail("spr_place must drop mspr whose frame is SHOT/CHIP")
+    if "mspr_frame_cb" not in ent:
+        return fail("mspr must own tile upload (no AUTO frame-0 SHOT)")
+    if "SPR_setFrameChangeCallback(s->mspr, mspr_frame_cb)" not in ent:
+        return fail("marker_place must bind mspr_frame_cb")
 
     if "SNOW pat 4 SAT 0x10" not in reb:
         return fail("rebuild_sprites must keep FRAME_SNOW")
@@ -83,7 +95,7 @@ def main() -> int:
     if im.size[0] // 16 != 61:
         return fail("objs.png must stay 61 frames, got %d" % (im.size[0] // 16))
 
-    print("ok: k_frame_sat matches Japan v1 SAT names; 61-frame sheet; 4-tile pad")
+    print("ok: k_frame_sat Japan v1; leftover mspr killed; no 4-tile pad")
     return 0
 
 
