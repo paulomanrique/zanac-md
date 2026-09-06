@@ -4,8 +4,8 @@
 Japan v1 8a7d Y+=0x10 then 8948 uses L (pre-+0x10), H=SAT_X-0x20 (unsigned
 SUB). 8c15 types 75-78 use tile 0xBF+phase -- one 8x8 lens (0xC2 = red
 weak). Repeating that tile south (Japan B=2 / type 77) is a second circle
-on MD. Left SAT X<32 must still bind (unsigned SUB), else the left pod
-never opens and the boss cannot be killed.
+on MD. Unsigned SUB is Japan 8a92; R1 left-eye open is 964C 8-bit SAT X
+(see test_left_eye_open.py).
 
 hidden_wrap is SAT Y 0 (screen 16) so the stored cell is the body, not
 one row south in the letterbox.

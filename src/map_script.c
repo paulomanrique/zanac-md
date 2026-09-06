@@ -826,6 +826,15 @@ static s16 nt_from_sat_x(s16 sat_x)
     return sat_x;
 }
 
+/* 0x964C: A=ybase; ADD A,A*3; ADD blob_X; SUB 0x20. All 8-bit.
+ * 16-bit add sent R1 west blob 0xE8 (ybase 0x15) to SAT 368→clamp 248;
+ * Japan SAT is 112. 8948 then rejected col 27 and the left eye never
+ * opened. Unsigned SUB 0x20 is still Japan 8a92; it is not this bug. */
+static s16 sat_x_964c(u8 ybase, u8 blob_x)
+{
+    return (s16)(u8)((u8)((u8)(ybase << 3) + blob_x) - 0x20);
+}
+
 /* type62 8744: LDIRVM 0x20 bytes from 876b+(phase?0x20:0) -> VRAM 0x1800.
  * 24-col playfield only -- HUD cols 24-31 untouched. */
 static const u8 k_riser_nt[2][32] = {
@@ -1016,8 +1025,8 @@ static void base_nt_cell(s16 x, s16 y, u8 dc, u8 dr, u8 tid)
 int map_script_8948_cell(s16 sat_x, s16 sat_y_pre, u8 *col, u8 *row)
 {
     u8 ysub = (u8)sat_y_pre;
-    /* 8a92 SUB 0x20 is unsigned. Signed sat_x-0x20 rejected the left
-     * pod (SAT X < 32) so 8c15 never opened the weak eye. */
+    /* 8a92 SUB 0x20 is unsigned (Japan). R1 left-eye miss was 964C
+     * 16-bit SAT X, not this subtract: west SAT 112, H=80, col 10. */
     u8 hx = (u8)((u8)sat_x - 0x20);
 
     /* 8948 L is SAT Y before 8a7d +0x10. C = Y/8; C>=0x18 no write. */
@@ -1401,9 +1410,9 @@ static void place_tile_group(StreamSlot *st, u16 *pptr)
             break;
         type = r[0];
         y = (s16)r[1];
-        /* 0x964C: SAT X = ybase*8 + blob X - 0x20. Collision uses this SAT
-         * X (4560). Original stamps tiles at SAT-32 so they sit with EC. */
-        x = (s16)st->ybase * 8 + (s16)r[2] - 0x20;
+        /* 0x964C: SAT X = ybase*8 + blob X - 0x20, 8-bit wrap. Collision
+         * uses this SAT X (4560). Original stamps tiles at SAT-32 (EC). */
+        x = sat_x_964c(st->ybase, r[2]);
         dest = 0;
         if (s_ms.idol_ptr)
         {
@@ -1493,7 +1502,7 @@ static void place_ctrl_at(u16 ptr)
                 break;
             type = r[0];
             y = (s16)r[1];
-            x = (s16)st.ybase * 8 + (s16)r[2] - 0x20; /* SAT X, same as 0x964C */
+            x = sat_x_964c(st.ybase, r[2]); /* SAT X, same as 0x964C */
             dest = 0;
             if (s_ms.idol_ptr)
             {

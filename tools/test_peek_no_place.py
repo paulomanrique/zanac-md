@@ -103,9 +103,8 @@ def main() -> int:
     if hidden_wrap_nt_at(8) != 31:
         return fail("+8 playfield top must be NT 31")
 
-    formula = "x = (s16)st->ybase * 8 + (s16)r[2] - 0x20"
-    if formula not in map_c:
-        return fail("place_tile_group SAT X must stay ybase*8 + blob_X - 0x20")
+    if "sat_x_964c(st->ybase, r[2])" not in map_c:
+        return fail("place_tile_group SAT X must be sat_x_964c (8-bit 964C)")
     if "x + 0x20" not in ent:
         return fail("proto_box children must stay +0x20 apart (77a1)")
     if "e->y = (s16)(u8)((u8)e->y + k_base[idx][2])" not in ent:

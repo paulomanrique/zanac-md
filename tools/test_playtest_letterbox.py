@@ -5,7 +5,8 @@ PR #85/#86 orb/mspr/e800/X+1 claims are not sufficient. This lock is the
 photo-proven set:
 
   A) One 0xBF+phase lens per pod (75-78 1x1). 8948 H is unsigned SUB 0x20
-     so SAT X<32 still binds (left red weak eye). hidden_wrap == sat_to_nt(0).
+     (Japan 8a92). R1 left-eye open is 964C 8-bit SAT X (test_left_eye_open).
+     hidden_wrap == sat_to_nt(0).
   B) Ship black complement same X/Y under white (not X+1 ghost).
   C) become_expl keeps e->ground so 84d1 sits ON NT art.
   D) Orb discs re-paint every place; no 4-tile 128-byte pad.
@@ -76,7 +77,7 @@ def main() -> int:
         return fail("G: boot peek must be scroll_px+8 (NT 31), not NT 0")
 
     if "u8 hx = (u8)((u8)sat_x - 0x20)" not in mp:
-        return fail("A: 8948 H must be unsigned SUB 0x20 (left pod SAT X<32)")
+        return fail("A: 8948 H must be unsigned SUB 0x20 (Japan 8a92)")
     fn = re.search(
         r"void map_script_base_8c15_at\(u8 col, u8 row, u8 variant, u8 phase\)\s*\{(.*?)^\}",
         mp,
