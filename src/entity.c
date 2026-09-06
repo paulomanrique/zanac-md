@@ -104,7 +104,9 @@
  *           Y>=0xD0 clears. Port: bind/timer 8.8; clock=+0x1b;
  *           script=+0x1e; aux=anim. 8a16 SAT 1C/20/24/20 colors 8F/83/8A/8B;
  *           mid 0x83 uploads PAL2[7] cyan (PAL2[3] is dim flyer green).
- *           8a1e same names color 81. yellow 8a26+ev19 / black map_script_warp
+ *           Pixels: Japan pats 7/8/9 in a 16x16 FRAME_CIRCLE vehicle
+ *           (FRAME_LEAD is an 8x8 UL shard). 8a1e same names color 81.
+ *           yellow 8a26+ev19 / black map_script_warp
  *   81      husk-src- nametable (no SAT); HP 4; 880d->8824 type-80 husk + 88c2
  *   82      firebox - nametable digit 0x30+fire# (87e2, no SAT); HP 4; 880d->8874 type 83 + 88d8
  *   84-86   wide_var - nametable (no SAT); 8EB7 wave-spawner; HP 4; death 8854 type-80 husk + 88ab tiles
@@ -1012,6 +1014,112 @@ static void orb_keep_body_nibbles(u8 *dst, u16 nbytes, u8 keep)
  * Flyer sat_col 0x83 stays nibble 3. Stored sat_col stays 0x83. */
 static const u8 k_orb_mid_pal = 7;
 
+/* zanac-re gfx_sprite_patterns 0x6976 pats 7/8/9 (SAT 0x1C/0x20/0x24).
+ * Japan v1 SHA1 46e9ed7b7f6dfda8eee266476c9ebc4dd9d8fcc2. objs.png
+ * FRAME_LEAD/MED/CIRCLE match these bits, but SGDK BALANCED cuts
+ * FRAME_LEAD to an 8x8 that shows only the UL tile (4 px shard).
+ * Type 72 encodes these bytes into a 16x16 4-tile vehicle. */
+static const u8 k_japan_pat7[32] = {
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x01, 0x03,
+    0x02, 0x03, 0x01, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x80, 0xC0,
+    0x40, 0xC0, 0x80, 0x00, 0x00, 0x00, 0x00, 0x00
+};
+static const u8 k_japan_pat8[32] = {
+    0x00, 0x00, 0x01, 0x07, 0x0F, 0x1F, 0x1F, 0x3F,
+    0x3F, 0x1F, 0x1F, 0x0F, 0x07, 0x01, 0x00, 0x00,
+    0x00, 0x00, 0x80, 0xE0, 0xF0, 0xF8, 0xF8, 0xFC,
+    0xFC, 0xF8, 0xF8, 0xF0, 0xE0, 0x80, 0x00, 0x00
+};
+static const u8 k_japan_pat9[32] = {
+    0x03, 0x0F, 0x3F, 0x3F, 0x7F, 0x7F, 0xFF, 0xFF,
+    0xFF, 0xFF, 0x7F, 0x7F, 0x3F, 0x3F, 0x0F, 0x03,
+    0xC0, 0xF0, 0xFC, 0xFC, 0xFE, 0xFE, 0xFF, 0xFF,
+    0xFF, 0xFF, 0xFE, 0xFE, 0xFC, 0xFC, 0xF0, 0xC0
+};
+
+static const u8 *orb_japan_pat(u8 sat)
+{
+    switch (sat & 0xFC)
+    {
+    case 0x1C:
+        return k_japan_pat7;
+    case 0x20:
+        return k_japan_pat8;
+    case 0x24:
+        return k_japan_pat9;
+    default:
+        return 0;
+    }
+}
+
+/* MSX 16x16 1-bit (left 16 rows, right 16 rows) -> 4 Genesis tiles,
+ * column-major (TL, BL, TR, BR). Body nibble = want; 0 = transparent. */
+static void orb_encode_japan_tiles(u8 *dst, const u8 *pat, u8 want)
+{
+    u8 t;
+
+    for (t = 0; t < 4; t++)
+    {
+        u8 tx = (u8)((t & 2) ? 8 : 0);
+        u8 ty = (u8)((t & 1) ? 8 : 0);
+        u8 row;
+
+        for (row = 0; row < 8; row++)
+        {
+            u8 y = (u8)(ty + row);
+            u8 left = pat[y];
+            u8 right = pat[16 + y];
+            u8 col;
+
+            for (col = 0; col < 8; col += 2)
+            {
+                u8 x0 = (u8)(tx + col);
+                u8 x1 = (u8)(x0 + 1);
+                u8 b0 = (x0 < 8)
+                    ? (u8)(left & (u8)(0x80 >> x0))
+                    : (u8)(right & (u8)(0x80 >> (x0 - 8)));
+                u8 b1 = (x1 < 8)
+                    ? (u8)(left & (u8)(0x80 >> x1))
+                    : (u8)(right & (u8)(0x80 >> (x1 - 8)));
+
+                *dst++ = (u8)(((b0 ? want : 0) << 4) | (b1 ? want : 0));
+            }
+        }
+    }
+}
+
+/* Type 72 only: 4-tile Japan disc. Cache key is SAT name + nibble
+ * (FRAME_CIRCLE vehicle stays; 8a16 SAT 1C/20/24 changes the pat). */
+static int orb_upload_japan(Slot *s, u8 want)
+{
+    const u8 *jp;
+    u16 vaddr;
+    u8 *buf;
+    static u8 s_jp[128];
+
+    if (s->kind != KIND_ORB)
+        return 0;
+    jp = orb_japan_pat(s->sat);
+    if (!jp || !s->spr)
+        return 0;
+    if (s->vram_fr == s->sat && s->vram_nib == want)
+        return 1;
+
+    vaddr = (u16)((s->spr->attribut & TILE_INDEX_MASK) * 32);
+    buf = DMA_allocateAndQueueDma(DMA_VRAM, vaddr, 64, 2);
+    if (!buf)
+    {
+        orb_encode_japan_tiles(s_jp, jp, want);
+        DMA_queueDma(DMA_VRAM, s_jp, vaddr, 64, 2);
+    }
+    else
+        orb_encode_japan_tiles(buf, jp, want);
+    s->vram_fr = s->sat;
+    s->vram_nib = want;
+    return 1;
+}
+
 /* Upload spr_objs frame tiles, remapping baked TMS body -> sat_col low nibble.
  * PAL2 indices match rebuild_sprites / TMS low nibble. Complement (1) untouched. */
 static void spr_upload_color(Slot *s)
@@ -1042,6 +1150,11 @@ static void spr_upload_color(Slot *s)
     else
         want = baked;
 
+    /* Type 72: Japan pats 7/8/9 into the 16x16 vehicle. Do not use the
+     * SGDK FRAME_LEAD tileset (BALANCED 8x8 UL shard / leftover nibbles). */
+    if (orb_upload_japan(s, want))
+        return;
+
     /* Same frame + same nibble: vis/XOR-high-nibble blinks must not DMA. */
     if (s->vram_fr == s->frame && s->vram_nib == want)
         return;
@@ -1055,8 +1168,7 @@ static void spr_upload_color(Slot *s)
      * flyer. Disc leftover is orb_paint_body_nibbles, not VRAM pad. */
     {
         u16 n;
-        u8 disc = (u8)(s->kind == KIND_ORB
-                       || s->kind == KIND_EXPL || s->kind == KIND_PDEAD
+        u8 disc = (u8)(s->kind == KIND_EXPL || s->kind == KIND_PDEAD
                        || s->kind == KIND_HUSK);
 
         buf = DMA_allocateAndQueueDma(DMA_VRAM, vaddr, (u16)(nbytes / 2), 2);
@@ -2255,13 +2367,17 @@ static void orb_step(Slot *e)
     e->vy = 0;
 
     /* anim_sub 0x4912: +0E=4, table 8a16 then 8a1e. aux>>2 is that reload.
-     * Lock SAT name to 8a16 (0x1C/0x20/0x24/0x20). Only spr_place when
-     * the SAT frame changes so leftover flyer VRAM is not remapped every
-     * tick (cyan/yellow pulse, no garbage frames). */
+     * SAT names stay 8a16 (0x1C/0x20/0x24/0x20). k_orb_frame is the SAT
+     * mapping (lead/med/lg/med). The hardware sprite is always the 16x16
+     * FRAME_CIRCLE vehicle: SGDK BALANCED cuts FRAME_LEAD to an 8x8 that
+     * shows only pat 7's UL tile (4 px shard). Pixels are k_japan_pat*. */
     idx = (u8)((e->aux >> 2) & 3);
-    if (!e->spr || e->frame != k_orb_frame[idx])
-        spr_place(e, k_orb_frame[idx]);
+    if (!e->spr || e->frame != FRAME_CIRCLE)
+        spr_place(e, FRAME_CIRCLE);
+    /* k_orb_frame is the SAT map (lead/med/lg/med == 1C/20/24/20). */
     e->sat = k_orb_sat[idx];
+    if (k_frame_sat[k_orb_frame[idx]] != e->sat)
+        e->sat = k_frame_sat[k_orb_frame[idx]];
     spr_set_sat_col(e, e->script ? k_orb_yel_col[idx] : k_orb_blk_col[idx]);
     e->aux++;
 }
@@ -5731,10 +5847,11 @@ static void collide_bolt_enemies(Slot *bolt, u8 persist)
                 e->vx = 0;
                 e->vy = 0;
                 /* dest kept: +0x1c/1d warp ptr from idol table.
-                 * Idol had no SAT; first 8a16 pair is SAT 0x1C / 0x8F. */
+                 * Idol had no SAT; first 8a16 pair is SAT 0x1C / 0x8F.
+                 * 16x16 vehicle; pixels are Japan pat 7, not FRAME_LEAD. */
                 marker_kill(e);
                 e->vram_fr = 0xFF;
-                spr_place(e, FRAME_LEAD);
+                spr_place(e, FRAME_CIRCLE);
                 e->sat = k_orb_sat[0];
                 spr_set_sat_col(e, k_orb_yel_col[0]);
                 {
