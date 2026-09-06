@@ -1,11 +1,9 @@
 #!/usr/bin/env python3
-"""Boot peek must DMA into NT 31 (letterbox at scroll_px=0), not NT 30.
+"""Boot peek must DMA into NT 31 (first 8px reveal), not NT 0.
 
-MD VSCROLL = -(scroll_px + 16). Top of the 192 is screen Y 16:
-  NT pixel = 16 - scroll_px - 16 = -scroll_px
-scroll_px 1..8 reveals NT row 31 (pixels 255..248). fill_letterbox_b
-paints NT 24-31 black. peek_next_row used hidden_wrap_nt_at(scroll_px+8)
-= NT 30 at boot, so NT 31 stayed black and travelled the playfield.
+hidden_wrap is SAT Y 0 / screen Y 16. At scroll_px=0 that is NT 0
+(the flushed playfield top). Peeking there would overwrite the live
+row. +8 is NT 31 -- the row VSCROLL reveals in the first 1-8px.
 
 Usage (from zanac-md):
     python tools/test_boot_peek_nt31.py
@@ -22,14 +20,14 @@ MAPC = ROOT / "src" / "map_script.c"
 
 def hidden_wrap_nt_at(scroll_px: int, y_off: int = 16) -> int:
     off = (scroll_px + y_off) & 0xFF
-    py = (8 - off) & 0xFF
+    py = (16 - off) & 0xFF
     return py >> 3
 
 
 def main() -> int:
     src = MAPC.read_text(encoding="utf-8")
-    if "peek_next_row_at((u16)(s_ms.row + 1), s_scroll_px)" not in src:
-        print("FAIL: boot peek must target hidden_wrap_nt_at(s_scroll_px)")
+    if "peek_next_row_at((u16)(s_ms.row + 1), (u16)(s_scroll_px + 8))" not in src:
+        print("FAIL: boot peek must target hidden_wrap_nt_at(scroll_px+8) = NT 31")
         return 1
     if not re.search(
         r"peek_next_row_at\(map_row,\s*\(u16\)\(s_scroll_px \+ 8\)\)", src
@@ -37,23 +35,21 @@ def main() -> int:
         print("FAIL: in-game peek must keep +8 so it does not overwrite 97e3")
         return 1
 
-    boot = hidden_wrap_nt_at(0)
-    old_peek = hidden_wrap_nt_at(8)
-    if boot != 31:
-        print("FAIL: letterbox at scroll_px=0 must be NT 31, got", boot)
+    if hidden_wrap_nt_at(0) != 0:
+        print("FAIL: playfield top at scroll_px=0 must be NT 0, got",
+              hidden_wrap_nt_at(0))
         return 1
-    if old_peek != 30:
-        print("FAIL: +8 letterbox is NT 30 (the old wrong boot target), got",
-              old_peek)
+    if hidden_wrap_nt_at(8) != 31:
+        print("FAIL: +8 playfield top is NT 31, got", hidden_wrap_nt_at(8))
         return 1
-    # First 8px of VSCROLL show NT 31, then NT 30 after the first carry.
     for px in range(1, 9):
-        top = (-px) & 0xFF
-        row = top >> 3
+        # first 1-8px reveal NT 31 (pixel 255..248)
+        pix = (-px) & 0xFF
+        row = pix >> 3
         if row != 31:
             print("FAIL: scroll_px", px, "top NT row", row, "want 31")
             return 1
-    print("ok: boot peek NT 31; in-game peek stays +8 (NT 30 after carry)")
+    print("ok: boot peek NT 31 via +8; wrap is SAT Y 0 (NT 0 at scroll 0)")
     return 0
 
 

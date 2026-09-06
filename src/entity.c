@@ -707,6 +707,8 @@ static void spr_sync(Slot *s)
      * the hardware SAT offset). Later SAT index draws behind on TMS. */
     if (!s->mspr)
         return;
+    /* 71f6 X = parent X, color 0x81 (EC). Same draw X as a 0x8x primary.
+     * Do not add ship X+1 -- that mis-seated the green flyer complement. */
     mdx = mode_draw_x(s->x, 0x81);
     mdy = dy;
     SPR_setPosition(s->mspr, mdx, mdy);
@@ -1149,6 +1151,14 @@ static void spr_place(Slot *s, u16 frame)
     else
     {
         prev = s->spr->frameInd;
+        /* Disc SAT must re-paint every place: SGDK can pack baked 15
+         * off 15 so a cached nibble leaves flyer-blue junk in the disc. */
+        if (s->kind == KIND_ORB || s->kind == KIND_EXPL
+            || s->kind == KIND_PDEAD || s->kind == KIND_HUSK)
+        {
+            s->vram_fr = 0xFF;
+            s->vram_nib = 0xFF;
+        }
         SPR_setAnimAndFrame(s->spr, 0, frame);
         /* Tiles before visible. Same frame skips callback -- push now. */
         if (prev == (s16)frame)
@@ -1336,7 +1346,9 @@ static void become_expl(Slot *e, u8 score_t)
     e->hp = 0;
     e->timer = 0;
     e->script = 0;          /* first frame: ALC + SFX + score + 84d1 arm */
-    e->ground = 0;
+    /* NT-locked kinds ride VSCROLL frac so 84d1 sits ON the art, not
+     * 8px south (letterbox wrap vs SAT Y). Flyers stay SAT-space. */
+    e->ground = hide;
     e->aux = 0;
     e->clock = 0;
     e->vx = 0;

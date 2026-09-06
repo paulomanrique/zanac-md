@@ -469,7 +469,7 @@ def emit(out_root: Path, rom: bytearray, report: list):
                 (20, 1), (21, 1),  # loga_B SAT 0x50 / fire 0x54
                 (4, 15), (5, 15),  # SNOW SAT 0x10 / SMALL_STAR SAT 0x14
             ], "61 frames, type39 unfolded from gfx_sprite_patterns 0x6976")
-            # pat 14 white + pat 15 black (two 16x16 frames). Draw black at X+1.
+            # pat 14 white + pat 15 black (two 16x16 frames). Same X/Y under white.
             write_strip(spr_dir / "ship.png", [(14, 15), (15, 1)],
                         "pat 14 white + pat 15 black complement")
         else:

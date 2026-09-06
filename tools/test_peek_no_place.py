@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
-"""Peek assemble must not place_tile_group-spawn. hidden_wrap stays Y 8.
+"""Peek assemble must not place_tile_group-spawn.
+
 97e3 scroll_precompute clears s_assemble_peek before assemble_row so
 a leaked wrap-preview flag cannot skip entity_place_ground.
 
@@ -9,7 +10,8 @@ and call 95ed. Entities are not in the snapshot -- a delay that hits 0
 on peek would spawn, then the next real 97e3 would spawn again
 (stacked 964C bases).
 
-hidden_wrap_nt_at stays screen Y 8. Boot peek NT 31 and in-game +8 stay.
+hidden_wrap_nt_at is SAT Y 0 / screen Y 16 (playfield top), matching
+sat_to_nt(0). Boot peek +8 = NT 31; in-game peek stays +8.
 964C / proto_box +0x20 / k_base 8ac7 stay.
 
 Usage (from zanac-md):
@@ -33,7 +35,7 @@ def fail(msg: str) -> int:
 
 def hidden_wrap_nt_at(scroll_px: int, y_off: int = 16) -> int:
     off = (scroll_px + y_off) & 0xFF
-    py = (8 - off) & 0xFF
+    py = (16 - off) & 0xFF
     return py >> 3
 
 
@@ -76,7 +78,7 @@ def main() -> int:
     if "!s_assemble_peek && entity_check_col_clear()" not in map_c:
         return fail("peek must skip check_col_clear and place; real 97e3 must not")
 
-    # hidden_wrap_nt_at stays screen Y 8
+    # hidden_wrap_nt_at is SAT Y 0 / screen Y 16 (playfield top)
     wrap = re.search(
         r"static u8 hidden_wrap_nt_at\(u16 scroll_px\)\s*\{(.*?)^\}",
         map_c,
@@ -84,18 +86,22 @@ def main() -> int:
     )
     if not wrap:
         return fail("hidden_wrap_nt_at not found")
-    if "8 - off" not in wrap.group(1) and "8 - (off)" not in wrap.group(1):
-        return fail("hidden_wrap_nt_at must stay screen Y 8")
+    if "16 - off" not in wrap.group(1):
+        return fail("hidden_wrap_nt_at must be playfield top (screen Y 16)")
+    if "8 - off" in wrap.group(1):
+        return fail("hidden_wrap Y=8 is the letterbox row (seam / south lens)")
 
-    if "peek_next_row_at((u16)(s_ms.row + 1), s_scroll_px)" not in map_c:
-        return fail("boot peek must stay hidden_wrap_nt_at(s_scroll_px)")
+    if "peek_next_row_at((u16)(s_ms.row + 1), (u16)(s_scroll_px + 8))" not in map_c:
+        return fail("boot peek must be hidden_wrap_nt_at(scroll_px+8) = NT 31")
     if not re.search(
         r"peek_next_row_at\(map_row,\s*\(u16\)\(s_scroll_px \+ 8\)\)", map_c
     ):
         return fail("in-game peek must stay +8")
 
-    if hidden_wrap_nt_at(0) != 31:
-        return fail("letterbox at scroll_px=0 must stay NT 31")
+    if hidden_wrap_nt_at(0) != 0:
+        return fail("playfield top at scroll_px=0 must be NT 0")
+    if hidden_wrap_nt_at(8) != 31:
+        return fail("+8 playfield top must be NT 31")
 
     formula = "x = (s16)st->ybase * 8 + (s16)r[2] - 0x20"
     if formula not in map_c:
@@ -105,7 +111,7 @@ def main() -> int:
     if "e->y = (s16)(u8)((u8)e->y + k_base[idx][2])" not in ent:
         return fail("k_base yo applies at arm (8ac7), not at place")
 
-    print("ok: peek no-place; 97e3 clears peek; wrap Y 8 / 964C / 8ac7 stay")
+    print("ok: peek no-place; 97e3 clears peek; wrap SAT Y=16 / 964C / 8ac7 stay")
     return 0
 
 

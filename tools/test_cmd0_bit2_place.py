@@ -22,7 +22,7 @@ Live blob records (cmd 0x80, bit2 set):
   0xB737 row 1200 E12D=07 N=2  (14,10,60)(15,10,60) script 0xB61A
 
 Type 11/69 SAT color 0 / no FRAME_FIRE stays. Peek 97e3 / 4BDF / HUD
-BG_B / GO skip / disc sanitizer / wrap Y 8 / boot peek NT 31 stay.
+BG_B / GO skip / disc sanitizer / wrap SAT Y=16 / boot peek NT 31 stay.
 
 Usage (from zanac-md):
     python tools/test_cmd0_bit2_place.py

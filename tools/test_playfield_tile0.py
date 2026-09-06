@@ -7,7 +7,7 @@ whole 192 opaque black. Do not restore it and do not replace it with
 another playfield-wide fill.
 
 Do not opaque-recolor shared charset 0x20 (ROUND banner spaces).
-HUD stripe stays BG_B cols 24-31. hidden_wrap Y 8 stays.
+HUD stripe stays BG_B cols 24-31. hidden_wrap is SAT Y 0 (screen 16).
 Tile 0 pattern is loaded empty (not a playfield letter fill).
 hud_wipe must not write charset 0 into WINDOW rows 0-1 (letterbox).
 
@@ -61,8 +61,10 @@ def main() -> int:
         return fail("space 0x20 must keep ROM CT (bg nibble 0)")
     if "VDP_fillTileMapRect(BG_B, blank, HUD_COL, 0, MODE_BAR_W, 32)" not in hud:
         return fail("HUD stripe must stay BG_B cols 24-31 only")
-    if "8 - off" not in map_c:
-        return fail("hidden_wrap_nt_at must stay screen Y 8")
+    if "16 - off" not in map_c:
+        return fail("hidden_wrap_nt_at must be playfield top (screen Y 16)")
+    if re.search(r"u8 py = \(u8\)\(8 - off\)", map_c):
+        return fail("hidden_wrap Y=8 is the letterbox row (seam / south lens)")
     if "VDP_fillTileMapRect(WINDOW, trans, 0, 0, MODE_H32_COLS, 28)" in hud:
         return fail("do not write charset 0 into WINDOW letterbox rows 0-1")
     if "VDP_fillTileMapRect(WINDOW, trans, 0, 2, MODE_H32_COLS, 26)" not in hud:
@@ -72,7 +74,7 @@ def main() -> int:
     if "VDP_loadTileData(clear0, 0, 1, CPU)" not in mode:
         return fail("tile 0 must be loaded empty so leftover cannot punch the top")
 
-    print("ok: no BG_A playfield letter-tile fill; 0x20 CT; wrap Y 8")
+    print("ok: no BG_A playfield letter-tile fill; 0x20 CT; wrap SAT Y=16")
     return 0
 
 

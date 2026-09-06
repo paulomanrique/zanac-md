@@ -560,12 +560,16 @@ static u16 tile_attr(u8 tid)
                           (u16)(s_bg_base + (tid & 0xFF)));
 }
 
-/* NT row in screen Y 8-15 (top letterbox) at a given scroll_px.
- * VSCROLL = -(scroll_px + 16); plane_y(8) = 8 - off. */
+/* NT row at the top of the 192 (screen Y 16 / SAT Y 0).
+ * VSCROLL = -(scroll_px + 16); plane_y(16) = 16 - off.
+ * Y=8 (letterbox mid) is one row north of sat_to_nt(0) -- 97e3 wrote
+ * there while 8c15/88ed/totem punched the playfield-top cell, so the
+ * south lens / expl / face junk sat one tile below the art and a stale
+ * peek row travelled the 192 as a hard blue/green seam. */
 static u8 hidden_wrap_nt_at(u16 scroll_px)
 {
     u16 off = (u16)((scroll_px + mode_y_off()) & 0xFF);
-    u8 py = (u8)(8 - off);
+    u8 py = (u8)(16 - off);
 
     return (u8)(py >> 3);
 }
@@ -683,8 +687,8 @@ static void scroll_precompute(u16 map_row)
         s_e800[s_e714][x] = s_rowbuf[ASM_SKIP + x];
     if (s_ram_only)
         return;
-    /* This carry's row will sit at the top of the 192 after +8px.
-     * That NT is the letterbox row at the current scroll_px. */
+    /* This carry's row is now at the top of the 192 (SAT Y 0).
+     * Overwrite the previous peek with the real assemble (stamps). */
     dma_nt_row(hidden_wrap_nt_at(s_scroll_px), s_e800[s_e714], s_row_tm);
 }
 
@@ -714,8 +718,9 @@ static void peek_next_row_at(u16 map_row, u16 wrap_px)
     s_assemble_peek = 0;
     for (x = 0; x < PF_COLS; x++)
         line[x] = s_rowbuf[ASM_SKIP + x];
-    /* wrap_px selects the letterbox NT that the next 1-8px of VSCROLL
-     * will reveal at the top of the 192. */
+    /* wrap_px selects the playfield-top NT the next 1-8px of VSCROLL
+     * will reveal. In-game wrap_px is scroll_px+8 so peek does not
+     * overwrite this carry's 97e3 row. */
     dma_nt_row(hidden_wrap_nt_at(wrap_px), line, s_row_tm);
     memcpy(s_col, s_col_snap, sizeof(s_col));
     memcpy(s_stream, s_stream_snap, sizeof(s_stream));
@@ -724,8 +729,9 @@ static void peek_next_row_at(u16 map_row, u16 wrap_px)
 
 static void peek_next_row(u16 map_row)
 {
-    /* After 97e3 already filled hidden_wrap_nt_at(scroll_px). +8 is the
-     * next letterbox so the peek does not overwrite the carry row. */
+    /* After 97e3 already filled hidden_wrap_nt_at(scroll_px) (playfield
+     * top). +8 is the next SAT-Y-0 row so the peek does not overwrite
+     * the carry row. */
     peek_next_row_at(map_row, (u16)(s_scroll_px + 8));
 }
 
@@ -1010,11 +1016,14 @@ static void base_nt_cell(s16 x, s16 y, u8 dc, u8 dr, u8 tid)
 int map_script_8948_cell(s16 sat_x, s16 sat_y_pre, u8 *col, u8 *row)
 {
     u8 ysub = (u8)sat_y_pre;
+    /* 8a92 SUB 0x20 is unsigned. Signed sat_x-0x20 rejected the left
+     * pod (SAT X < 32) so 8c15 never opened the weak eye. */
+    u8 hx = (u8)((u8)sat_x - 0x20);
 
     /* 8948 L is SAT Y before 8a7d +0x10. C = Y/8; C>=0x18 no write. */
     if ((u8)(ysub >> 3) >= 0x18)
         return 0;
-    return sat_to_nt((s16)(sat_x - 0x20), (s16)(ysub & 0xF8), col, row);
+    return sat_to_nt((s16)hx, (s16)(ysub & 0xF8), col, row);
 }
 
 void map_script_base_8c15_at(u8 col, u8 row, u8 variant, u8 phase)
@@ -1045,28 +1054,14 @@ void map_script_base_8c15_at(u8 col, u8 row, u8 variant, u8 phase)
     }
     else
     {
+        /* 75-78: Japan 8c66 C=0xBF+phase, E=0 (same tile). B/D can be
+         * 1x1 / 1x2 / 2x1 / 2x2, but charset 0xBF-0xC2 is one 8x8 lens
+         * (phase 3 = 0xC2 red weak). Repeating that tile south made the
+         * second stacked circle on every pod. One cell per pod. */
         t0 = (u8)(0xBF + p);
         step = 0;
-        if (variant == 75)
-        {
-            rows = 1;
-            cols = 1;
-        }
-        else if (variant == 76)
-        {
-            rows = 1;
-            cols = 2;
-        }
-        else if (variant == 77)
-        {
-            rows = 2;
-            cols = 1;
-        }
-        else
-        {
-            rows = 2;
-            cols = 2;
-        }
+        rows = 1;
+        cols = 1;
     }
     for (r = 0; r < rows; r++)
         for (c = 0; c < cols; c++)
@@ -1104,29 +1099,11 @@ void map_script_base_8c15(s16 x, s16 y, u8 variant, u8 phase)
     }
     else
     {
-        /* 75-78: C = 0xBF+phase, E=0 (same tile). B/D select 1x1 / 1x2 / 2x1 / 2x2. */
+        /* 75-78: one 0xBF+phase lens. Do not repeat south (double eye). */
         t0 = (u8)(0xBF + p);
         step = 0;
-        if (variant == 75)
-        {
-            rows = 1;
-            cols = 1;
-        }
-        else if (variant == 76)
-        {
-            rows = 1;
-            cols = 2;
-        }
-        else if (variant == 77)
-        {
-            rows = 2;
-            cols = 1;
-        }
-        else
-        {
-            rows = 2;
-            cols = 2;
-        }
+        rows = 1;
+        cols = 1;
     }
     for (r = 0; r < rows; r++)
         for (c = 0; c < cols; c++)
@@ -1254,21 +1231,12 @@ void map_script_clear_totem_face(s16 x, s16 y)
         for (c = 0; c < 3; c++)
         {
             u8 col = (u8)(col0 + c);
-            u8 tid;
-            u8 nt_col;
-            u8 nt_row;
 
             if (col >= PF_COLS)
                 continue;
-            tid = s_e800[(u8)((s_e714 + srow) % BOOT_ROWS)][col];
-            if (tid < 0x13 || tid > 0x16)
-            {
-                if (sat_to_nt((s16)((u16)col << 3), (s16)((u16)srow << 3),
-                              &nt_col, &nt_row))
-                    tid = s_nt[nt_row][col];
-            }
-            if (tid >= 0x13 && tid <= 0x16)
-                punch_cell(col, srow, 0x28);
+            /* Whole 3x2 → 0x28. Face 0x13-0x16 plus wrap/8c15 junk
+             * (blue/white on the yellow top) cannot ride VSCROLL. */
+            punch_cell(col, srow, 0x28);
         }
     }
 }
@@ -1323,12 +1291,10 @@ static void bg_fill_plane(void)
     s_row_tm = DMA;
     flush_boot_playfield();
     fill_letterbox_b();
-    /* First 1-8px of VSCROLL reveal the letterbox NT at scroll_px=0
-     * (hidden_wrap_nt_at(0) = NT 31). In-game peek uses scroll_px+8 so
-     * it does not overwrite a 97e3 carry; there is no carry here.
-     * Peeking at +8 wrote NT 30 and left NT 31 black -- that black row
-     * then travelled the 192. */
-    peek_next_row_at((u16)(s_ms.row + 1), s_scroll_px);
+    /* hidden_wrap is SAT Y 0 (screen 16). At scroll_px=0 that is NT 0
+     * (already flushed). +8 is NT 31 -- the row the first 1-8px reveal.
+     * Peeking at scroll_px=0 would overwrite the live playfield top. */
+    peek_next_row_at((u16)(s_ms.row + 1), (u16)(s_scroll_px + 8));
     s_row_tm = DMA_QUEUE;
     /* NT 0 at the top of the 192 before the first visible line. VSCROLL 0
      * would park NT 0-1 in the 16px bar and NT 24-25 in the 192. */
