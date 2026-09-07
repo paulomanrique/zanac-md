@@ -2984,15 +2984,21 @@ void map_script_update(void)
                  * -- a hard blue cut through live green. */
                 if (!s_skip_precompute)
                 {
-                    /* VSCROLL this carry is already (new row)*8 +
-                     * (E711>>5)==0. Point wrap at that pixel so
-                     * hidden_wrap == sat_to_nt(0) at the 97e3 DMA. */
-                    if (!s_end_snapped)
-                        s_scroll_px = (u16)(((u16)(s_ms.row - s_scroll_base) << 3)
-                                            + (s_e711 >> 5));
+                    /* 97e3 / peek must use the pre-carry pixel. VSCROLL is
+                     * still that value; wrap(pre) is the row being revealed.
+                     * PR #91 set scroll_px to the post-carry pixel first so
+                     * wrap==sat_to_nt(0) at the DMA. sat_to_nt uses &~7;
+                     * leftover E711 at cruise E710=0x34 (9480 ramp from
+                     * 0x20) makes wrap(post) one NT row north of wrap(pre).
+                     * 97e3 wrote the complete assemble into the letterbox
+                     * while the live top kept the place-less peek --
+                     * ground objects / R1 lower eye missing a tile.
+                     * Japan has no VSCROLL; 9a79 dumps 24 rows. Do not
+                     * move s_scroll_px until the end of the tick. */
                     /* 97e3: assemble once, DMA one nametable row at the wrap
                      * edge, then peek row+1 (restored) so subpixel VSCROLL is
-                     * never stale/green. */
+                     * never stale/green. Peek stays inside this block so
+                     * cmd 9 cannot DMA a 0x28 sky line into wrap(scroll+8). */
                     scroll_precompute(s_ms.row);
                     s_row_carry = 1;
                     peek_next_row((u16)(s_ms.row + 1));
