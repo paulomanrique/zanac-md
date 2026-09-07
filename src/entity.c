@@ -1136,49 +1136,31 @@ static void bits8_init(void)
  * orb_upload_japan misses every frame and this ran for every live orb; three
  * on screen at once is the reported "slowdown da porra".
  *
- * Table form: 32 iterations, each a byte load, a table lookup, an AND and a
- * long store. Verified equal to the old loop on 4000 random 32-byte patterns
- * across all 16 values of `want`. Unaligned dst keeps the byte path. */
+ * Table form: 32 iterations, each a byte load, a table lookup, an AND and two
+ * word stores. A Mega Drive DMA source is always word aligned but not always
+ * long aligned, so this writes 16 bits at a time -- an earlier long-store
+ * version fell back to a per-byte path on most calls and kept the cost. */
 static void orb_encode_japan_tiles(u8 *dst, const u8 *pat, u8 want)
 {
     const u32 w8 = (u32)want * 0x11111111UL;
+    u16 *d = (u16 *)dst;
     u8 t;
 
     if (!k_bits8_ready)
         bits8_init();
 
-    if ((u32)dst & 3)
+    for (t = 0; t < 4; t++)
     {
-        for (t = 0; t < 4; t++)
+        const u8 *src = (t & 2) ? pat + 16 : pat;
+        u8 ty = (u8)((t & 1) ? 8 : 0);
+        u8 row;
+
+        for (row = 0; row < 8; row++)
         {
-            const u8 *src = (t & 2) ? pat + 16 : pat;
-            u8 ty = (u8)((t & 1) ? 8 : 0);
-            u8 row;
+            u32 v = k_bits8[src[ty + row]] & w8;
 
-            for (row = 0; row < 8; row++)
-            {
-                u32 v = k_bits8[src[ty + row]] & w8;
-
-                *dst++ = (u8)(v >> 24);
-                *dst++ = (u8)(v >> 16);
-                *dst++ = (u8)(v >> 8);
-                *dst++ = (u8)v;
-            }
-        }
-        return;
-    }
-
-    {
-        u32 *d = (u32 *)dst;
-
-        for (t = 0; t < 4; t++)
-        {
-            const u8 *src = (t & 2) ? pat + 16 : pat;
-            u8 ty = (u8)((t & 1) ? 8 : 0);
-            u8 row;
-
-            for (row = 0; row < 8; row++)
-                *d++ = k_bits8[src[ty + row]] & w8;
+            *d++ = (u16)(v >> 16);
+            *d++ = (u16)v;
         }
     }
 }
