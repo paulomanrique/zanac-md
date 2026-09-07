@@ -173,6 +173,9 @@ static void fetch_stream(Slot *s)
             return;
         }
         b = rd(ptr);
+        /* 4F55 BIT 7 JP Z 5030: 0x00-0x7F is a note. 0x00 is a rest
+         * (5087 AND A / RET Z -> period 0). Do not treat 0 as END --
+         * ev4 GO streams rest between phrases (0x00 then duration). */
         if (b <= 0x7F)
         {
             u8 dur;

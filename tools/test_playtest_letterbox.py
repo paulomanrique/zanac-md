@@ -47,8 +47,7 @@ def hidden_wrap_nt_at(scroll_px: int) -> int:
 
 
 def sat_to_nt_y0(scroll_px: int) -> int:
-    ntpix = (0 - (scroll_px & ~7)) & 0xFFFF
-    return (ntpix >> 3) & 31
+    return hidden_wrap_nt_at(scroll_px)
 
 
 def main() -> int:
@@ -68,12 +67,21 @@ def main() -> int:
         return fail("G: wrap must be playfield top (screen Y 16 / SAT Y 0)")
     if "8 - off" in wrap.group(1):
         return fail("G: wrap Y=8 is the letterbox row (hard blue/green seam)")
-    for sc in (0, 8, 16, 64, 192):
+    for sc in (0, 1, 6, 7, 8, 9, 16, 64, 192):
         if hidden_wrap_nt_at(sc) != sat_to_nt_y0(sc):
             return fail(
                 "A/G: hidden_wrap(%d)=%d != sat_to_nt(0)=%d"
                 % (sc, hidden_wrap_nt_at(sc), sat_to_nt_y0(sc))
             )
+    satfn = re.search(
+        r"static int sat_to_nt\(s16 x, s16 y, u8 \*col, u8 \*row\)\s*\{(.*?)^\}",
+        mp,
+        re.S | re.M,
+    )
+    if not satfn or "hidden_wrap_nt_at(s_scroll_px)" not in satfn.group(1):
+        return fail("A/G: sat_to_nt Y must be wrap + (Y/8)")
+    if satfn and "s_scroll_px & 0xFFF8" in satfn.group(1):
+        return fail("A/G: sat_to_nt must not subtract scroll&~7")
     if "peek_next_row_at((u16)(s_ms.row + 1), (u16)(s_scroll_px + 8))" not in mp:
         return fail("G: boot peek must be scroll_px+8 (NT 31), not NT 0")
 

@@ -404,6 +404,7 @@ typedef struct {
     u8  frame;      /* current spr_objs frame (for sat_col remap) */
     u8  vram_fr;    /* last DMA'd frame; 0xFF = none */
     u8  vram_nib;   /* last DMA'd color nibble; 0xFF = none */
+    u8  mvram_fr;   /* last DMA'd complement frame; 0xFF = none */
     u16 dest;       /* idol warp ptr or fire# */
     u16 bind;       /* 8.8 Yvel, or 8948 SAT (X<<8 | Y) after +0x10 pre xo/yo */
     Sprite *spr;
@@ -578,6 +579,7 @@ static const u8 k_box_sat[30] = {
 static s16 slot_draw_y(const Slot *s);
 static void marker_place(Slot *s, u16 frame);
 static void marker_kill(Slot *s);
+static void spr_detach(Slot *s);
 static int complement_frame_ok(u16 frame);
 static void mspr_upload(Slot *s);
 static int step_88_4898(Slot *e);
@@ -786,10 +788,15 @@ static void mspr_upload(Slot *s)
     ts = sp->frame->tileset;
     if (!ts || !ts->numTile)
         return;
+    /* Complements are static black tiles. Re-DMA every marker_place /
+     * frame-cb blew the NTSC vblank when many 71f6 pairs were live. */
+    if (s->mvram_fr == s->mframe)
+        return;
     nbytes = (u16)(ts->numTile * 32);
     vaddr = (u16)((sp->attribut & TILE_INDEX_MASK) * 32);
     src = (const u8 *)FAR_SAFE(ts->tiles, nbytes);
     DMA_queueDma(DMA_VRAM, (void *)src, vaddr, (u16)(nbytes / 2), 2);
+    s->mvram_fr = s->mframe;
 }
 
 static void marker_place(Slot *s, u16 frame)
@@ -807,15 +814,16 @@ static void marker_place(Slot *s, u16 frame)
         return;
     mdx = mode_draw_x(s->x, 0x81);
     mdy = slot_draw_y(s);
-    if (!s->mspr)
-    {
-        /* 71f6 always writes the complement SAT. Do not refuse on a
-         * port hardware-sprite budget -- that left colored halves. */
-        s->mspr = SPR_addSpriteEx(&spr_objs, mdx, mdy,
-                                  TILE_ATTR(PAL2, FALSE, FALSE, FALSE),
-                                  SPR_FLAG_AUTO_VRAM_ALLOC);
         if (!s->mspr)
-            return;
+        {
+            /* 71f6 always writes the complement SAT. Do not refuse on a
+             * port hardware-sprite budget -- that left colored halves. */
+            s->mvram_fr = 0xFF;
+            s->mspr = SPR_addSpriteEx(&spr_objs, mdx, mdy,
+                                      TILE_ATTR(PAL2, FALSE, FALSE, FALSE),
+                                      SPR_FLAG_AUTO_VRAM_ALLOC);
+            if (!s->mspr)
+                return;
         /* addSprite starts at frame 0 (shot). Own tiles; hide until
          * the complement SAT name is in VRAM. */
         s->mspr->data = (u32)s;
@@ -844,6 +852,7 @@ static void marker_kill(Slot *s)
     }
     s->marker = 0;
     s->mframe = 0;
+    s->mvram_fr = 0xFF;
 }
 
 /* spr_objs frame -> MSX SAT_NAME (primary). Complements are separate frames. */
@@ -1168,9 +1177,18 @@ static void spr_upload_color(Slot *s)
      * a 1-2 tile AUTO_VRAM slot and composited FRAME_SHOT into the next
      * flyer. Disc leftover is orb_paint_body_nibbles, not VRAM pad. */
     {
-        u16 n;
         u8 disc = (u8)(s->kind == KIND_EXPL || s->kind == KIND_PDEAD
                        || s->kind == KIND_HUSK);
+
+        /* Verbatim tiles: queue ROM/FAR src. Skip the 128-byte copy
+         * into a DMA scratch (and do not allocateAndQueue an unused buf). */
+        if (!disc && want == baked)
+        {
+            DMA_queueDma(DMA_VRAM, (void *)src, vaddr, (u16)(nbytes / 2), 2);
+            s->vram_fr = s->frame;
+            s->vram_nib = want;
+            return;
+        }
 
         buf = DMA_allocateAndQueueDma(DMA_VRAM, vaddr, (u16)(nbytes / 2), 2);
         if (!buf)
@@ -1181,11 +1199,6 @@ static void spr_upload_color(Slot *s)
                 nbytes = sizeof(s_pad);
             if (disc)
                 orb_paint_body_nibbles(s_pad, src, nbytes, want);
-            else if (want == baked)
-            {
-                for (n = 0; n < nbytes; n++)
-                    s_pad[n] = src[n];
-            }
             else
                 remap_tiles(s_pad, src, nbytes, baked, want);
             if (disc)
@@ -1197,11 +1210,6 @@ static void spr_upload_color(Slot *s)
         }
         if (disc)
             orb_paint_body_nibbles(buf, src, nbytes, want);
-        else if (want == baked)
-        {
-            for (n = 0; n < nbytes; n++)
-                buf[n] = src[n];
-        }
         else
             remap_tiles(buf, src, nbytes, baked, want);
         if (disc)
@@ -1281,7 +1289,11 @@ static void spr_place(Slot *s, u16 frame)
     }
 }
 
-static void spr_kill(Slot *s)
+/* Release hardware sprites without clearing the slot. Assigning
+ * spr=NULL without SPR_releaseSprite leaks AUTO_VRAM + an SGDK
+ * sprite until addSprite returns NULL (invisible type 4/5/6 boxes)
+ * and SPR_update walks leftover SAT entries (slowdown). */
+static void spr_detach(Slot *s)
 {
     marker_kill(s);
     if (s->spr)
@@ -1289,6 +1301,14 @@ static void spr_kill(Slot *s)
         SPR_releaseSprite(s->spr);
         s->spr = NULL;
     }
+    s->vram_fr = 0xFF;
+    s->vram_nib = 0xFF;
+    s->mvram_fr = 0xFF;
+}
+
+static void spr_kill(Slot *s)
+{
+    spr_detach(s);
     s->alive = 0;
     s->kind = 0;
     s->variant = 0;
@@ -1363,9 +1383,7 @@ static void spawn_expl(s16 x, s16 y)
     e->y = y;
     e->vx = 0;
     e->vy = 0;
-    e->spr = NULL;
-    e->mspr = NULL;
-    e->marker = 0;
+    spr_detach(e);
     e->sat = 0;
     e->sat_col = 0;
     e->frame = 0;
@@ -1507,9 +1525,7 @@ void entity_spawn_pdeath(s16 x, s16 y)
     e->y = y;
     e->vx = 0;
     e->vy = 0;
-    e->spr = NULL;
-    e->mspr = NULL;
-    e->marker = 0;
+    spr_detach(e);
     e->sat = 0;
     e->sat_col = 0;
     e->frame = 0;
@@ -1982,9 +1998,7 @@ static void spawn_box(Slot *e, u8 type, s16 x, s16 y, u8 sat_cd)
     e->sat = sat_cd;            /* +03 countdown, not hitbox yet */
     e->sat_col = 0;
     e->aux = 0;
-    e->spr = NULL;
-    e->mspr = NULL;
-    e->marker = 0;
+    spr_detach(e);
 }
 
 /* 77e0: (bcd & 0x0F)*3 into proto_box type/SAT tables. */
@@ -2158,10 +2172,7 @@ static void spawn_d1_child(Slot *e, s16 x, s16 y)
     e->alive = 1;
     e->sat = 0x24;
     e->sat_col = 0;
-    e->spr = NULL;
-    e->mspr = NULL;
-    e->marker = 0;
-    e->mframe = 0;
+    spr_detach(e);
 }
 
 /* structure_award_index_table 0x4B29, types 0-89. 4a6a uses +0x18. */
@@ -2592,6 +2603,15 @@ static void box_step(Slot *e)
         spr_place(e, FRAME_BOX);    /* +03=0xD4 */
         marker_place(e, FRAME_BOX_C);
         /* 784d entity_update same frame after SET 7 */
+    }
+    /* Reveal writes SAT once. If addSprite failed (VRAM/slot leak),
+     * retry -- Japan 71da/784d still occupy the type-4/5/6 slot. */
+    if (e->clock)
+    {
+        if (!e->spr)
+            spr_place(e, FRAME_BOX);
+        if (e->spr && !e->mspr)
+            marker_place(e, FRAME_BOX_C);
     }
 
     /* 784d CALL 4898 +0c=1: unsigned 8.8 + Y>=0xD0.
@@ -4152,9 +4172,7 @@ static void spawn_spawner(Slot *e)
      * FRAME_FIRE -- that baked white target at Y=0. */
     e->sat = 0x28;
     e->sat_col = 0;
-    e->spr = NULL;
-    e->mspr = NULL;
-    e->marker = 0;
+    spr_detach(e);
 }
 
 /* cmd 1 97CA: type 69 + (+01 emit, +02 count, +03 interval). 7a67 copies
@@ -4191,9 +4209,7 @@ static void spawn_spawner_cmd1(Slot *e, u8 emit, u8 count, u8 interval)
      * SAT name stays the interval; +04 leftover 0 (invisible). */
     e->sat = interval;
     e->sat_col = 0;
-    e->spr = NULL;
-    e->mspr = NULL;
-    e->marker = 0;
+    spr_detach(e);
 }
 
 static void spawner_step(Slot *e)
@@ -4528,9 +4544,7 @@ static void spawn_base_seg(Slot *e, u8 type, s16 x, s16 y)
     e->vy = 0;
     e->bind = 0;
     e->alive = 1;
-    e->spr = NULL;
-    e->mspr = NULL;
-    e->marker = 0;
+    spr_detach(e);
 }
 
 static int is_port_type(u8 t)
