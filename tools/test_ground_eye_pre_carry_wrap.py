@@ -10,7 +10,8 @@ VSCROLL. 97e3 assembles one E800 row; 9a79 dumps the 24-row nametable.
 MD peeks row+1 into wrap(scroll+8) so 1px VSCROLL is not stale.
 
 #91 moved s_scroll_px to the post-carry pixel before 97e3 so
-hidden_wrap == sat_to_nt(0) at the DMA. sat_to_nt is wrap+(Y/8).
+hidden_wrap == sat_to_nt(0) at the DMA. Stamps use wrap(scroll&~7)+Y/8
+so leftover POST still hits wrap(pre). 97e3 DMA stays wrap(pre) RAW.
 hidden_wrap uses the raw pixel. Boot E710=0x20 often has wrap(pre)==
 wrap(post). 9480 ramps E710 toward SCROLL_SPEED_TGT 0x34; leftover
 E711 at cruise makes wrap(post) one NT row north of wrap(pre) -- the
@@ -52,7 +53,7 @@ def hidden_wrap_nt_at(scroll_px: int) -> int:
 
 
 def sat_to_nt_y0(scroll_px: int) -> int:
-    return hidden_wrap_nt_at(scroll_px)
+    return hidden_wrap_nt_at(scroll_px & ~7)
 
 
 def ramp_carries(frames: int = 400) -> list[tuple[int, int, int]]:
@@ -141,6 +142,10 @@ def main() -> int:
     if not any(e710 == 0x34 for e710, _, _ in shifted):
         return fail("cruise E710=0x34 leftover E711 must shift wrap(post)")
     e710, pre, post = shifted[0]
+    if sat_to_nt_y0(post) != hidden_wrap_nt_at(pre):
+        return fail(
+            "leftover POST sat_to_nt(0) must hit wrap(pre) tile, not wrap(post) peek"
+        )
     print(
         "  first shift E710 0x%02X wrap(%d)=%d != wrap(%d)=%d  sat0 %d/%d"
         % (
@@ -202,10 +207,10 @@ def main() -> int:
         return fail("wrap Y=8 is the letterbox row (south lens / seam)")
 
     sat = fn_span(mp, "static int sat_to_nt(s16 x, s16 y, u8 *col, u8 *row)")
-    if not sat or "hidden_wrap_nt_at(s_scroll_px)" not in sat:
-        return fail("sat_to_nt Y must stay wrap + (Y/8)")
-    if sat and "s_scroll_px & 0xFFF8" in sat:
-        return fail("sat_to_nt must not subtract scroll&~7")
+    if not sat or "tile_wrap_nt_at(s_scroll_px)" not in sat:
+        return fail("sat_to_nt Y must stay wrap(scroll&~7) + (Y/8)")
+    if sat and "hidden_wrap_nt_at(s_scroll_px)" in sat:
+        return fail("#95 wrap(raw)+Y/8 is peek at leftover")
 
     # 8c15 1x1 stays -- south repeat of 0xBF is the double stacked eye.
     fn = re.search(

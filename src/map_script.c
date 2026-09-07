@@ -434,6 +434,8 @@ static void col_refetch_b0(ColSlot *s)
     s->src = tgt;
 }
 
+/* Japan column stream into EA40; commit 24 tiles from EA48 (ASM_SKIP 8).
+ * Coast / island edges are those stream bytes — do not invent stamps. */
 static void col_paint(ColSlot *s)
 {
     u8 bx;
@@ -564,16 +566,28 @@ static u16 tile_attr(u8 tid)
 
 /* NT row at the top of the 192 (screen Y 16 / SAT Y 0).
  * VSCROLL = -(scroll_px + 16); plane_y(16) = 16 - off.
- * Y=8 (letterbox mid) is one row north of sat_to_nt(0) -- 97e3 wrote
- * there while 8c15/88ed/totem punched the playfield-top cell, so the
- * south lens / expl / face junk sat one tile below the art and a stale
- * peek row travelled the 192 as a hard blue/green seam. */
+ * At leftover E711 frac 1-7 this is the peek sliver (1-2px), not the
+ * 8px tile 97e3 wrote — see tile_wrap_nt_at. Y=8 (letterbox mid) is one
+ * row north of the aligned top; do not DMA 97e3 there. */
 static u8 hidden_wrap_nt_at(u16 scroll_px)
 {
     u16 off = (u16)((scroll_px + mode_y_off()) & 0xFF);
     u8 py = (u8)(16 - off);
 
     return (u8)(py >> 3);
+}
+
+/*
+ * 8px nametable cell that holds TMS row 0 (Japan 8948 Y/8).
+ * hidden_wrap(raw) at leftover E711 frac 1-7 is the peek sliver (1-2px
+ * at the playfield top / letterbox). 97e3 DMA still uses wrap(pre-carry)
+ * RAW — that equals this aligned slot. #95 sat_to_nt wrap+(Y/8) on RAW
+ * scroll parked 87e2/88ed/8c15 on wrap(post)==peek: missing digits,
+ * dest tiles one row off (purple L-mark leftover), and a sky/green cut.
+ */
+static u8 tile_wrap_nt_at(u16 scroll_px)
+{
+    return hidden_wrap_nt_at((u16)(scroll_px & 0xFFF8));
 }
 
 /*
@@ -787,13 +801,13 @@ static void punch_cell(u8 col, u8 screen_row, u8 tid)
 
 /*
  * Japan 8948: TMS VRAM row is Y/8 from the top of the 192 (no VSCROLL).
- * E800 index is (E714 + Y/8) mod 24. MD VSCROLL parks that top row at
- * hidden_wrap_nt_at(scroll_px), so the cell showing SAT Y is
- *   (wrap + Y/8) & 31
- * on the 32-row plane. Using (Y - (scroll&~7))>>3 missed wrap at
- * leftover E711 frac 1-7 (cruise E710=0x34): 97e3/peek wrote NT 31
- * while 87e2/88ed/8c15 stamped NT 0 -- a full-width blue/green seam
- * and firebox digits 8 rows off the art.
+ * E800 index is (E714 + Y/8) mod 24. MD VSCROLL parks that 8px tile at
+ * tile_wrap_nt_at (wrap of scroll&~7), so the cell showing SAT Y is
+ *   (tile_wrap + Y/8) & 31
+ * #95 used hidden_wrap(raw)+Y/8. At leftover E711 frac 1-7 wrap(raw) is
+ * the peek sliver (wrap(post)), one NT row north of 97e3's wrap(pre)
+ * tile — 87e2 digits in the letterbox, 88ed dest leftover on the live
+ * row, 8c15/stamps cutting a sky line through green.
  * x is already nametable pixel X (SAT-32). C>=0x18 reject stays.
  */
 static int sat_to_nt(s16 x, s16 y, u8 *col, u8 *row)
@@ -820,7 +834,7 @@ static int sat_to_nt(s16 x, s16 y, u8 *col, u8 *row)
     if (sat_row >= BOOT_ROWS)
         return 0;
     *col = c;
-    *row = (u8)((hidden_wrap_nt_at(s_scroll_px) + sat_row) & 31);
+    *row = (u8)((tile_wrap_nt_at(s_scroll_px) + sat_row) & 31);
     return 1;
 }
 
@@ -2188,12 +2202,13 @@ static void cred_tick(void)
 }
 
 /* TMS nametable row r is always screen row r (no VSCROLL). MD maps that
- * onto the currently visible 24-row window: wrap is SAT Y 0, then +r.
- * Same Y as sat_to_nt (wrap + Y/8). Do not use scroll&~7 -- that leaves
- * wrap and stamps 8 NT rows apart at leftover E711 frac 1-7. */
+ * onto the currently visible 24-row window: the 8px tile at SAT Y 0,
+ * then +r. Same Y as sat_to_nt (tile_wrap + Y/8). Do not use wrap(raw)
+ * — at leftover E711 frac 1-7 that is the peek sliver, one row north
+ * of 97e3's tile. */
 static u8 vis_nt_row(u8 tms_row)
 {
-    return (u8)((hidden_wrap_nt_at(s_scroll_px) + tms_row) & 31);
+    return (u8)((tile_wrap_nt_at(s_scroll_px) + tms_row) & 31);
 }
 
 /* scroll_sync 0x9AE4: wait E700.0 clear, RES bit 3, E714=0, copy 24x24
@@ -2985,16 +3000,17 @@ void map_script_update(void)
                 if (!s_skip_precompute)
                 {
                     /* 97e3 / peek must use the pre-carry pixel. VSCROLL is
-                     * still that value; wrap(pre) is the row being revealed.
-                     * PR #91 set scroll_px to the post-carry pixel first so
-                     * wrap==sat_to_nt(0) at the DMA. sat_to_nt is wrap+(Y/8);
-                     * leftover E711 at cruise E710=0x34 (9480 ramp from
-                     * 0x20) makes wrap(post) one NT row north of wrap(pre).
-                     * 97e3 wrote the complete assemble into the letterbox
-                     * while the live top kept the place-less peek --
-                     * ground objects / R1 lower eye missing a tile.
-                     * Japan has no VSCROLL; 9a79 dumps 24 rows. Do not
-                     * move s_scroll_px until the end of the tick. */
+                     * still that value; wrap(pre) RAW is the 8px tile being
+                     * revealed. PR #91 set scroll_px before 97e3 so DMA hit
+                     * wrap(post). leftover E711 at cruise E710=0x34 makes
+                     * wrap(post) the peek sliver (letterbox), one NT row
+                     * north of wrap(pre). #95 then bound sat_to_nt to
+                     * wrap(raw)+Y/8, so entity stamps (after this update
+                     * sets POST scroll) also hit peek: missing 87e2 digits,
+                     * 88ed dest leftover on the live cell, sky/green cut.
+                     * Stamps use tile_wrap (scroll&~7); 97e3 DMA stays
+                     * wrap(pre) RAW. Japan has no VSCROLL; 9a79 dumps 24
+                     * rows. Do not move s_scroll_px until end of tick. */
                     /* 97e3: assemble once, DMA one nametable row at the wrap
                      * edge, then peek row+1 (restored) so subpixel VSCROLL is
                      * never stale/green. Peek stays inside this block so
