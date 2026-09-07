@@ -7,11 +7,10 @@ Japan v1 (SHA1 46e9ed7b7f6dfda8eee266476c9ebc4dd9d8fcc2) 0x4BDF:
 Tile 0x20 CT is 70 (bg nibble 0). SCREEN2 bg 0 is R7 black; MD color 0
 is transparent, so WINDOW spaces punch to BG_B.
 
-dma_nt_row writes width=MODE_H32_COLS (32) into BG_B. That overwrites
-hud_fill_bar_backing on that NT row. Pad dst[24-31] with letter_attr
-and restore cols 24-31 AFTER the row DMA (same TransferMethod so a
-queued 32-col write cannot win). One row x 8 tiles -- not a playfield
-fill, not a per-tick letterbox.
+dma_nt_row writes Japan 9a79's 24 playfield cols at x=0 (CPU when
+queued, so col 0 cannot drop). Pad dst[24-31] with letter_attr and
+restore cols 24-31 AFTER the playfield write (same TransferMethod).
+One row x 8 tiles -- not a playfield fill, not a per-tick letterbox.
 
 4898 unsigned X=192..208 (0xC0..0xD0) stays live (< 0xD1). Those
 sprites overlap the bar; spr_vis_playfield must hide primary AND
@@ -205,30 +204,30 @@ def main() -> int:
     else:
         print("  KEEP: no playfield-wide letter fill")
 
-    # --- The hole: 32-col wrap DMA + restore AFTER ---
+    # --- Playfield is Japan 9a79 24 cols at x=0; HUD restore AFTER ---
     dma = fn_span(map_c, "static void dma_nt_row(u8 nt_y, const u8 *src, TransferMethod tm)")
     if not dma:
         fail("dma_nt_row not found")
         fails += 1
     else:
-        row_dma = "VDP_setTileMapDataRow(BG_B, dst, nt_y, 0, width, tm)"
+        row_dma = "VDP_setTileMapDataRow(BG_B, dst, nt_y, 0, PF_COLS, play_tm)"
         restore = (
             "VDP_setTileMapDataRow(BG_B, dst + MODE_BAR_COL, nt_y,\n"
             "                              MODE_BAR_COL, MODE_BAR_W, tm)"
         )
         restore_alt = "VDP_setTileMapDataRow(BG_B, dst + MODE_BAR_COL, nt_y"
-        if "width = MODE_H32_COLS" not in dma:
-            fail("Original wrap DMA must still write 32 cols (pad HUD slice)")
+        if "width = MODE_H32_COLS" in dma:
+            fail("32-col wrap DMA left playfield col 0 as leftover 0x28 sky")
             fails += 1
         else:
-            print("  dma_nt_row: width=MODE_H32_COLS (32-col BG_B row)")
+            print("  dma_nt_row: 24 playfield cols (Japan 9a79 B=0x18)")
         if "mode_letter_attr()" not in dma:
             fail("dma_nt_row must pad HUD cols with mode_letter_attr")
             fails += 1
         else:
             print("  dma_nt_row: pad dst[24-31] with letter_attr")
         if row_dma not in dma:
-            fail("dma_nt_row must DMA the row into BG_B")
+            fail("dma_nt_row must write 24 playfield cols at x=0")
             fails += 1
         if restore_alt not in dma or "MODE_BAR_COL, MODE_BAR_W, tm)" not in dma:
             fail(
@@ -240,10 +239,10 @@ def main() -> int:
             row_at = dma.find(row_dma)
             rest_at = dma.find(restore_alt)
             if rest_at < 0 or row_at < 0 or rest_at < row_at:
-                fail("HUD restore must come after the 32-col row DMA")
+                fail("HUD restore must come after the 24-col playfield write")
                 fails += 1
             else:
-                print("  dma_nt_row: restore BG_B cols 24-31 after row DMA")
+                print("  dma_nt_row: restore BG_B cols 24-31 after playfield write")
         flip_at = dma.find("s_dma_flip ^= 1")
         rest_at = dma.find(restore_alt)
         if flip_at >= 0 and rest_at >= 0 and flip_at < rest_at:

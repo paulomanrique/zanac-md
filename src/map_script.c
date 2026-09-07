@@ -120,9 +120,9 @@ static u8  s_ram_only;          /* boot: assemble E800 without poking VRAM */
 static u8  s_assemble_peek;     /* peek assemble: tiles only, no place */
 static u8  s_wrap_pending;      /* 97e3 row waiting for post-88ed DMA */
 static u8  s_wrap_nt;           /* hidden_wrap(pre) latched at 97e3 */
-/* Two DMA_QUEUE sources -- SGDK stores the pointer until vblank.
- * Original pads to MODE_H32_COLS so cols 24-31 of a wrap row are never
- * leftover charset, then restamps that HUD slice after the row DMA. */
+/* Two DMA_QUEUE HUD sources -- SGDK stores the pointer until vblank.
+ * Playfield is 24-col CPU (Japan 9a79); only the HUD slice is queued.
+ * Original pads dst[24-31] so the restore cannot leak leftover charset. */
 static u16 s_dma_row[2][MODE_H32_COLS];
 static u8  s_dma_flip;
 static TransferMethod s_row_tm = DMA_QUEUE;
@@ -593,16 +593,24 @@ static u8 tile_wrap_nt_at(u16 scroll_px)
 }
 
 /*
- * One nametable row. Gameplay uses DMA_QUEUE so the transfer lands in
- * vblank (not 576 XY pokes). Boot uses DMA while the display is off.
- * Original writes 32 cols so wrap/peek cannot leave leftover charset
- * in BG_B cols 24-31 (WINDOW 0x20 CT bg=0 punches through to BG_B).
+ * One nametable row. Japan 9a79 OUT's BC=0x18 playfield tiles from
+ * E800 at nametable col 0 (stride 0x20, HUD 24-31 untouched).
+ *
+ * Original used to DMA_QUEUE 32 H32 cols (HUD pad) then restore 24-31.
+ * That 32-word queued burst dropped the first cell: playfield col 0
+ * kept leftover 0x28 sky. Invisible over water; at a coast it is the
+ * left-edge blue notch. Do not invent shore tiles — write the 24-col
+ * stream, first cell included.
+ *
+ * Gameplay writes those 24 with CPU (Japan's per-tile OUT) so SGDK
+ * DMA_QUEUE cannot skip word 0. Boot uses DMA while the display is
+ * off. HUD cols 24-31 still restore via tm (WINDOW 0x20 CT bg=0).
  */
 static void dma_nt_row(u8 nt_y, const u8 *src, TransferMethod tm)
 {
     u8 x;
     u16 *dst;
-    u16 width;
+    TransferMethod play_tm;
 
     nt_y &= 31;
     dst = s_dma_row[s_dma_flip];
@@ -611,28 +619,24 @@ static void dma_nt_row(u8 nt_y, const u8 *src, TransferMethod tm)
         s_nt[nt_y][x] = src[x];
         dst[x] = tile_attr(src[x]);
     }
-    width = PF_COLS;
+    /* 9a79 B=0x18 at col 0. Do not expand to MODE_H32_COLS. */
+    play_tm = (tm == DMA_QUEUE) ? CPU : tm;
+    VDP_setTileMapDataRow(BG_B, dst, nt_y, 0, PF_COLS, play_tm);
     if (mode_get() == MODE_ORIGINAL)
     {
         u16 blank = mode_letter_attr();
 
-        /* H32 shows 32 cols. Pad the HUD slice so a wrap DMA cannot
-         * leak leftover charset through a transparent WINDOW cell. */
         for (; x < MODE_H32_COLS; x++)
             dst[x] = blank;
-        width = MODE_H32_COLS;
-    }
-    VDP_setTileMapDataRow(BG_B, dst, nt_y, 0, width, tm);
-    /* 32-col wrap/peek DMA overwrites hud_fill_bar_backing on this NT
-     * row. Restore cols 24-31 after the row write so a queued full-row
-     * DMA cannot leave map/leftover in the WINDOW punch-through
-     * (0x4BDF six 0x20, CT bg=0). Same tm: DMA_QUEUE restore commits
-     * after the row. One row x 8 tiles -- not a playfield fill, not a
-     * per-tick letterbox (those hitch 60Hz). */
-    if (mode_get() == MODE_ORIGINAL)
+        /* Restore cols 24-31 after the playfield write so WINDOW
+         * punch-through stays letter backing (0x4BDF six 0x20).
+         * Same tm: DMA_QUEUE restore commits in vblank. One row x 8
+         * tiles -- not a playfield fill, not a per-tick letterbox. */
         VDP_setTileMapDataRow(BG_B, dst + MODE_BAR_COL, nt_y,
                               MODE_BAR_COL, MODE_BAR_W, tm);
-    /* DMA_QUEUE keeps the source pointer until vblank -- do not reuse. */
+    }
+    /* DMA_QUEUE keeps the HUD source pointer until vblank -- do not
+     * reuse this buffer while that restore is queued. */
     if (tm == DMA_QUEUE)
         s_dma_flip ^= 1;
     /* Letterbox is clipped once per frame in bg_set_vscroll. Filling
