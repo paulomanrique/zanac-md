@@ -213,7 +213,7 @@ def check_keep_rest() -> None:
         fail("KEEP 71f6: complement Y = parent (ship Y+2 only)")
     if "ADD 0xF1" not in p or "s->y += 2" not in p and "mode_draw_y(s_y) + 2" not in p:
         fail("KEEP ship black Y+2 (7735)")
-    if "0x28" in st and "punch" in st.lower():
+    if "punch_cell(col, srow, 0x28)" in m:
         fail("no 0x28 punch")
     if "k_orb_sat" not in e:
         fail("KEEP orb")
