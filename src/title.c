@@ -50,6 +50,8 @@ static u16 s_mdmark_vdp;
 static const u8 k_bar_src_y[5] = { 0, 1, 2, 3, 4 };
 static const u8 k_bar_h[5]     = { 1, 1, 1, 1, 3 };
 
+/* Entry 12 is TMS_DARK_GREEN, not RGB24_TO_VDPCOLOR(0x21B03B): the macro
+ * collides it with colour 2 and flattens the terrain. See inc/map_script.h. */
 static const u16 k_tms[16] = {
     RGB24_TO_VDPCOLOR(0x000000),
     RGB24_TO_VDPCOLOR(0x000000),
@@ -63,7 +65,7 @@ static const u16 k_tms[16] = {
     RGB24_TO_VDPCOLOR(0xFF7978),
     RGB24_TO_VDPCOLOR(0xD4C154),
     RGB24_TO_VDPCOLOR(0xE6CE80),
-    RGB24_TO_VDPCOLOR(0x21B03B),
+    TMS_DARK_GREEN,
     RGB24_TO_VDPCOLOR(0xC95BBA),
     RGB24_TO_VDPCOLOR(0xCCCCCC),
     RGB24_TO_VDPCOLOR(0xFFFFFF)

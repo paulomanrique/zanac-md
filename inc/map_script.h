@@ -3,6 +3,15 @@
 
 #include <genesis.h>
 
+/* TMS9918A colour 12 (0x21B03B) as a Mega Drive colour, written out instead of
+ * built with RGB24_TO_VDPCOLOR. The macro rounds each channel up before masking
+ * to 3 bits and lands colour 12 on the same value as colour 2 (0x21C842), and
+ * those two greens ARE the ground texture -- charset tiles 0x25/0x26/0x27 are a
+ * 2/12 stipple and nothing else. Collapsed, every land tile renders flat.
+ * Nearest-level rounding collides too; the pair has to be separated on purpose.
+ * See the derivation above s_tms_pal in src/map_script.c. */
+#define TMS_DARK_GREEN  0x04A2
+
 /*
  * MSX map-script interpreter.
  *

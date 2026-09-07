@@ -303,6 +303,24 @@ static u16 op_len(u8 cmd, const u8 *ops)
 
 /* ---- TMS9918 palette on PAL3, charset (or dummy) on BG_B ---- */
 
+/* TMS9918A palette as Mega Drive colours.
+ *
+ * Entry 12 is NOT written through RGB24_TO_VDPCOLOR, and that is the point.
+ * The macro rounds each channel up by 0x10 before masking to the MD's 3 bits,
+ * which maps TMS 2 (0x21C842) and TMS 12 (0x21B03B) onto the SAME colour,
+ * 0x4C2. Those two greens are the entire ground texture: charset tiles 0x25,
+ * 0x26 and 0x27 are nothing but a 2/12 stipple, so collapsing them renders
+ * every land tile as one flat green. Measured: with the whole playfield forced
+ * to tile 0x26, the frame contained a single green (49,206,87) and no second
+ * one, while the same scene on openMSX is roughly half colour 2 and half
+ * colour 12.
+ *
+ * Plain nearest-level rounding does not help -- both greens round to 0x4A2 --
+ * so the pair has to be separated on purpose. Searching every distinguishable
+ * MD pair for the lowest channel error while keeping the original luminance
+ * gap (14.9) gives 2 -> 0x4C2, 12 -> 0x4A2: squared error 660, gap 21.7, the
+ * best of the field. Entry 2 keeps the value it already had, so this changes
+ * exactly one colour. */
 static const u16 s_tms_pal[16] = {
     RGB24_TO_VDPCOLOR(0x000000),
     RGB24_TO_VDPCOLOR(0x000000),
@@ -316,7 +334,7 @@ static const u16 s_tms_pal[16] = {
     RGB24_TO_VDPCOLOR(0xFF7978),
     RGB24_TO_VDPCOLOR(0xD4C154),
     RGB24_TO_VDPCOLOR(0xE6CE80),
-    RGB24_TO_VDPCOLOR(0x21B03B),
+    TMS_DARK_GREEN,
     RGB24_TO_VDPCOLOR(0xC95BBA),
     RGB24_TO_VDPCOLOR(0xCCCCCC),
     RGB24_TO_VDPCOLOR(0xFFFFFF)
