@@ -1107,36 +1107,78 @@ static const u8 *orb_japan_pat(u8 sat)
 
 /* MSX 16x16 1-bit (left 16 rows, right 16 rows) -> 4 Genesis tiles,
  * column-major (TL, BL, TR, BR). Body nibble = want; 0 = transparent. */
+/* One MSX pattern byte -> eight 4bpp nibbles, 0xF where the bit is set.
+ * Built once; 1 KB of work RAM against a per-pixel loop on every orb frame. */
+static u32 k_bits8[256];
+static u8  k_bits8_ready;
+
+static void bits8_init(void)
+{
+    u16 b;
+
+    for (b = 0; b < 256; b++)
+    {
+        u32 v = 0;
+        u8 i;
+
+        for (i = 0; i < 8; i++)
+            v |= (u32)(((b >> (7 - i)) & 1) ? 0xF : 0) << (4 * (7 - i));
+        k_bits8[b] = v;
+    }
+    k_bits8_ready = 1;
+}
+
+/* A 16x16 MSX sprite stores its left half at pat[0..15] and its right half at
+ * pat[16..31], so each 8-pixel Mega Drive tile row comes from exactly ONE
+ * source byte -- the old triple loop rediscovered that per pixel, with a
+ * variable shift and two branches each, 128 times per call. The type-72 orb
+ * animates its SAT colour every frame (base_core_anim 0x8A16), so the cache in
+ * orb_upload_japan misses every frame and this ran for every live orb; three
+ * on screen at once is the reported "slowdown da porra".
+ *
+ * Table form: 32 iterations, each a byte load, a table lookup, an AND and a
+ * long store. Verified equal to the old loop on 4000 random 32-byte patterns
+ * across all 16 values of `want`. Unaligned dst keeps the byte path. */
 static void orb_encode_japan_tiles(u8 *dst, const u8 *pat, u8 want)
 {
+    const u32 w8 = (u32)want * 0x11111111UL;
     u8 t;
 
-    for (t = 0; t < 4; t++)
+    if (!k_bits8_ready)
+        bits8_init();
+
+    if ((u32)dst & 3)
     {
-        u8 tx = (u8)((t & 2) ? 8 : 0);
-        u8 ty = (u8)((t & 1) ? 8 : 0);
-        u8 row;
-
-        for (row = 0; row < 8; row++)
+        for (t = 0; t < 4; t++)
         {
-            u8 y = (u8)(ty + row);
-            u8 left = pat[y];
-            u8 right = pat[16 + y];
-            u8 col;
+            const u8 *src = (t & 2) ? pat + 16 : pat;
+            u8 ty = (u8)((t & 1) ? 8 : 0);
+            u8 row;
 
-            for (col = 0; col < 8; col += 2)
+            for (row = 0; row < 8; row++)
             {
-                u8 x0 = (u8)(tx + col);
-                u8 x1 = (u8)(x0 + 1);
-                u8 b0 = (x0 < 8)
-                    ? (u8)(left & (u8)(0x80 >> x0))
-                    : (u8)(right & (u8)(0x80 >> (x0 - 8)));
-                u8 b1 = (x1 < 8)
-                    ? (u8)(left & (u8)(0x80 >> x1))
-                    : (u8)(right & (u8)(0x80 >> (x1 - 8)));
+                u32 v = k_bits8[src[ty + row]] & w8;
 
-                *dst++ = (u8)(((b0 ? want : 0) << 4) | (b1 ? want : 0));
+                *dst++ = (u8)(v >> 24);
+                *dst++ = (u8)(v >> 16);
+                *dst++ = (u8)(v >> 8);
+                *dst++ = (u8)v;
             }
+        }
+        return;
+    }
+
+    {
+        u32 *d = (u32 *)dst;
+
+        for (t = 0; t < 4; t++)
+        {
+            const u8 *src = (t & 2) ? pat + 16 : pat;
+            u8 ty = (u8)((t & 1) ? 8 : 0);
+            u8 row;
+
+            for (row = 0; row < 8; row++)
+                *d++ = k_bits8[src[ty + row]] & w8;
         }
     }
 }
