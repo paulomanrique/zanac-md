@@ -1057,10 +1057,13 @@ static void orb_keep_body_nibbles(u8 *dst, u16 nbytes, u8 keep)
     }
 }
 
-/* Type 72 8a16 mid is SAT 0x20 / color 0x83 (TMS 3). gfx pat 8 is the
- * 96-bit disc (bake 15). PAL2[3] is half flyer green -- leave that
- * index. Only this SAT upload uses PAL2[7] TMS cyan (light-cyan).
- * Flyer sat_col 0x83 stays nibble 3. Stored sat_col stays 0x83. */
+/* Type 72 8a16 mid is SAT 0x20 / colour 0x83, which is TMS colour 3
+ * (base_core_anim: `1C 8F 20 83 24 8A 20 8B`). It is uploaded on PAL2[7]
+ * (cyan) instead, which was introduced to dodge the old half-brightness
+ * PAL2[3]. That override is gone now, so this remap is probably stale and
+ * the ROM's own colour 3 should be correct -- but the orb is a base-core
+ * frame that unattended play does not reach, so it has not been compared
+ * against openMSX and is left alone deliberately. */
 static const u8 k_orb_mid_pal = 7;
 
 /* zanac-re gfx_sprite_patterns 0x6976 pats 7/8/9 (SAT 0x1C/0x20/0x24).
@@ -6110,12 +6113,6 @@ static void collide_player(void)
     }
 }
 
-/* Filipe said 20% was not enough; half brightness vs original TMS green. */
-static const u16 k_flyer_green_dim[2] = {
-    RGB24_TO_VDPCOLOR(0x106421),
-    RGB24_TO_VDPCOLOR(0x2F6E3C)
-};
-
 /* TMS9918 approx sRGB. Fire 7 72de INC cycles SAT colour; MSX writes
  * one SAT byte. MD tile remap every frame starves NT DMA (blue tear).
  * Bind comet tiles to PAL2[13] once and cycle that CRAM index. */
@@ -6239,14 +6236,15 @@ void entity_init(void)
     /* Objs share PAL2 with the ship so index 15 stays TMS white.
      * PAL1 index 15 remains ROUND/HUD gold (set in game/title). */
     PAL_setPalette(PAL2, spr_objs.palette->data, CPU);
-    /* Filipe said 20% was not enough; half brightness vs original TMS
-     * green so flyers read against PAL3 map greens. Override only PAL2
-     * indices 2 and 3 (TMS medium/light green * 0.5). PAL3 map greens
-     * stay. Ship/shots stay index 15 (ship.png is 0/1/15; sat_col 0x8F).
-     * Airborne sat_col 0x83 (veybar 22/23, umber 9, type44 plane) is
-     * nibble 3; nibble 2 is the other TMS green (fire INC / 0x82). */
-    PAL_setColor((u16)((PAL2 * 16) + 2), k_flyer_green_dim[0]);
-    PAL_setColor((u16)((PAL2 * 16) + 3), k_flyer_green_dim[1]);
+    /* PAL2[2] and PAL2[3] used to be overridden to half brightness so the
+     * flyers would read against the map. That was compensation for a palette
+     * bug, not fidelity: RGB24_TO_VDPCOLOR collapsed TMS 2 and TMS 12 onto one
+     * Mega Drive colour, which flattened the whole 2/12 ground stipple into a
+     * single bright green and left a light-green flyer invisible on it. With
+     * the ground rendering its real texture the flyer reads at its own colour,
+     * and darkening it is now the defect: 0x83 came out a muddy green that
+     * turned the interlocked primary/complement pair into a smudge. Compared
+     * against the same enemy in openMSX, undimmed matches and dimmed does not. */
 }
 
 void entity_update(void)

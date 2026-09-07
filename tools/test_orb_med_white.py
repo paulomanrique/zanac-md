@@ -92,11 +92,8 @@ def main() -> int:
     if "want = k_orb_mid_pal" not in ent:
         print("FAIL: type-72 0x83 must upload k_orb_mid_pal, not nibble 3")
         return 1
-    if "PAL_setColor((u16)((PAL2 * 16) + 3), k_flyer_green_dim[1])" not in ent:
-        print("FAIL: PAL2[3] half-green override must stay")
-        return 1
-    if "PAL_setColor((u16)((PAL2 * 16) + 2), k_flyer_green_dim[0])" not in ent:
-        print("FAIL: PAL2[2] half-green override must stay")
+    if "k_flyer_green_dim" in ent:
+        print("FAIL: the PAL2 half-green override must not come back")
         return 1
     if "e->sat_col = 0x86" not in ent:
         print("FAIL: type 67 +04=0x86 must stay (nibble 6, not orb remap)")

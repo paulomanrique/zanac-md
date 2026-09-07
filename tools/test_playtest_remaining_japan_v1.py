@@ -275,8 +275,8 @@ def main() -> int:
         return fail("KEEP: 60fps — one VBlank per tick")
     if "0xBFD6" in ent or "0xbfd6" in ent:
         return fail("KEEP: no CALL 0xBFD6")
-    if "PAL_setColor((u16)((PAL2 * 16) + 2), k_flyer_green_dim[0])" not in ent:
-        return fail("KEEP: PAL2[2] half-green")
+    if "k_flyer_green_dim" in ent:
+        return fail("KEEP: no PAL2 half-green override")
     if "KIND_GROUND" not in ent or "44CA" not in ent:
         return fail("KEEP: ship AABB skip KIND_GROUND")
     if "KIND_TRACKER" not in ent or "KIND_VEYBAR" not in ent:

@@ -138,10 +138,8 @@ def main() -> int:
         return fail("k_orb_frame SAT map must stay lead/med/lg/med")
     if "k_orb_mid_pal = 7" not in ent:
         return fail("mid 0x83 -> PAL2[7] stays")
-    if "PAL_setColor((u16)((PAL2 * 16) + 2), k_flyer_green_dim[0])" not in ent:
-        return fail("PAL2[2] half-green must stay")
-    if "PAL_setColor((u16)((PAL2 * 16) + 3), k_flyer_green_dim[1])" not in ent:
-        return fail("PAL2[3] half-green must stay")
+    if "k_flyer_green_dim" in ent:
+        return fail("no PAL2 half-green override (it compensated the 2/12 palette collision)")
     if "u16 out = 128" in ent:
         return fail("do not re-ship 4-tile pad as the flyer overflow")
 

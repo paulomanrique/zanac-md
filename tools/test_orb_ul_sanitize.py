@@ -43,10 +43,8 @@ def main() -> int:
         return fail("do not re-ship 4-tile pad as the orb fix")
     if "if (hi && hi != keep)" not in ent:
         return fail("sanitizer must drop any nibble that is not 0 or SAT color")
-    if "PAL_setColor((u16)((PAL2 * 16) + 2), k_flyer_green_dim[0])" not in ent:
-        return fail("PAL2[2] half-green must stay")
-    if "PAL_setColor((u16)((PAL2 * 16) + 3), k_flyer_green_dim[1])" not in ent:
-        return fail("PAL2[3] half-green must stay")
+    if "k_flyer_green_dim" in ent:
+        return fail("no PAL2 half-green override (it compensated the 2/12 palette collision)")
     if "if fi in (6, 52):" not in reb:
         return fail("rebuild must force-zero LEAD/MED UL 4x4 (pat 7/8 empty)")
 
