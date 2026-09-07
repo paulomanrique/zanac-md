@@ -363,9 +363,14 @@ static void row_fill_tbl(u8 tidx, u16 src_off, u16 dst, u16 n)
 /* LAB_98f6: HL at count byte. */
 static void col_fetch_from(ColSlot *s, u16 hl)
 {
-    u8 guard;
+    u16 guard;
 
-    for (guard = 0; guard < 8; guard++)
+    /* 0x98f6 has no iteration cap: it loops on b0 == 0 (jump) and b0 == 0xFF
+     * (inline skip) until it reaches a real record.  A 0xFF chain walks the
+     * stream one record at a time and is legitimately long, so the cap only
+     * exists to stop malformed data hanging the frame -- 8 was low enough to
+     * kill live slots. */
+    for (guard = 0; guard < 512; guard++)
     {
         const u8 *p;
         u8 b0;
@@ -396,8 +401,17 @@ static void col_fetch_from(ColSlot *s, u16 hl)
         }
         if (b0 == 0xFF)
         {
+            /* 0x990d CP 0xFF / 0x9911 pos += t7 / 0x991a EX DE,HL / 0x991b DEC
+             * HL / 0x991c JR 0x98f6.  At 0x9909 EX DE,HL left DE = ptr+2, so
+             * after the second EX DE,HL and the DEC, HL is ptr+1 -- the stream
+             * CONTINUES INLINE at the byte right after b0.  The two bytes read
+             * as `tgt` are not a target: they are the next count byte and the
+             * next b0.  Jumping to tgt-1 sent the reader outside the blob, the
+             * blob_ok guard then latched pos = 0x80 and the column slot died
+             * mid-scroll, so the land stopped on a hard horizontal line and the
+             * base fill took over from that row down. */
             s->pos = (u8)(s->pos + s->t7);
-            hl = (u16)(tgt - 1);
+            hl = (u16)(s->ptr + 1);
             continue;
         }
         s->src = tgt;
@@ -429,8 +443,9 @@ static void col_refetch_b0(ColSlot *s)
     }
     if (b0 == 0xFF)
     {
+        /* Same 0x991a EX DE,HL / DEC HL continuation as col_fetch_from. */
         s->pos = (u8)(s->pos + s->t7);
-        col_fetch_from(s, (u16)(tgt - 1));
+        col_fetch_from(s, (u16)(s->ptr + 1));
         return;
     }
     s->src = tgt;
