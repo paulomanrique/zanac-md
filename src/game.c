@@ -194,6 +194,8 @@ void game_update(void)
         if (!s_over_cleared)
         {
             entity_release();
+            /* 40BA: LD (E150),A with A=0. Do not write type 0x28. */
+            entity_base_set(0);
             s_over_cleared = 1;
             sound_play_gameover();
         }
@@ -249,6 +251,16 @@ void game_update(void)
      * SELECT resume latch (E118 bit7 / SNSMAT row 7 bit 4) has no MD key. */
     if (pause_tick(pressed))
         return;
+
+    /* 40DA wait_frames: no 9393 (entity_dispatch / player_hit). 9480 is
+     * already BIT 5 RET NZ via map_script_warp_waiting. */
+    if (map_script_warp_waiting())
+    {
+        map_script_update();
+        map_script_draw_hud();
+        player_draw_hud();
+        return;
+    }
 
     map_script_update();
     player_update();

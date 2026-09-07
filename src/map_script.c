@@ -75,10 +75,11 @@ static u8  s_clr_phase;         /* 90a6/91a6 non-blocking sequencer */
 static u16 s_clr_wait;
 static u8  s_clr_mode;          /* E157&0x1F latched at 90a6 */
 static u8  s_boot_quiet;        /* type-72 warp: skip boot/ending default BGM */
-static u8  s_warp_jingle;       /* 1 = ev11 playing; wait 0x64 then ev10/4163 */
+static u8  s_warp_jingle;       /* 1 = ev11 playing; wait 0x64 then load */
 static u16 s_warp_jwait;
 static u8  s_warp_old;
 static u8  s_warp_new;
+static u16 s_warp_dest;         /* E722: load after wait_frames(0x64), not before */
 static u8  s_nt[32][PF_COLS];   /* VRAM playfield shadow, 24-col */
 static u8  s_e800[BOOT_ROWS][PF_COLS]; /* MSX E800 circular 24x24 */
 static u8  s_e714;              /* E714 circular write index 0-23 */
@@ -148,6 +149,7 @@ static void lab_9251_tick(void);
 static void base_hold(void);
 static void base_clear_tick(void);
 static void script_boot(u8 round, u16 pc);
+static void warp_commit_load(void);
 static void warp_jingle_tick(void);
 static void recolor_charset_tile(u8 tid, const u8 *ct8);
 static void recolor_charset_tile_fill(u8 tid, u8 ct);
@@ -2471,6 +2473,7 @@ static void scroll_speed_reset(u8 target)
     s_clr_mode = 0;
     s_warp_jingle = 0;
     s_warp_jwait = 0;
+    s_warp_dest = 0;
     s_scroll_px = 0;
     s_scroll_delta = 0;
     s_row_carry = 0;
@@ -2636,9 +2639,8 @@ static void base_clear_finish(void)
      * DEC Z -> 9251; else 92af. */
     if (mode == 0x0F)
     {
-        /* 91F1: E722=0xB7A5, SET 5,E102 → 40DA → LAB_414d E132+=0x20. */
-        script_boot(8, map_script_ptrs[0]);
-        entity_alc_complete();
+        /* 91F1: E722=0xB7A5, SET 5,E102 → 40DA (ev11 + wait 0x64 + 940c). */
+        map_script_warp(map_script_ptrs[0]);
         return;
     }
     if (mode == 0x10)
@@ -2655,10 +2657,7 @@ static void base_clear_finish(void)
     {
         /* LAB_92af: E722=0xA6F4, SET 5+3 → 40DA → LAB_414d. */
         if (!s_cred_on)
-        {
-            map_script_start_ending();
-            entity_alc_complete();
-        }
+            map_script_warp(MAP_ENDING_STREAM);
         return;
     }
     /* SUB_ram_4163: ev1, or ev2 if round%8==0. Attract (E102.7) skips.
@@ -2941,6 +2940,16 @@ void map_script_update(void)
         u16 sum;
         u16 prev_px;
 
+        /* 9480 BIT 5 RET NZ + 40DA wait_frames(0x64): no ramp, no 97e3,
+         * no 9393. Load happens when the jingle wait hits 0, then JP 4074. */
+        if (s_warp_jingle)
+        {
+            warp_jingle_tick();
+            cred_tick();
+            bg_update();
+            return;
+        }
+
         /* scroll_velocity_ctrl 0x9480: ramp E710 toward E712 every 4 frames.
          * E150 bits 0-1 skip the ramp. Clear ceremony freezes E710=0 -- MSX
          * 90a6 runs inside gameplay_frame_loop which never calls 9480.
@@ -3015,7 +3024,6 @@ void map_script_update(void)
             base_hold();
             base_clear_tick();
         }
-        warp_jingle_tick();
         prev_px = s_scroll_px;
         if (s_end_snapped)
             s_scroll_px = 0;
@@ -3130,13 +3138,38 @@ void map_script_draw_credits(void)
     }
 }
 
-/* 0x40EA: ev11, wait_frames(0x64), then 0x4133 ev10 or 0x4163 ev1/ev2. */
+/* 0x40EA: ev11, wait_frames(0x64), then 940c load, then 0x4133 ev10 or 0x4163. */
 static void arm_warp_jingle(u8 old_r, u8 new_r)
 {
     s_warp_jingle = 1;
     s_warp_jwait = 0x64;
     s_warp_old = old_r;
     s_warp_new = new_r;
+}
+
+static void warp_commit_load(void)
+{
+    u16 dest = s_warp_dest;
+
+    s_warp_dest = 0;
+    s_boot_quiet = 1;
+    if (dest == MAP_ENDING_STREAM)
+    {
+        map_script_start_ending();
+        s_boot_quiet = 0;
+        entity_alc_complete();
+        return;
+    }
+    if (blob_ok(dest, 3))
+    {
+        script_boot(resolve_round_from_ptr(dest), dest);
+        s_boot_quiet = 0;
+        entity_alc_complete();
+        return;
+    }
+    map_script_init_round(resolve_round_from_ptr(dest));
+    s_boot_quiet = 0;
+    entity_alc_complete();
 }
 
 static void warp_jingle_tick(void)
@@ -3149,6 +3182,8 @@ static void warp_jingle_tick(void)
         return;
     }
     s_warp_jingle = 0;
+    /* 40DA: wait_frames returned; 940c / 946e now, then 4163 / ev10. */
+    warp_commit_load();
     if (player_is_over())
         return;
     /* load_bg_level: new&7==0 and old&7==0 -> stop + ev10, skip 4163. */
@@ -3167,45 +3202,37 @@ static void warp_jingle_tick(void)
         sound_play_event(SND_EV_THEME);
 }
 
+u8 map_script_warp_waiting(void)
+{
+    return s_warp_jingle;
+}
+
 void map_script_warp(u16 dest)
 {
     u8 old_round = s_ms.round;
-    u8 jing = 0;
 
     /* Type-72 black orb: dest is a stream ptr from the idol table. */
     if (!dest && s_ms.round == 7)
         dest = map_script_ptrs[0];  /* documented R7->R8 0xB7A5 */
+
+    /* 40BA: clear live slots + E150=0. Do not write type 0x28 (totem punch). */
+    entity_clear_enemies();
+
     /* level_complete_handler: E722==0 skips stop/ev11 and the load. */
-    if (dest)
+    if (!dest)
     {
-        sound_stop_all();
-        sound_play_event(SND_EV_CLEARJING);
-        jing = 1;
-        s_boot_quiet = 1;
+        entity_alc_complete();
+        return;
     }
+
+    sound_stop_all();
+    sound_play_event(SND_EV_CLEARJING);
+    s_boot_quiet = 1;
+    s_warp_dest = dest;
+    /* MAP_ENDING_STREAM 0xA6F4 still arms credits — after the 0x64 wait. */
     if (dest == MAP_ENDING_STREAM)
-    {
-        map_script_start_ending();
-        s_boot_quiet = 0;
-        if (jing)
-            arm_warp_jingle(old_round, s_ms.round);
-        /* 8a11 SET 5 → 40DA → LAB_414d E132+=0x20. Not inside alc_reset. */
-        entity_alc_complete();
-        return;
-    }
-    if (blob_ok(dest, 3))
-    {
-        script_boot(resolve_round_from_ptr(dest), dest);
-        s_boot_quiet = 0;
-        if (jing)
-            arm_warp_jingle(old_round, s_ms.round);
-        entity_alc_complete();
-        return;
-    }
-    map_script_init_round(resolve_round_from_ptr(dest));
-    s_boot_quiet = 0;
-    if (jing)
-        arm_warp_jingle(old_round, s_ms.round);
-    /* E722==0 still falls into LAB_414d (same-stage +0x20). */
-    entity_alc_complete();
+        s_warp_new = 0;
+    else
+        s_warp_new = resolve_round_from_ptr(dest);
+    arm_warp_jingle(old_round, s_warp_new);
 }
