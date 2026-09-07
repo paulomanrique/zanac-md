@@ -58,6 +58,9 @@ void map_script_init_round(u8 round);
 /* Last round reached (MSX E701 continue). Title START+C uses this. */
 u8   map_script_continue_round(void);
 void map_script_update(void);
+/* Japan 9a79 is vblank after 87e2/88ed write E800. Queue wrap NT at 97e3
+ * (pre-carry RAW) and DMA the e800 row after entity_update punches. */
+void map_script_commit_wrap(void);
 void map_script_draw_hud(void);
 void map_script_reset_scroll(void);
 const MapScript *map_script_state(void);

@@ -218,6 +218,7 @@ void game_update(void)
 
         map_script_update();
         player_update();
+        map_script_commit_wrap();
         map_script_draw_hud();
         player_draw_hud();
         player_draw_over();
@@ -239,6 +240,7 @@ void game_update(void)
         /* Credits START is ESC (0x476C), not STOP. Do not steal it for pause. */
         map_script_update();
         player_update();
+        map_script_commit_wrap();
         map_script_draw_hud();
         player_draw_hud();
         map_script_draw_credits();
@@ -257,6 +259,7 @@ void game_update(void)
     if (map_script_warp_waiting())
     {
         map_script_update();
+        map_script_commit_wrap();
         map_script_draw_hud();
         player_draw_hud();
         return;
@@ -265,6 +268,7 @@ void game_update(void)
     map_script_update();
     player_update();
     entity_update();
+    map_script_commit_wrap();
     map_script_draw_hud();
     player_draw_hud();
 }

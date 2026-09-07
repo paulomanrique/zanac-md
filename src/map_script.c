@@ -118,6 +118,8 @@ static u16 s_scroll_base;       /* E702 after build_tile_screen; VSCROLL 0 */
 static u8  s_skip_precompute;   /* cmd 9 941b RET: this step does not 97e3 */
 static u8  s_ram_only;          /* boot: assemble E800 without poking VRAM */
 static u8  s_assemble_peek;     /* peek assemble: tiles only, no place */
+static u8  s_wrap_pending;      /* 97e3 row waiting for post-88ed DMA */
+static u8  s_wrap_nt;           /* hidden_wrap(pre) latched at 97e3 */
 /* Two DMA_QUEUE sources -- SGDK stores the pointer until vblank.
  * Original pads to MODE_H32_COLS so cols 24-31 of a wrap row are never
  * leftover charset, then restamps that HUD slice after the row DMA. */
@@ -703,9 +705,23 @@ static void scroll_precompute(u16 map_row)
         s_e800[s_e714][x] = s_rowbuf[ASM_SKIP + x];
     if (s_ram_only)
         return;
-    /* This carry's row is now at the top of the 192 (SAT Y 0).
-     * Overwrite the previous peek with the real assemble (stamps). */
-    dma_nt_row(hidden_wrap_nt_at(s_scroll_px), s_e800[s_e714], s_row_tm);
+    /* Wrap NT is still wrap(pre) RAW — VSCROLL has not moved. Japan 9a79
+     * copies E800 in vblank after 87e2/88ed. DMA_QUEUE snapshots s_dma_row
+     * now would flush that pre-punch assemble over the digit/wreckage
+     * XY poke (script=1, never retried). Latch and DMA after punches. */
+    s_wrap_nt = hidden_wrap_nt_at(s_scroll_px);
+    if (s_row_tm != DMA_QUEUE)
+        dma_nt_row(s_wrap_nt, s_e800[s_e714], s_row_tm);
+    else
+        s_wrap_pending = 1;
+}
+
+void map_script_commit_wrap(void)
+{
+    if (!s_wrap_pending)
+        return;
+    s_wrap_pending = 0;
+    dma_nt_row(s_wrap_nt, s_e800[s_e714], s_row_tm);
 }
 
 /*
@@ -1255,7 +1271,10 @@ void map_script_stamp_82_digit(s16 x, s16 y, u8 fire_num)
         return;
     if (!sat_to_nt(px, (s16)(ysub & 0xF8), &col0, &row0))
         return;
-    nt_put(col0, row0, (u8)(0x30 + fire_num));
+    (void)row0;
+    /* 87e2: LD (HL),A on 8948's E800 then SETWRT VRAM. punch_cell is
+     * that order so commit_wrap DMA (Japan 9a79) includes the digit. */
+    punch_cell(col0, (u8)((u8)(ysub & 0xF8) >> 3), (u8)(0x30 + fire_num));
 }
 
 static void bg_fill_plane(void)
@@ -2482,6 +2501,7 @@ static void scroll_speed_reset(u8 target)
     s_warp_dest = 0;
     s_scroll_px = 0;
     s_scroll_delta = 0;
+    s_wrap_pending = 0;
     s_row_carry = 0;
     s_scroll_base = 0;
     s_ram_only = 0;
