@@ -1389,15 +1389,10 @@ static void place_tile_group(StreamSlot *st, u16 *pptr)
             if (tbl && blob_ok((u16)(s_ms.idol_ptr + s_idol_cur), 2))
                 dest = (u16)tbl[0] | ((u16)tbl[1] << 8);
         }
-        /* R7 table 0xB787 (census): idx 3/10 = 0xB7A5 -> R8, idx 6/12/20
-         * = 0xB61A -> R7. Live cursor often reads 0x0000 / tile words
-         * (resolve -> R0), so the black-orb path never left R7. */
-        if ((type == 70 || type == 71) && s_ms.round == 7)
-        {
-            u8 wr = resolve_round_from_ptr(dest);
-            if (wr != 7 && wr != 8)
-                dest = map_script_ptrs[0];  /* 0xB7A5 */
-        }
+        /* 87b0: A=+0x03 (cursor stuffed at 9654), HL=E720, ADD HL,BC,
+         * +0x1c/+0x1d = word. No round filter. Table 0xB787 +0 is 0x0000
+         * and +3/+0x0A are 0xB7A5; 8a0b stores that in E722 as-is.
+         * E722==0 -> 40DA 414d (no load). Do not invent 0xB7A5. */
         /* 0x9607 check_col_clear: CF -> skip place (still consume + idol bump).
          * Peek assemble must still consume the descriptor (count/tiles)
          * but must not spawn or scan occupancy -- restore would leave
@@ -1479,12 +1474,7 @@ static void place_ctrl_at(u16 ptr)
                 if (tbl && blob_ok((u16)(s_ms.idol_ptr + s_idol_cur), 2))
                     dest = (u16)tbl[0] | ((u16)tbl[1] << 8);
             }
-            if ((type == 70 || type == 71) && s_ms.round == 7)
-            {
-                u8 wr = resolve_round_from_ptr(dest);
-                if (wr != 7 && wr != 8)
-                    dest = map_script_ptrs[0];
-            }
+            /* 87b0: table[cursor] as-is. No R7 dest rewrite. */
             if (!s_assemble_peek && entity_check_col_clear())
             {
                 if (entity_place_ground(type, x, y, dest))
@@ -3211,9 +3201,8 @@ void map_script_warp(u16 dest)
 {
     u8 old_round = s_ms.round;
 
-    /* Type-72 black orb: dest is a stream ptr from the idol table. */
-    if (!dest && s_ms.round == 7)
-        dest = map_script_ptrs[0];  /* documented R7->R8 0xB7A5 */
+    /* Type-72 black orb: dest is +0x1c/+0x1d from 87bb (table word).
+     * E722==0 skips stop/ev11/load (40E2 JP 414d). Do not invent R8. */
 
     /* 40BA: clear live slots + E150=0. Do not write type 0x28 (totem punch). */
     entity_clear_enemies();
