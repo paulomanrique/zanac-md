@@ -39,7 +39,7 @@ def main() -> int:
     if "(s16)st->ybase * 8 + (s16)r[2] - 0x20" in map_c:
         return fail("16-bit 964C rejects the R1 left eye (SAT 368→248)")
 
-    proto = re.search(r"static void spawn_proto_box\(void\)\s*\{(.*?)^\}", ent, re.S | re.M)
+    proto = re.search(r"static int spawn_proto_box\(void\)\s*\{(.*?)^\}", ent, re.S | re.M)
     if not proto:
         return fail("spawn_proto_box not found")
     body = proto.group(1)

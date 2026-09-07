@@ -2500,7 +2500,7 @@ static void spawn_wide_at(Slot *e, u8 type, s16 x, s16 y, u16 dest)
         spr_place(e, FRAME_CIRCLE);
 }
 
-static void spawn_proto_box(void)
+static int spawn_proto_box(void)
 {
     /* handler_type68 77a1: X=(H&0x3F)+0x38, +0x20 per child;
      * types from 77ea[(E104&0x0F)*3]; SAT countdown from 7808 after
@@ -2516,10 +2516,14 @@ static void spawn_proto_box(void)
     {
         Slot *e = free_enemy();
         if (!e)
-            return;
+            /* 77d9 CALL 4496 / 77dc RET C: children 2 and 3 are simply lost
+             * when the table is full. Only the first slot decides the caller's
+             * carry (BFA0 0x4496 / RET C), which is what keeps the E125 latch. */
+            return i != 0;
         spawn_box(e, k_box_types[type_off + i], x, 0, k_box_sat[sat_off + i]);
         x = (s16)(x + 0x20);
     }
+    return 1;
 }
 
 
@@ -4579,10 +4583,7 @@ static int spawn_from_type(u8 t)
     Slot *e;
 
     if (t == 68)
-    {
-        spawn_proto_box();
-        return 1;
-    }
+        return spawn_proto_box();
     if (t == 63)
     {
         /* Stream type63: same leftover as MSX (Y=0) + 71c5 X. */
@@ -4735,8 +4736,12 @@ static void spawn_tick(void)
     if (s_e125 & 0x01)
     {
         /* BFA0: CALL 4496 / RET C / then RES 0,(E125) / LD (HL),0x44.
-         * A full table must keep the husk latch (84c6) for the next tick. */
-        if (spawn_from_type(44))
+         * A full table must keep the husk latch (84c6) for the next tick.
+         * 0x44 there is the entity TYPE BYTE and entity_dispatch indexes
+         * entity_jump_table by type*2, so 0x44 = 68 = handler_type68_proto_box
+         * (0x77A1), the three-box cluster. It is not decimal 44, which is
+         * 0x2C = handler_type44_ground_structure (0x82D0). */
+        if (spawn_from_type(68))
             s_e125 = (u8)(s_e125 & (u8)~0x01);
         return;
     }

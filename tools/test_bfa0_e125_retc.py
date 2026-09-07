@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""BFA0 must not clear E125 until spawn_from_type(44) succeeds.
+"""BFA0 must not clear E125 until spawn_from_type(68) succeeds.
 
 zanac.asm Japan v1 (SHA1 46e9ed7b7f6dfda8eee266476c9ebc4dd9d8fcc2):
 
@@ -19,7 +19,7 @@ zanac.asm Japan v1 (SHA1 46e9ed7b7f6dfda8eee266476c9ebc4dd9d8fcc2):
   alloc_entity_slot 4496: walk E3A0 stride 0x20, B=0x15.
     OR A / RET Z on free; table full → SCF / RET.
 
-  Old port: RES first, then spawn_from_type(44). A full table
+  Old port: RES first, then spawn_from_type(68). A full table
   dropped the husk-latched type-44 forever.
 
 Usage (from zanac-md):
@@ -232,25 +232,25 @@ def main() -> int:
             fail("spawn_tick must still test s_e125 bit0")
             fails += 1
         else:
-            spawn_at = bfa0.find("spawn_from_type(44)")
+            spawn_at = bfa0.find("spawn_from_type(68)")
             clear_at = bfa0.find("s_e125 =")
             if spawn_at < 0:
-                fail("BFA0 must still spawn_from_type(44)")
+                fail("BFA0 must spawn_from_type(68) (LD (HL),0x44 = type 68, not decimal 44)")
                 fails += 1
             elif clear_at < 0:
                 fail("BFA0 must still RES 0,(E125) on success")
                 fails += 1
             elif spawn_at > clear_at:
-                fail("BFA0 must not clear s_e125 before spawn_from_type(44)")
+                fail("BFA0 must not clear s_e125 before spawn_from_type(68)")
                 fails += 1
-            elif "if (spawn_from_type(44))" not in bfa0:
-                fail("BFA0 must gate RES on spawn_from_type(44) success")
+            elif "if (spawn_from_type(68))" not in bfa0:
+                fail("BFA0 must gate RES on spawn_from_type(68) success")
                 fails += 1
             elif "return;" not in bfa0:
                 fail("BFA0 must RET after the latch attempt (skip stream)")
                 fails += 1
             else:
-                print("  spawn_tick: spawn_from_type(44) then RES on success")
+                print("  spawn_tick: spawn_from_type(68) then RES on success")
             bit3_at = tick.find("s_spawn_ctrl & 0x08")
             e125_at = tick.find("s_e125 & 0x01")
             if bit3_at < 0 or e125_at < 0 or e125_at > bit3_at:

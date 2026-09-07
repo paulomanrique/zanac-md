@@ -375,18 +375,18 @@ def main() -> int:
     if not tick:
         fail("spawn_tick not found")
         fails += 1
-    elif "spawn_from_type(44)" not in tick:
-        fail("BFA0 spawn_from_type(44) was reverted")
+    elif "spawn_from_type(68)" not in tick:
+        fail("BFA0 spawn_from_type(68) was reverted")
         fails += 1
     elif not re.search(
-        r"if \(spawn_from_type\(44\)\)\s*"
+        r"if \(spawn_from_type\(68\)\)\s*"
         r"s_e125 = \(u8\)\(s_e125 & \(u8\)~0x01\)",
         tick,
     ):
-        fail("BFA0 must RES s_e125 only after spawn_from_type(44) succeeds")
+        fail("BFA0 must RES s_e125 only after spawn_from_type(68) succeeds")
         fails += 1
     else:
-        print("  KEEP: BFA0 spawn_from_type(44) then RES s_e125 on success")
+        print("  KEEP: BFA0 spawn_from_type(68) then RES s_e125 on success")
 
     gs = fn_span(ent, "static void gswoop_step(Slot *e)")
     if not gs or "(u8)((u8)sib->x - (u8)e->x) < 0x0B" not in gs:
