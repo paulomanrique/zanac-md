@@ -6,7 +6,7 @@ photo-proven set:
 
   A) One 0xBF+phase lens per pod (75-78 1x1). 8948 H is unsigned SUB 0x20
      (Japan 8a92). R1 left-eye open is 964C 8-bit SAT X (test_left_eye_open).
-     hidden_wrap == sat_to_nt(0).
+     hidden_wrap(aligned) == sat_to_nt(0). leftover wrap(raw) is peek.
   B) Ship black complement same X, Y+2 (Japan 0x7735 ADD 0xF1 vs
      0x48C0 SUB 0x11). Not X+1; not same-Y (29-bit hull eat).
   C) become_expl does not force ground=1 on 4898 type44/guns.
@@ -47,7 +47,7 @@ def hidden_wrap_nt_at(scroll_px: int) -> int:
 
 
 def sat_to_nt_y0(scroll_px: int) -> int:
-    return hidden_wrap_nt_at(scroll_px)
+    return hidden_wrap_nt_at(scroll_px & ~7)
 
 
 def main() -> int:
@@ -67,21 +67,24 @@ def main() -> int:
         return fail("G: wrap must be playfield top (screen Y 16 / SAT Y 0)")
     if "8 - off" in wrap.group(1):
         return fail("G: wrap Y=8 is the letterbox row (hard blue/green seam)")
-    for sc in (0, 1, 6, 7, 8, 9, 16, 64, 192):
+    for sc in (0, 8, 16, 64, 192):
         if hidden_wrap_nt_at(sc) != sat_to_nt_y0(sc):
             return fail(
                 "A/G: hidden_wrap(%d)=%d != sat_to_nt(0)=%d"
                 % (sc, hidden_wrap_nt_at(sc), sat_to_nt_y0(sc))
             )
+    for sc in (1, 6, 7, 9):
+        if sat_to_nt_y0(sc) == hidden_wrap_nt_at(sc):
+            return fail("A/G: frac %d sat_to_nt(0) must not be wrap(raw) peek" % sc)
     satfn = re.search(
         r"static int sat_to_nt\(s16 x, s16 y, u8 \*col, u8 \*row\)\s*\{(.*?)^\}",
         mp,
         re.S | re.M,
     )
-    if not satfn or "hidden_wrap_nt_at(s_scroll_px)" not in satfn.group(1):
-        return fail("A/G: sat_to_nt Y must be wrap + (Y/8)")
-    if satfn and "s_scroll_px & 0xFFF8" in satfn.group(1):
-        return fail("A/G: sat_to_nt must not subtract scroll&~7")
+    if not satfn or "tile_wrap_nt_at(s_scroll_px)" not in satfn.group(1):
+        return fail("A/G: sat_to_nt Y must be wrap(scroll&~7) + (Y/8)")
+    if satfn and "hidden_wrap_nt_at(s_scroll_px)" in satfn.group(1):
+        return fail("A/G: #95 wrap(raw)+Y/8 is peek at leftover")
     if "peek_next_row_at((u16)(s_ms.row + 1), (u16)(s_scroll_px + 8))" not in mp:
         return fail("G: boot peek must be scroll_px+8 (NT 31), not NT 0")
 

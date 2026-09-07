@@ -15,7 +15,8 @@ ground=1 on type44/guns, invented totem 0x28 punch).
      Do not punch 3x2 of 0x28 onto the yellow face.
   5) Green flyer 71f6: Y SUB 0x11 (same as primary), X = parent, 0x81.
      No ship X+1 / no ship Y+2.
-  6) Wrap = sat_to_nt(Y=0) = screen 16. HUD BG_B 24-31 restore stays.
+  6) Wrap(aligned) = sat_to_nt(Y=0) = screen 16. leftover wrap(raw) is peek.
+     HUD BG_B 24-31 restore stays.
      No playfield letter fill. No opaque 0x20.
   7) R1 eyes: type 75 is 1x1 0xBF+phase. sat_x_964c() 8-bit stays.
 
@@ -69,7 +70,7 @@ def hidden_wrap_nt_at(scroll_px: int) -> int:
 
 
 def sat_to_nt_y0(scroll_px: int) -> int:
-    return hidden_wrap_nt_at(scroll_px)
+    return hidden_wrap_nt_at(scroll_px & ~7)
 
 
 def sat_x_8bit(ybase: int, blob_x: int) -> int:
@@ -213,21 +214,24 @@ def main() -> int:
         return fail("6: wrap must be playfield top (screen Y 16 / SAT Y 0)")
     if "8 - off" in wrap.group(1):
         return fail("6: wrap Y=8 is the letterbox row (hard blue/green seam)")
-    for sc in (0, 1, 6, 7, 8, 9, 16, 64, 192):
+    for sc in (0, 8, 16, 64, 192):
         if hidden_wrap_nt_at(sc) != sat_to_nt_y0(sc):
             return fail(
                 "6: hidden_wrap(%d)=%d != sat_to_nt(0)=%d"
                 % (sc, hidden_wrap_nt_at(sc), sat_to_nt_y0(sc))
             )
+    for sc in (1, 6, 7, 9):
+        if sat_to_nt_y0(sc) == hidden_wrap_nt_at(sc):
+            return fail("6: frac %d sat_to_nt(0) must not be wrap(raw) peek" % sc)
     satfn = re.search(
         r"static int sat_to_nt\(s16 x, s16 y, u8 \*col, u8 \*row\)\s*\{(.*?)^\}",
         mp,
         re.S | re.M,
     )
-    if not satfn or "hidden_wrap_nt_at(s_scroll_px)" not in satfn.group(1):
-        return fail("6: sat_to_nt Y must be wrap + (Y/8)")
-    if satfn and "s_scroll_px & 0xFFF8" in satfn.group(1):
-        return fail("6: sat_to_nt must not subtract scroll&~7")
+    if not satfn or "tile_wrap_nt_at(s_scroll_px)" not in satfn.group(1):
+        return fail("6: sat_to_nt Y must be wrap(scroll&~7) + (Y/8)")
+    if satfn and "hidden_wrap_nt_at(s_scroll_px)" in satfn.group(1):
+        return fail("6: #95 wrap(raw)+Y/8 is peek at leftover")
     if "peek_next_row_at((u16)(s_ms.row + 1), (u16)(s_scroll_px + 8))" not in mp:
         return fail("6: boot peek must be scroll_px+8 (NT 31)")
     if "VDP_setTileMapDataRow(BG_B, dst + MODE_BAR_COL, nt_y" not in mp:

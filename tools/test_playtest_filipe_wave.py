@@ -8,9 +8,10 @@ Japan v1 SHA1 46e9ed7b7f6dfda8eee266476c9ebc4dd9d8fcc2.
    previous SAT. spr_detach + reveal retry + SPR_initEx(512).
 2) Enemy black mask: Japan 71f6 is parentY-0x11 / parent X / 0x81 -- the
    same SUB as 48C0. Do not apply ship Y+2 (7735 ADD 0xF1).
-3+4) Horizontal tear + missing firebox digits: sat_to_nt Y is wrap+(Y/8).
-   (Y-(scroll&~7))>>3 is 8 NT rows off wrap at leftover E711 frac 1-7.
-   KEEP: peek only after real 97e3; 97e3 DMA wrap(pre-carry).
+3+4) Horizontal tear + missing firebox digits: sat_to_nt is
+   wrap(scroll&~7)+Y/8 (8px 97e3 tile). #95 wrap(raw)+Y/8 is the peek
+   sliver at leftover frac 1-7 — stamps miss the live cell.
+   KEEP: peek only after real 97e3; 97e3 DMA wrap(pre-carry) RAW.
 5) Slowdown: no skipped Japan ticks. Cache complement DMA; detach leaks
    so SPR_update does not walk orphan SAT; SPR_initEx tile budget.
 6) GO ev4: 3 voices, 0x00 is a rest (4F55), not END.
@@ -75,15 +76,15 @@ def main() -> int:
     sat = fn_span(mp, "static int sat_to_nt(s16 x, s16 y, u8 *col, u8 *row)")
     if not sat:
         return fail("sat_to_nt not found")
-    if "hidden_wrap_nt_at(s_scroll_px)" not in sat:
-        return fail("sat_to_nt Y must be wrap + (Y/8) (Japan 8948 screen row)")
-    if "s_scroll_px & 0xFFF8" in sat:
-        return fail("sat_to_nt must not subtract scroll&~7")
+    if "tile_wrap_nt_at(s_scroll_px)" not in sat:
+        return fail("sat_to_nt Y must be wrap(scroll&~7)+Y/8 (8px tile, not peek)")
+    if "hidden_wrap_nt_at(s_scroll_px)" in sat:
+        return fail("#95 wrap(raw)+Y/8 is peek at leftover — use tile_wrap")
     vis = fn_span(mp, "static u8 vis_nt_row(u8 tms_row)")
-    if not vis or "hidden_wrap_nt_at(s_scroll_px)" not in vis:
-        return fail("vis_nt_row must use wrap + tms_row")
-    if vis and "0xFFF8" in vis:
-        return fail("vis_nt_row must not use scroll&~7")
+    if not vis or "tile_wrap_nt_at(s_scroll_px)" not in vis:
+        return fail("vis_nt_row must use tile_wrap + tms_row")
+    if vis and "hidden_wrap_nt_at(s_scroll_px)" in vis:
+        return fail("vis_nt_row must not wrap(raw)")
 
     for sc in (0, 8, 16, 64, 192, 248):
         if hidden_wrap_nt_at(sc) != hidden_wrap_nt_at(sc):
@@ -180,7 +181,7 @@ def main() -> int:
     if "VDP_fillTileMapRect(BG_A, mode_letter_attr(), 0, 2, MODE_BAR_COL, 24)" in mp:
         return fail("KEEP: no playfield letter fill")
 
-    print("ok: filipe wave — wrap+(Y/8), box detach/retry, 71f6 no Y+2, DMA cache, GO rest")
+    print("ok: filipe wave — tile_wrap+(Y/8), box detach/retry, 71f6 no Y+2, DMA cache, GO rest")
     return 0
 
 

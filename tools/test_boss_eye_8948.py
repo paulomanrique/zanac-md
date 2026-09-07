@@ -37,7 +37,7 @@ def hidden_wrap_nt_at(scroll_px: int, y_off: int = 16) -> int:
 
 
 def sat_to_nt_y0(scroll_px: int) -> int:
-    return hidden_wrap_nt_at(scroll_px)
+    return hidden_wrap_nt_at(scroll_px & ~7)
 
 
 def main() -> int:
@@ -100,15 +100,18 @@ def main() -> int:
                 "hidden_wrap(%d)=%d != sat_to_nt(0)=%d"
                 % (sc, hidden_wrap_nt_at(sc), sat_to_nt_y0(sc))
             )
+    for sc in (1, 6, 7, 9):
+        if sat_to_nt_y0(sc) == hidden_wrap_nt_at(sc):
+            return fail("frac %d: sat_to_nt(0) must not be wrap(raw) peek" % sc)
     satfn = re.search(
         r"static int sat_to_nt\(s16 x, s16 y, u8 \*col, u8 \*row\)\s*\{(.*?)^\}",
         mp,
         re.S | re.M,
     )
-    if not satfn or "hidden_wrap_nt_at(s_scroll_px)" not in satfn.group(1):
-        return fail("sat_to_nt Y must be wrap + (Y/8)")
-    if satfn and "s_scroll_px & 0xFFF8" in satfn.group(1):
-        return fail("sat_to_nt must not subtract scroll&~7")
+    if not satfn or "tile_wrap_nt_at(s_scroll_px)" not in satfn.group(1):
+        return fail("sat_to_nt Y must be wrap(scroll&~7) + (Y/8)")
+    if satfn and "hidden_wrap_nt_at(s_scroll_px)" in satfn.group(1):
+        return fail("#95 wrap(raw)+Y/8 is peek at leftover")
 
     if hidden_wrap_nt_at(0) != 0:
         return fail("scroll 0 playfield top is NT 0, got %d" % hidden_wrap_nt_at(0))
