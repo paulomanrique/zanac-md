@@ -2977,16 +2977,26 @@ void map_script_update(void)
                 s_skip_precompute = 0;
                 s_ms.row++;
                 fire_pending();
-                /* Cmd 9 JP 9433 RETs without 97d5/precompute. */
+                /* Cmd 9 JP 9433 RETs without 97d5/precompute. Japan has
+                 * no peek (TMS nametable has no VSCROLL). A peek here
+                 * assembled the jumped-to row with the old columns
+                 * (often a full 0x28 sky line) into the next wrap slot
+                 * -- a hard blue cut through live green. */
                 if (!s_skip_precompute)
                 {
+                    /* VSCROLL this carry is already (new row)*8 +
+                     * (E711>>5)==0. Point wrap at that pixel so
+                     * hidden_wrap == sat_to_nt(0) at the 97e3 DMA. */
+                    if (!s_end_snapped)
+                        s_scroll_px = (u16)(((u16)(s_ms.row - s_scroll_base) << 3)
+                                            + (s_e711 >> 5));
                     /* 97e3: assemble once, DMA one nametable row at the wrap
                      * edge, then peek row+1 (restored) so subpixel VSCROLL is
                      * never stale/green. */
                     scroll_precompute(s_ms.row);
                     s_row_carry = 1;
+                    peek_next_row((u16)(s_ms.row + 1));
                 }
-                peek_next_row((u16)(s_ms.row + 1));
                 base_approach(1);
             }
         }

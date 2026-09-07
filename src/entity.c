@@ -417,6 +417,7 @@ static Slot s_fire;
 /* 7253 BIT 7: 728F init XOR 7306 update. Set when spawn already ran 730B. */
 static u8  s_fire7_life_ticked;
 static u8  s_fire7_cram;        /* PAL2[13] borrowed for 72de cycle */
+static u8  s_fire7_col;         /* 72de SAT colour; INC then AND 0x8F */
 /* 7221 BIT 7: init RET, no 4898. Set when entity_spawn_shot already ran
  * 7228-724e this frame (player_update then entity_update). */
 static u8  s_shot_init_ret[SHOT_SLOTS];
@@ -4928,7 +4929,8 @@ static void update_fire(void)
     if (fn != 0 && fn != 1 && fn != 6 && fn != 7)
         f->script++;
     /* fire 0/1/2/7 run: INC sat_color, keep TMS EC bit7 so SAT overlap
-     * stays graphic overlap. 3/4/5 stay 0x8F. */
+     * stays graphic overlap. 3/4/5 stay 0x8F. Fire 7 is Japan 72de
+     * INC+AND 0x8F on a dedicated CRAM index (tiles stay nibble 13). */
     cycle = (u8)(fn == 0 || fn == 1 || fn == 2 || fn == 7);
     if (cycle)
     {
@@ -6077,28 +6079,66 @@ static void fire7_cram_restore(void)
         return;
     PAL_setColor((u16)((PAL2 * 16) + FIRE7_CRAM_NIB), k_tms_vdp[FIRE7_CRAM_NIB]);
     s_fire7_cram = 0;
+    s_fire7_col = 0;
+}
+
+/* Paint every nonzero comet nibble to PAL2[13]. Remap-from-15 misses a
+ * packed index and leaves the shot on nibble 1 (TMS black). */
+static void fire7_paint_cram_tiles(Slot *f)
+{
+    Sprite *sp = f->spr;
+    TileSet *ts;
+    u16 nbytes;
+    u16 vaddr;
+    const u8 *src;
+    u8 *buf;
+    u8 want = FIRE7_CRAM_NIB;
+
+    if (!sp || !sp->frame)
+        return;
+    ts = sp->frame->tileset;
+    if (!ts || !ts->numTile)
+        return;
+    nbytes = (u16)(ts->numTile * 32);
+    vaddr = (u16)((sp->attribut & TILE_INDEX_MASK) * 32);
+    src = (const u8 *)FAR_SAFE(ts->tiles, nbytes);
+    buf = DMA_allocateAndQueueDma(DMA_VRAM, vaddr, (u16)(nbytes / 2), 2);
+    if (!buf)
+    {
+        static u8 s_pad[128];
+
+        if (nbytes > sizeof(s_pad))
+            nbytes = sizeof(s_pad);
+        orb_paint_body_nibbles(s_pad, src, nbytes, want);
+        DMA_queueDma(DMA_VRAM, s_pad, vaddr, (u16)(nbytes / 2), 2);
+    }
+    else
+        orb_paint_body_nibbles(buf, src, nbytes, want);
+    f->vram_fr = f->frame;
+    f->vram_nib = want;
 }
 
 static void fire7_bind_cram(Slot *f)
 {
-    u8 saved = f->sat_col;
-
+    /* 72bc LD 0x80, then 72de INC -> 0x81. Bind tiles to PAL2[13] and
+     * KEEP sat_col there. Restoring 0x81 lets spr_upload_color remap
+     * the comet back to nibble 1 (black-only; CRAM[13] never visible). */
+    s_fire7_col = 0x81;
     f->sat_col = (u8)(0x80 | FIRE7_CRAM_NIB);
-    if (f->spr && f->spr->frame)
-        spr_upload_color(f);
-    f->sat_col = saved;
+    fire7_paint_cram_tiles(f);
     PAL_setColor((u16)((PAL2 * 16) + FIRE7_CRAM_NIB),
-                 k_tms_vdp[saved & 0x0F]);
+                 k_tms_vdp[s_fire7_col & 0x0F]);
     s_fire7_cram = 1;
 }
 
 static void fire7_cycle_cram(Slot *f)
 {
-    u8 n;
-
-    f->sat_col = (u8)(0x80 | ((f->sat_col + 1) & 0x0F));
-    n = (u8)(f->sat_col & 0x0F);
-    PAL_setColor((u16)((PAL2 * 16) + FIRE7_CRAM_NIB), k_tms_vdp[n]);
+    /* Japan 72de: INC A; AND 0x8F. EC stays. Do not walk sat_col --
+     * tiles stay on nibble 13 so this CRAM write is what the player sees. */
+    (void)f;
+    s_fire7_col = (u8)((s_fire7_col + 1) & 0x8F);
+    PAL_setColor((u16)((PAL2 * 16) + FIRE7_CRAM_NIB),
+                 k_tms_vdp[s_fire7_col & 0x0F]);
 }
 
 void entity_init(void)
@@ -6120,6 +6160,7 @@ void entity_init(void)
     s_fireup_seq = 0;
     s_fire7_life_ticked = 0;
     s_fire7_cram = 0;
+    s_fire7_col = 0;
     memset(s_shot_init_ret, 0, sizeof(s_shot_init_ret));
     memset(s_riser_init_ret, 0, sizeof(s_riser_init_ret));
     memset(s_ebullet_init_ret, 0, sizeof(s_ebullet_init_ret));
