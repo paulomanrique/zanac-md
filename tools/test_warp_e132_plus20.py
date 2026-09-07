@@ -181,21 +181,42 @@ def main() -> int:
         print("  cmd_script_jump: no alc_reset / alc_complete")
 
     warp = fn_span(mapc, "void map_script_warp(u16 dest)")
-    if not warp or warp.count("entity_alc_complete") < 3:
-        fail("map_script_warp must entity_alc_complete on every 40DA exit")
+    commit = fn_span(mapc, "static void warp_commit_load(void)")
+    if not warp or "entity_alc_complete" not in warp:
+        fail("E722==0 must still LAB_414d entity_alc_complete")
         fails += 1
     else:
-        print("  map_script_warp: entity_alc_complete on all exits")
+        print("  map_script_warp: E722==0 still alc_complete")
+    if not commit or commit.count("entity_alc_complete") < 2:
+        fail("warp_commit_load must entity_alc_complete on load exits")
+        fails += 1
+    else:
+        print("  warp_commit_load: entity_alc_complete after 940c")
+    if warp and ("script_boot" in warp or "map_script_start_ending" in warp):
+        fail("map_script_warp must not load dest before wait_frames(0x64)")
+        fails += 1
+    else:
+        print("  map_script_warp: no script_boot before wait")
 
     finish = fn_span(mapc, "static void base_clear_finish(void)")
     if not finish:
         fail("base_clear_finish not found")
         return 1
-    if "entity_alc_complete" not in finish:
-        fail("base_clear_finish 0x0F / 92af must entity_alc_complete")
+    m0f = re.search(r"if \(mode == 0x0F\)\s*\{(.*?)\}", finish, re.S)
+    if not m0f or "map_script_warp" not in m0f.group(1):
+        fail("mode 0x0F must map_script_warp 0xB7A5 (40DA)")
+        fails += 1
+    elif "script_boot" in m0f.group(1):
+        fail("mode 0x0F must not script_boot before 40DA wait")
         fails += 1
     else:
-        print("  base_clear_finish: entity_alc_complete after 0x0F / 92af")
+        print("  base_clear_finish 0x0F: map_script_warp 0xB7A5")
+    m12 = re.search(r"if \(mode >= 0x12\)\s*\{(.*?)\}", finish, re.S)
+    if not m12 or "map_script_warp" not in m12.group(1):
+        fail("mode >=0x12 must map_script_warp ending (40DA)")
+        fails += 1
+    else:
+        print("  base_clear_finish 0x12: map_script_warp 0xA6F4")
     # 91FD / 9251 do not SET 5.
     m10 = re.search(
         r"if \(mode == 0x10\)\s*\{(.*?)\}", finish, re.S
