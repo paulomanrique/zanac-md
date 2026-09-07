@@ -16,7 +16,11 @@ int main(bool hardReset)
     (void)hardReset;
 
     VDP_setScreenWidth320();
-    SPR_init();
+    /* Dual-layer 16x16 (primary + 71f6 complement) is 8 tiles each.
+     * Default SPR_init is 420 tiles; raise so 24 enemy slots + shots
+     * + ship still AUTO_VRAM_ALLOC when the SAT is full. addSprite
+     * NULL is an invisible box -- do not invent extra type 4/5/6. */
+    SPR_initEx(512);
     /* wait_one_frame 0x4306 is one GINT (E1F8>=1). gameplay_frame_loop
      * 0x407A LD B,1. SGDK DMA auto-flush waits another VBlank when the
      * queue fills -- that is a second retrace and halves the tick rate.

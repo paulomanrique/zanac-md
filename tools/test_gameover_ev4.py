@@ -83,16 +83,82 @@ def main() -> int:
         return fail("GO wait still runs 9480 via map_script_update")
 
     ev4 = ev4_from_asm()
-    if ev4 is None:
-        print("ok: GO lock in sound.c (zanac.asm not present; header check skipped)")
-        return 0
     want = [
         (2, 0x41, 3, 5, 0x5538),
         (3, 0x41, 3, 5, 0x5563),
         (4, 0x41, 3, 5, 0x557F),
     ]
-    if ev4 != want:
+    if ev4 is not None and ev4 != want:
         return fail("ev4 header %s != %s" % (ev4, want))
+    if ev4 is None:
+        ev4 = want
+        print("  (zanac.asm not present; using Japan ev4 header)")
+
+    # 4F55: 0x00-0x7F is a note. ev4 rests with 0x00; treating 0 as END
+    # killed two voices and left a one-instrument GO cue.
+    fetch = re.search(r"static void fetch_stream\(Slot \*s\)\s*\{(.*?)^\}", snd, re.S | re.M)
+    if not fetch:
+        return fail("fetch_stream not found")
+    if "if (b <= 0x7F)" not in fetch.group(1):
+        return fail("fetch_stream must take 0x00-0x7F as notes (0x00 is rest)")
+    if re.search(r"if\s*\(\s*b\s*&&", fetch.group(1)):
+        return fail("do not skip note 0 (ev4 rests)")
+
+    blob = ROOT / "res" / "sound_blob.bin"
+    if blob.is_file():
+        data = blob.read_bytes()
+        base = 0x5234
+
+        def rd(a: int) -> int:
+            return data[a - base]
+
+        notes_per = []
+        chans = []
+        for dest, cfg0, tempo, tr, stream in ev4:
+            a = stream
+            notes = []
+            unknown = []
+            for _ in range(96):
+                if a < base or a > 0x5A10:
+                    unknown.append(a)
+                    break
+                b = rd(a)
+                if b == 0x82:
+                    break
+                if b == 0x80 or b == 0x81:
+                    a += 3
+                    continue
+                if 0x84 <= b <= 0x89:
+                    a += 2
+                    continue
+                if b in (0x8A, 0x8B, 0x8C):
+                    a += 3
+                    continue
+                if b == 0xDF:
+                    a += 2
+                    continue
+                if b >= 0xE0:
+                    a += 1
+                    continue
+                if b <= 0x7F:
+                    notes.append(b)
+                    a += 1
+                    continue
+                unknown.append(b)
+                break
+            if unknown:
+                return fail("ev4 dest %d unknown opcode/OOB %s" % (dest, unknown))
+            if len(notes) < 8:
+                return fail("ev4 dest %d only %d notes (multi-channel GO)" % (dest, len(notes)))
+            if 0 not in notes:
+                return fail("ev4 dest %d must keep 0x00 rests" % dest)
+            notes_per.append(len(notes))
+            # header channels are 0/1/2 — walk used the dest list above
+            chans.append(dest)
+        if chans != [2, 3, 4]:
+            return fail("ev4 dest slots drifted")
+        print("  ev4 notes/voice", notes_per, "incl. 0x00 rests")
+
     print("ok: ev4 slots 2/3/4; lock + 8f5e skipped during GO wait")
     return 0
 

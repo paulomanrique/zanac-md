@@ -786,14 +786,20 @@ static void punch_cell(u8 col, u8 screen_row, u8 tid)
 }
 
 /*
- * MSX 8948: VRAM row = Y/8 on the 24-row nametable (top of 192 = row 0).
- * MD: NT pixel Y = simY - scroll_px (8-bit wrap, 32-row plane) with
- * VSCROLL = -scroll_px - y_off. x is already nametable pixel X (SAT-32).
+ * Japan 8948: TMS VRAM row is Y/8 from the top of the 192 (no VSCROLL).
+ * E800 index is (E714 + Y/8) mod 24. MD VSCROLL parks that top row at
+ * hidden_wrap_nt_at(scroll_px), so the cell showing SAT Y is
+ *   (wrap + Y/8) & 31
+ * on the 32-row plane. Using (Y - (scroll&~7))>>3 missed wrap at
+ * leftover E711 frac 1-7 (cruise E710=0x34): 97e3/peek wrote NT 31
+ * while 87e2/88ed/8c15 stamped NT 0 -- a full-width blue/green seam
+ * and firebox digits 8 rows off the art.
+ * x is already nametable pixel X (SAT-32). C>=0x18 reject stays.
  */
 static int sat_to_nt(s16 x, s16 y, u8 *col, u8 *row)
 {
     u8 c;
-    u16 ntpix;
+    u8 sat_row;
 
     if (x < 0)
         return 0;
@@ -810,11 +816,11 @@ static int sat_to_nt(s16 x, s16 y, u8 *col, u8 *row)
      * so wreck tiles are not crooked vs neighboring tiles. */
     if (y < 0)
         return 0;
-    if ((u8)((u16)y >> 3) >= BOOT_ROWS)
+    sat_row = (u8)((u16)y >> 3);
+    if (sat_row >= BOOT_ROWS)
         return 0;
-    ntpix = (u16)((u16)y - (s_scroll_px & 0xFFF8));
     *col = c;
-    *row = (u8)((ntpix >> 3) & 31);
+    *row = (u8)((hidden_wrap_nt_at(s_scroll_px) + sat_row) & 31);
     return 1;
 }
 
@@ -2182,17 +2188,12 @@ static void cred_tick(void)
 }
 
 /* TMS nametable row r is always screen row r (no VSCROLL). MD maps that
- * onto the currently visible 24-row window using scroll_px&~7 (same
- * numeric bind as >>3). 9251 writes via SETWRT to fixed VRAM 0x3924
- * (row 9 col 4) while gameplay_frame_loop skips 9480, so this bind is
- * frozen for the letter pass. Tiles cannot land between rows. The
- * leftover E711>>5 (0-7px) is MD VDP != TMS, not a missing SAT store. */
+ * onto the currently visible 24-row window: wrap is SAT Y 0, then +r.
+ * Same Y as sat_to_nt (wrap + Y/8). Do not use scroll&~7 -- that leaves
+ * wrap and stamps 8 NT rows apart at leftover E711 frac 1-7. */
 static u8 vis_nt_row(u8 tms_row)
 {
-    u8 k = (u8)((s_scroll_px & 0xFFF8) >> 3);
-    u8 first = (u8)((u8)(0 - k) & 31);
-
-    return (u8)((first + tms_row) & 31);
+    return (u8)((hidden_wrap_nt_at(s_scroll_px) + tms_row) & 31);
 }
 
 /* scroll_sync 0x9AE4: wait E700.0 clear, RES bit 3, E714=0, copy 24x24
@@ -2986,7 +2987,7 @@ void map_script_update(void)
                     /* 97e3 / peek must use the pre-carry pixel. VSCROLL is
                      * still that value; wrap(pre) is the row being revealed.
                      * PR #91 set scroll_px to the post-carry pixel first so
-                     * wrap==sat_to_nt(0) at the DMA. sat_to_nt uses &~7;
+                     * wrap==sat_to_nt(0) at the DMA. sat_to_nt is wrap+(Y/8);
                      * leftover E711 at cruise E710=0x34 (9480 ramp from
                      * 0x20) makes wrap(post) one NT row north of wrap(pre).
                      * 97e3 wrote the complete assemble into the letterbox

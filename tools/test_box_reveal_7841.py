@@ -148,6 +148,16 @@ def main() -> int:
         fails += 1
     else:
         print("  spawn_box: bind=0 until 7841")
+    if not spawn_box or "spr_detach(e)" not in spawn_box:
+        fail("spawn_box must spr_detach (not orphan spr=NULL)")
+        fails += 1
+    else:
+        print("  spawn_box: spr_detach leftover SAT")
+    if "if (!e->spr)" not in box or "spr_place(e, FRAME_BOX)" not in box:
+        fail("box_step must retry spr_place after reveal if addSprite failed")
+        fails += 1
+    else:
+        print("  box_step: retry spr_place when spr is NULL")
 
     # KEEP: type 64 re-roll, not force-44 on first 64.
     conv = fn_span(ent, "static int spawn_from_type(u8 t)")

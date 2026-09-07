@@ -40,6 +40,11 @@ def main() -> int:
     game_c = GAME.read_text(encoding="utf-8")
     hud_c = HUD.read_text(encoding="utf-8")
 
+    if "SPR_initEx(" not in main_c:
+        return fail("main.c: SPR_initEx so dual-layer SAT still allocates")
+    m_spr = re.search(r"SPR_initEx\((\d+)\)", main_c)
+    if not m_spr or int(m_spr.group(1)) < 512:
+        return fail("SPR_initEx must reserve >=512 sprite tiles (default 420)")
     if "DMA_setAutoFlush(FALSE)" not in main_c:
         return fail("main.c: DMA auto-flush must be off (extra VBlank = 30Hz)")
     if "DMA_setAutoFlush(TRUE)" in main_c:

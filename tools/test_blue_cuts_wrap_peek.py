@@ -12,12 +12,16 @@ full 0x28 sky line) and DMA'd it into wrap(scroll+8) -- the slot the
 next 1-8px of VSCROLL reveals. Hard straight blue cut through live
 green.
 
-Do not set s_scroll_px to the post-carry pixel before 97e3. sat_to_nt
-uses &~7; leftover E711 at cruise E710=0x34 (9480 ramp) moves wrap/peek
-one NT row into the letterbox so the live top keeps the place-less peek
-(cut-off ground / R1 lower eye). Japan 9a79 dumps 24 rows; MD 97e3 must
-DMA wrap(pre-carry) while VSCROLL is still that pixel. Peek stays +8
-from that pre-carry value.
+Do not set s_scroll_px to the post-carry pixel before 97e3. leftover
+E711 at cruise E710=0x34 (9480 ramp) moves wrap/peek one NT row into
+the letterbox so the live top keeps the place-less peek (cut-off
+ground / R1 lower eye). Japan 9a79 dumps 24 rows; MD 97e3 must DMA
+wrap(pre-carry) while VSCROLL is still that pixel. Peek stays +8 from
+that pre-carry value.
+
+sat_to_nt Y is wrap+(Y/8), not (Y-(scroll&~7))>>3. At leftover frac
+1-7 that old subtract parked stamps 8 NT rows from 97e3 (seam + lost
+firebox digits).
 
 KEEP: HUD BG_B cols 24-31 restore. No playfield-wide letter fill.
 No opaque-recolor 0x20. wrap SAT Y 0 (screen 16). Boot peek +8 = NT 31.
@@ -49,6 +53,11 @@ def hidden_wrap_nt_at(scroll_px: int) -> int:
 
 
 def sat_to_nt_y0(scroll_px: int) -> int:
+    """Japan 8948: screen row 0 is wrap. Y=0 -> wrap, not scroll&~7."""
+    return hidden_wrap_nt_at(scroll_px)
+
+
+def old_sat_to_nt_y0(scroll_px: int) -> int:
     ntpix = (0 - (scroll_px & ~7)) & 0xFFFF
     return (ntpix >> 3) & 31
 
@@ -102,6 +111,20 @@ def main() -> int:
                 "hidden_wrap(%d)=%d != sat_to_nt(0)=%d"
                 % (sc, hidden_wrap_nt_at(sc), sat_to_nt_y0(sc))
             )
+    # Frac 1-7: old (Y-(scroll&~7)) is 8 NT rows off wrap (seam / digits).
+    for sc in (1, 6, 7, 9):
+        if hidden_wrap_nt_at(sc) == old_sat_to_nt_y0(sc):
+            return fail("frac %d: old &~7 must disagree with wrap" % sc)
+        if hidden_wrap_nt_at(sc) != sat_to_nt_y0(sc):
+            return fail("frac %d: sat_to_nt(0) must be wrap" % sc)
+
+    sat = fn_span(mp, "static int sat_to_nt(s16 x, s16 y, u8 *col, u8 *row)")
+    if not sat:
+        return fail("sat_to_nt not found")
+    if "hidden_wrap_nt_at(s_scroll_px)" not in sat:
+        return fail("sat_to_nt Y must be wrap + (Y/8)")
+    if "s_scroll_px & 0xFFF8" in sat:
+        return fail("sat_to_nt must not subtract scroll&~7")
 
     # Peek of the next 8px must not land in the live 24-row window.
     for sc in (0, 8, 16, 64, 192, 248):

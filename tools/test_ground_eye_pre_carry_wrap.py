@@ -10,7 +10,7 @@ VSCROLL. 97e3 assembles one E800 row; 9a79 dumps the 24-row nametable.
 MD peeks row+1 into wrap(scroll+8) so 1px VSCROLL is not stale.
 
 #91 moved s_scroll_px to the post-carry pixel before 97e3 so
-hidden_wrap == sat_to_nt(0) at the DMA. sat_to_nt uses scroll&~7.
+hidden_wrap == sat_to_nt(0) at the DMA. sat_to_nt is wrap+(Y/8).
 hidden_wrap uses the raw pixel. Boot E710=0x20 often has wrap(pre)==
 wrap(post). 9480 ramps E710 toward SCROLL_SPEED_TGT 0x34; leftover
 E711 at cruise makes wrap(post) one NT row north of wrap(pre) -- the
@@ -52,8 +52,7 @@ def hidden_wrap_nt_at(scroll_px: int) -> int:
 
 
 def sat_to_nt_y0(scroll_px: int) -> int:
-    ntpix = (0 - (scroll_px & ~7)) & 0xFFFF
-    return (ntpix >> 3) & 31
+    return hidden_wrap_nt_at(scroll_px)
 
 
 def ramp_carries(frames: int = 400) -> list[tuple[int, int, int]]:
@@ -201,6 +200,12 @@ def main() -> int:
         return fail("wrap must stay SAT Y 0 / screen 16")
     if "8 - off" in wrap.group(1):
         return fail("wrap Y=8 is the letterbox row (south lens / seam)")
+
+    sat = fn_span(mp, "static int sat_to_nt(s16 x, s16 y, u8 *col, u8 *row)")
+    if not sat or "hidden_wrap_nt_at(s_scroll_px)" not in sat:
+        return fail("sat_to_nt Y must stay wrap + (Y/8)")
+    if sat and "s_scroll_px & 0xFFF8" in sat:
+        return fail("sat_to_nt must not subtract scroll&~7")
 
     # 8c15 1x1 stays -- south repeat of 0xBF is the double stacked eye.
     fn = re.search(

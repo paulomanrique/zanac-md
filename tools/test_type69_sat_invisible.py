@@ -110,11 +110,13 @@ def main() -> int:
             fails += 1
         else:
             print(f"  {name}: sat_col = 0")
-        if not re.search(r"e->spr\s*=\s*NULL\s*;", body):
-            print(f"FAIL: {name} must leave spr NULL", file=sys.stderr)
-            fails += 1
-        else:
+        if re.search(r"e->spr\s*=\s*NULL\s*;", body):
             print(f"  {name}: spr = NULL")
+        elif "spr_detach(e)" in body:
+            print(f"  {name}: spr_detach (spr NULL after release)")
+        else:
+            print(f"FAIL: {name} must leave spr NULL (spr_detach)", file=sys.stderr)
+            fails += 1
 
     if not re.search(r"e->sat\s*=\s*0x28\s*;", fn11.group(1)):
         print("FAIL: type 11 SAT must stay 0x28 (7af0)", file=sys.stderr)
