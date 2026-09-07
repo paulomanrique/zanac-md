@@ -978,13 +978,52 @@ static void remap_tiles(u8 *dst, const u8 *src, u16 nbytes, u8 from, u8 to)
  * baked nibble). SGDK rescomp may pack that nibble off 15. Remap every
  * nonzero nibble to sat_col so the pulse is a clean disc, not leftover
  * flyer-blue / shot tiles from a packed index that `from==15` missed. */
+/* Every non-zero nibble becomes `want`, zero stays zero.
+ *
+ * This runs on the whole tileset of a sprite whose SAT colour changed, and the
+ * MSX changes that colour a lot: 72de walks the player's fire weapon through
+ * all 16 colours one per frame, and several enemies XOR-blink theirs. Measured
+ * with a V-counter profiler, update_fire alone was 60 of entity_update's 134
+ * scanlines with the byte-at-a-time version below, and 7 without it -- a fifth
+ * of an NTSC frame spent remapping nibbles while the fire button is held.
+ *
+ * The 32-bit form does eight nibbles at a time with no branches:
+ *   m = v | v>>1 | v>>2 | v>>3   collects each nibble's bits into its low bit
+ *   m &= 0x11111111              leaves 1 in the low bit of every non-zero one
+ *   m = (m << 4) - m             is m * 15, so 0xF fills every non-zero nibble
+ *                                (15 fits a nibble, so no carry crosses one)
+ *   m & (want * 0x11111111)      selects `want` exactly where the mask is set
+ * Verified equivalent to the byte loop over every 16-bit pattern and all 16
+ * values of `want`, plus 320000 random 32-bit words.
+ *
+ * The 68000 traps on an unaligned long access, so anything not 4-byte aligned
+ * (or a tail of 1-3 bytes) falls back to the original loop. */
 static void orb_paint_body_nibbles(u8 *dst, const u8 *src, u16 nbytes, u8 want)
 {
-    u16 i;
+    const u8 *sp = src ? src : dst;
+    u16 i = 0;
 
-    for (i = 0; i < nbytes; i++)
+    if (!(((u32)dst | (u32)sp) & 3))
     {
-        u8 b = src ? src[i] : dst[i];
+        const u32 w8 = (u32)want * 0x11111111UL;
+        u32 *d = (u32 *)dst;
+        const u32 *s = (const u32 *)sp;
+        u16 n = (u16)(nbytes >> 2);
+
+        while (n--)
+        {
+            u32 v = *s++;
+            u32 m = v | (v >> 1) | (v >> 2) | (v >> 3);
+
+            m &= 0x11111111UL;
+            *d++ = ((m << 4) - m) & w8;
+        }
+        i = (u16)(nbytes & ~3u);
+    }
+
+    for (; i < nbytes; i++)
+    {
+        u8 b = sp[i];
         u8 hi = (u8)(b >> 4);
         u8 lo = (u8)(b & 0x0F);
 
