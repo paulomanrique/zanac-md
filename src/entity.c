@@ -1165,14 +1165,66 @@ static void orb_encode_japan_tiles(u8 *dst, const u8 *pat, u8 want)
     }
 }
 
+/* Encoded-variant cache for the type-72 orb.
+ *
+ * base_core_anim 0x8A16 walks the orb through a fixed, tiny set of states:
+ * SAT names 0x1C / 0x20 / 0x24 against colours 0x8F, 0x83 (uploaded as
+ * k_orb_mid_pal), 0x8A and 0x8B while it is yellow, and 0x81 once it turns
+ * black. That is at most 15 distinct (pattern, nibble) pairs for the whole
+ * animation, and it repeats every four frames forever.
+ *
+ * Re-encoding one on every change cost 23 of the 36 scanlines that three live
+ * orbs spent in spr_set_sat_col, so keep the encoded bytes instead. 16 slots
+ * against 15 reachable pairs means a warm cache never evicts, which also keeps
+ * every pointer handed to DMA_queueDma valid until the frame's flush -- a slot
+ * cannot be rewritten while a queue entry still points at it.
+ *
+ * Round-robin replacement is only a safety net for data that never happens. */
+#define ORB_CACHE_N     16
+#define ORB_TILE_BYTES  128
+
+/* Declared as words on purpose. A u8 array has alignment 1 on m68k, so the
+ * linker is free to start it on an odd address -- which it did, and both the
+ * encoder's word stores and the DMA source address then take an address
+ * error. */
+static u16 s_orb_cache[ORB_CACHE_N][ORB_TILE_BYTES / 2];
+static u16 s_orb_cache_key[ORB_CACHE_N];
+static u8  s_orb_cache_used;
+static u8  s_orb_cache_next;
+
+static void orb_cache_reset(void)
+{
+    s_orb_cache_used = 0;
+    s_orb_cache_next = 0;
+}
+
+static const u8 *orb_cache_get(u8 sat, const u8 *jp, u8 want)
+{
+    u16 key = (u16)(((u16)sat << 8) | want);
+    u8 i;
+
+    for (i = 0; i < s_orb_cache_used; i++)
+        if (s_orb_cache_key[i] == key)
+            return (const u8 *)s_orb_cache[i];
+
+    if (s_orb_cache_used < ORB_CACHE_N)
+        i = s_orb_cache_used++;
+    else
+    {
+        i = s_orb_cache_next;
+        s_orb_cache_next = (u8)((s_orb_cache_next + 1) & (ORB_CACHE_N - 1));
+    }
+    orb_encode_japan_tiles((u8 *)s_orb_cache[i], jp, want);
+    s_orb_cache_key[i] = key;
+    return (const u8 *)s_orb_cache[i];
+}
+
 /* Type 72 only: 4-tile Japan disc. Cache key is SAT name + nibble
  * (FRAME_CIRCLE vehicle stays; 8a16 SAT 1C/20/24 changes the pat). */
 static int orb_upload_japan(Slot *s, u8 want)
 {
     const u8 *jp;
     u16 vaddr;
-    u8 *buf;
-    static u8 s_jp[128];
 
     if (s->kind != KIND_ORB)
         return 0;
@@ -1183,14 +1235,7 @@ static int orb_upload_japan(Slot *s, u8 want)
         return 1;
 
     vaddr = (u16)((s->spr->attribut & TILE_INDEX_MASK) * 32);
-    buf = DMA_allocateAndQueueDma(DMA_VRAM, vaddr, 64, 2);
-    if (!buf)
-    {
-        orb_encode_japan_tiles(s_jp, jp, want);
-        DMA_queueDma(DMA_VRAM, s_jp, vaddr, 64, 2);
-    }
-    else
-        orb_encode_japan_tiles(buf, jp, want);
+    DMA_queueDma(DMA_VRAM, orb_cache_get(s->sat, jp, want), vaddr, 64, 2);
     s->vram_fr = s->sat;
     s->vram_nib = want;
     return 1;
@@ -6228,6 +6273,7 @@ void entity_init(void)
     s_flash_left = 0;
     mode_backdrop_flash(0);
 
+    orb_cache_reset();
     s_rng = 0xA351;
     s_spawn_ctrl = 0x02;          /* stream active */
     s_spawn_base = 0;
