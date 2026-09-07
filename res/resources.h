@@ -8,6 +8,7 @@ extern const u8 charset_tiles[8192];
 extern const u8 charset_ct[2048];
 extern const u8 logo_tiles[1952];
 extern const u8 sound_blob[2014];
+extern const u8 bg_late[2848];
 extern const SpriteDefinition spr_ship;
 extern const SpriteDefinition spr_objs;
 extern const Image title_zanac;

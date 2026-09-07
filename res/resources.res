@@ -7,3 +7,4 @@ BIN logo_tiles "logo_tiles.bin"
 IMAGE title_zanac "title_zanac.png" NONE NONE
 IMAGE title_mdmark "title_mdmark.png" NONE NONE
 BIN sound_blob "sound_blob.bin"
+BIN bg_late "bg_late.bin"

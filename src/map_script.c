@@ -1337,6 +1337,44 @@ static void bg_fill_plane(void)
     bg_set_vscroll();
 }
 
+/* Set by script_boot when this round is the one the MSX swaps the late-stage
+ * background in for -- see load_bg_late. */
+static u8 s_bg_late_on;
+static u8 s_prev_round;
+
+#if MAP_HAS_CHARSET
+/* load_bg_tiles 0x5C60. The MSX swaps part of the charset for a late-stage
+ * background so a round that is a multiple of 8 does not look like round 1:
+ * patterns and colours for 20 tiles at 23 and 67 tiles at 91, plus two
+ * colour-only tiles at 158/159 (0x5C9A writes 552 colour bytes against 536
+ * pattern bytes). Byte offsets 0x00B8 and 0x02D8 are /8 = tiles 23 and 91.
+ * res/bg_late.bin is those 89 tiles already baked to MD 4bpp by
+ * tools/extract_bg_late.py -- the MD has no colour table to swap.
+ *
+ * The gate is the round transition at 0x4110-0x4128, and only that one:
+ *
+ *   new = resolve_round_from_ptr, old = E701 before the write
+ *   new & 7 != 0            -> neither loader runs      (0x411B)
+ *   new & 7 == 0, old & 7   -> load_bg_tiles            (0x4122)
+ *   new & 7 == 0, !(old&7)  -> load_charset_sprites     (0x412A load_bg_level)
+ *
+ * title_screen_init also calls load_bg_tiles at 0x4262 when 8 - E701 is a
+ * multiple of 8, but starting the game from there runs straight into the
+ * old&7 == 0 arm above and load_charset_sprites wipes it again. Measured on
+ * openMSX C-BIOS_MSX1 with E701 forced to 8 at 0x425A: the breakpoint trace is
+ * 425A -> 4262 -> 5C60 -> 5CA5, and VRAM 0x00B8 afterwards is byte-identical to
+ * the plain charset. So a title start or continue at round 8 shows the normal
+ * tiles, and only reaching it in play shows the late set. */
+static void load_bg_late(void)
+{
+    if (!s_bg_late_on)
+        return;
+    VDP_loadTileData((const u32 *)bg_late, (u16)(s_bg_base + 23), 20, CPU);
+    VDP_loadTileData((const u32 *)bg_late + 20 * 8, (u16)(s_bg_base + 91), 69,
+                     CPU);
+}
+#endif
+
 static void bg_load_tiles(void)
 {
     PAL_setPalette(PAL3, s_tms_pal, CPU);
@@ -1348,6 +1386,7 @@ static void bg_load_tiles(void)
      * per-row F then E (one CT byte for all 8 rows would flatten them). */
     VDP_loadTileData((const u32 *)charset_tiles, s_bg_base, 256, CPU);
     apply_hud_charset_ct();
+    load_bg_late();
 #else
     {
         static u32 dummy[256 * 8];
@@ -2895,6 +2934,13 @@ static void script_boot(u8 round, u16 pc)
 
     if (round > 8)
         round = 8;
+
+    /* 0x4119 AND 7 / 0x411E AND 7: the late background is loaded only when the
+     * round being entered is a multiple of 8 and the one being left is not.
+     * s_prev_round is E701 before 0x4118 writes it; 0 at cold boot, which is
+     * the !(old&7) arm and therefore the plain charset. */
+    s_bg_late_on = (u8)(!(round & 7) && (s_prev_round & 7));
+    s_prev_round = round;
 
     memset(&s_ms, 0, sizeof(s_ms));
     for (i = 0; i < COL_SLOTS; i++)
